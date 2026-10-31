@@ -179,6 +179,10 @@ HUB_SMOKE_BASE=https://hub.littlewish.top \
 20 项全绿即上线完成（health / 401 / 403 / 分页 / 详情 / 搜索 / 命令闭环 / SSE）。
 若最后一条 `SSE` 报 WARN，是 Caddy 缓冲没关 —— 检查 `Caddyfile` 里 `flush_interval -1` 那段。
 
+> ⚠️ 跑 smoke 前先**停掉 bridge 的命令执行**（`bridge/config.json` 里 `commands.enabled=false`，重启 bridge），
+> 否则真机 bridge 会在 5s 轮询里抢先认领 smoke 创建的测试命令，
+> 让 `device claims pending command` 这一项偶发失败（smoke 是模拟 device 走 API 认领的）。
+
 ## 9. 上线后的日常
 
 ```bash

@@ -111,11 +111,20 @@ bridge 每 `pollIntervalMs` 轮询 `/api/v1/commands/pending`（服务端 `FOR U
 # 起（别用 bash 的 nohup，会把终端 shell 一起带走）
 Start-Process -WindowStyle Hidden node -ArgumentList 'src/index.js' `
   -WorkingDirectory 'C:\Users\alice\projects\cline-hub\bridge'
-
-# 开机自启
-schtasks /create /tn "ClineBridge" /sc onlogon /rl limited /f `
-  /tr "node C:\Users\alice\projects\cline-hub\bridge\src\index.js"
 ```
+
+开机自启用**启动文件夹**里的 VBS（不需要管理员权限）：
+
+```vbscript
+' %APPDATA%\Microsoft\Windows\Start Menu\Programs\StartUp\ClineBridge.vbs
+Set sh = CreateObject("WScript.Shell")
+sh.CurrentDirectory = "C:\Users\alice\projects\cline-hub\bridge"
+sh.Run "node ""C:\Users\alice\projects\cline-hub\bridge\src\index.js""", 0, False
+```
+
+> 已在本机创建好该文件。想换成计划任务得用**管理员** PowerShell：
+> `schtasks /create /tn ClineBridge /sc onlogon /rl limited /f /tr "node C:\Users\alice\projects\cline-hub\bridge\src\index.js"`
+> （普通权限会 `ERROR: Access is denied.`）
 
 ## 约定
 

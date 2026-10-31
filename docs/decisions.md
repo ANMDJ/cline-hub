@@ -60,6 +60,10 @@ Caddy 默认会缓冲响应，导致 `GET /api/v1/events` 的事件攒着不发�
 Start-Process -WindowStyle Hidden node -ArgumentList 'src/index.js' -WorkingDirectory <bridge 目录>
 ```
 
+开机自启：`schtasks /create /sc onlogon` 需要**管理员**权限（普通权限报 `ERROR: Access is denied.`），
+所以改用启动文件夹的 `ClineBridge.vbs`（见 `deploy/windows/ClineBridge.vbs`，`WScript.Shell.Run(..., 0, False)`
+无窗口启动）。两种方式二选一即可，别同时开（会抢 3210 端口）。
+
 ## 9. 仓库里不出现任何真实口令
 
 `bridge/config.json`、`bridge/state.json`、`server/.env`、`.secrets/`、`*.pem` 全部 gitignore；
