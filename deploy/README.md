@@ -272,7 +272,87 @@ sudo cp deploy/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy
 # 3. 重建并轮换 token（明文期间 token 有暴露风险）
 ```
 
-### Caddy 运维三个坑（这次都踩到了）
+## 12. 开源落地页（`site/` → `/var/www/cline-hub`）
+
+服务器上没有 nginx，静态站直接交给 Caddy：
+
+```
+/var/www/cline-hub/          ← 站点根目录（属主 caddy:caddy，755/644）
+    index.html styles.css app.js favicon.svg robots.txt
+```
+
+Caddyfile 里（IP 站点内，见 `deploy/Caddyfile`）：
+
+```
+@site not path /_h/*
+route @site {
+    encode zstd gzip
+    root * /var/www/cline-hub
+    file_server
+}
+```
+
+`/_h/<前缀>/*` 仍走 Hub 反代，其余路径全部落到 `file_server`；不存在的文件自然是 404。
+
+### 部署 / 更新
+
+```bash
+# 本机（仓库根目录）
+tar czf /tmp/site.tgz -C site index.html styles.css app.js favicon.svg robots.txt
+scp /tmp/site.tgz ubuntu@82.157.153.22:/tmp/
+
+# 服务器
+sudo mkdir -p /var/www/cline-hub
+sudo tar -xzf /tmp/site.tgz -C /var/www/cline-hub
+sudo chown -R caddy:caddy /var/www/cline-hub
+sudo find /var/www/cline-hub -type d -exec chmod 755 {} \;
+sudo find /var/www/cline-hub -type f -exec chmod 644 {} \;
+sudo rm -f /tmp/site.tgz
+```
+
+只改静态文件不需要 reload Caddy（`file_server` 每次请求都读盘）。
+
+### 切到域名（加好 DNS 之后）
+
+```bash
+# DNS（DNSPod / 腾讯云）
+#   @    A  82.157.153.22
+#   www  A  82.157.153.22
+
+# 1) 预建日志（务必用 caddy 身份，否则 root:root 600 会让 Caddy 起不来）
+sudo install -o caddy -g caddy -m 640 /dev/null /var/lib/caddy/site.log
+
+# 2) 取消 deploy/Caddyfile 里「开源落地页（域名版）」整段注释 → 生成新配置
+sed "s/HUB_HTTP_PREFIX/$(cat ~/hub-prefix.txt)/g" deploy/Caddyfile > /tmp/Caddyfile.new
+
+# 3) 校验 → 备份 → 应用 → 验证
+sudo caddy validate --config /tmp/Caddyfile.new --adapter caddyfile
+sudo cp -a /etc/caddy/Caddyfile /etc/caddy/Caddyfile.bak-$(date +%Y%m%d-%H%M%S)
+sudo install -m 644 -o root -g root /tmp/Caddyfile.new /etc/caddy/Caddyfile
+sudo systemctl reload caddy && systemctl is-active caddy
+curl -sI https://littlewish.top/ | head -1
+```
+
+### 验收（2026-10-31 实测）
+
+```
+GET /                        -> 200   16896 B  <title>Cline Console · 把 Cline 的每一次执行装进口袋</title>
+GET /styles.css              -> 200   14897 B
+GET /app.js /favicon.svg /robots.txt -> 200
+GET /_h/<前缀>/api/v1/health -> 200
+GET /api/v1/health（无前缀）  -> 404
+GET /_h/<错误前缀>/...        -> 404
+GET /no-such-file            -> 404
+```
+
+### 坑
+
+- **上传的 `.sh` 会是 CRLF**：Windows 侧写的脚本传到 Linux 直接 `set: pipefail\r: invalid option name`。
+  上传后先 `sed -i 's/\r$//' /tmp/xxx.sh`，或本地 `dos2unix`。仓库已加 `.gitattributes` 把这些文件钉成 LF。
+- 域名版站点里 `littlewish.top` 和 `www` 必须都有 DNS 记录才能一起启用，否则 Caddy 会为缺失的名字反复重试 ACME，
+  日志噪音大（不影响其他站点，但也别放着不管）。
+
+### Caddy 运维三个坑（适用于所有站点，2026-10-31 全踩了一遍）
 
 1. **日志目录**必须是 `/var/lib/caddy/`。`caddy.service` 带 `ProtectSystem=full`，`/var/log/caddy/` 对 `caddy`
    用户不可写，会报 `open /var/log/caddy/hub.log: permission denied`，而且 **reload 失败时旧进程继续用旧配置**，

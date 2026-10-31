@@ -12,6 +12,7 @@
 | Hooks | `hooks/` → `%USERPROFILE%\Documents\Cline\Hooks\` | Cline 全局钩子，任务结束/失败/中断时推送 |
 | Bridge | `bridge/` | Windows 常驻进程：收 Hook、增量读 `sessions.db`、上报 Hub、执行远程命令 |
 | Hub | `server/` | Ubuntu 上的接收端：REST + SSE + Postgres（本机已联调通过） |
+| Site | `site/` | 开源落地页（纯静态，Caddy `file_server` 直出，无构建） |
 | App | `app/`（M2） | Flutter Android 客户端 |
 
 ## 数据流
@@ -60,6 +61,31 @@ smoke      HUB_SMOKE_BASE=http://82.157.153.22/_h/<随机串> node server/script
 
 > ⚠️ 明文 HTTP 意味着 token 在链路上可被嗅探到。备案下来后立刻：删掉 `deploy/Caddyfile` 里的 IP 兜底块 →
 > `systemctl reload caddy` → 客户端 `hubUrl` 换回 `https://hub.littlewish.top` → **轮换 device/app token**。
+
+## 网站（开源落地页）
+
+`site/` 是纯静态单页（HTML + CSS + 90 行 JS，无构建、无 CDN 依赖），服务器上由 Caddy `file_server` 直出，
+不引入 nginx：
+
+| 地址 | 状态 |
+|---|---|
+| `http://82.157.153.22/` | ✅ 现在可访问（按 IP 访问不受备案拦截） |
+| `http://82.157.153.22/_h/<前缀>/api/...` | ✅ Hub API 走同一个 vhost，只有这个前缀能进 |
+| `https://littlewish.top` / `https://www.littlewish.top` | ⏳ 等 DNS A 记录 + 备案；`deploy/Caddyfile` 里已写好注释段，取消注释即可 |
+
+更新站点（只发包内 5 个文件，`README`/`check-site.mjs` 不上服务器）：
+
+```bash
+tar czf /tmp/site.tgz -C site index.html styles.css app.js favicon.svg robots.txt
+scp /tmp/site.tgz ubuntu@82.157.153.22:/tmp/
+ssh ubuntu@82.157.153.22 'sudo tar -xzf /tmp/site.tgz -C /var/www/cline-hub \
+  && sudo chown -R caddy:caddy /var/www/cline-hub && sudo rm -f /tmp/site.tgz'
+```
+
+自检：`node site/check-site.mjs`（标签配对 / CSS 括号 / 引用文件 / 锚点 id）。
+发布前把 `site/index.html` 里 4 个 `data-todo="repo"` 的 `<a href="https://github.com/">` 换成真实仓库地址。
+运行手册见 `site/README.md` 与 `deploy/README.md` §12。
+
 
 ## 里程碑
 
