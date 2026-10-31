@@ -68,3 +68,18 @@ Start-Process -WindowStyle Hidden node -ArgumentList 'src/index.js' -WorkingDire
 
 `bridge/config.json`、`bridge/state.json`、`server/.env`、`.secrets/`、`*.pem` 全部 gitignore；
 token 落盘只在本机 `.secrets/*.token.txt`，用时由脚本读取，不写进日志和文档。
+
+## 10. 仓库根目录 = `~/.cline/data/workspaces/chat/cline-hub`
+
+与 kids 项目（`kids_points_app`）同级，方便同一 Cline 会话里跨项目引用。
+
+迁移时的两个 Windows 细节（2026-10-31 实际踩到）：
+
+- 整个目录 `mv` 会被拒（`Permission denied` / `You do not have sufficient access rights`），
+  因为目录里还开着 .git 与 node 句柄 —— 先 `taskkill` 掉 bridge，再**逐个子项** `mv`；
+  `.git` 若被拆成两半，用 `cp -a <src>/.git/. <dst>/.git/` 补齐后 `git fsck` 校验。
+- 迁移后必须同步的绝对路径：`README.md`、`deploy/README.md`、`docs/bridge-notes.md`、
+  `deploy/windows/ClineBridge.vbs` 以及启动文件夹里那份 VBS。
+  `bridge/config.json` 不含绝对路径（`dataDir` 默认 `~/.cline/data`，`state.json`/`outbox.json` 在 `bridgeRoot`），
+  所以会话水位线和 outbox 跟着仓库走，不会重复上报。
+

@@ -5,6 +5,8 @@
 
 ## 组成
 
+> 仓库根目录：`C:\Users\alice\.cline\data\workspaces\chat\cline-hub`（与 `kids_points_app` 同级）
+
 | 模块 | 位置 | 说明 |
 |---|---|---|
 | Hooks | `hooks/` → `%USERPROFILE%\Documents\Cline\Hooks\` | Cline 全局钩子，任务结束/失败/中断时推送 |
