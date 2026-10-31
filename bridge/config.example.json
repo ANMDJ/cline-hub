@@ -1,0 +1,27 @@
+{
+  "hubUrl": "",
+  "deviceId": "",
+  "deviceToken": "",
+  "hookHost": "127.0.0.1",
+  "hookPort": 3210,
+  "pollIntervalMs": 5000,
+  "batchSize": 20,
+  "workspaceWhitelist": [],
+  "commandTools": [
+    "run_commands",
+    "execute_command"
+  ],
+  "maxResultChars": 4000,
+  "maxCommands": 300,
+  "maxCommandChars": 2000,
+  "dataDir": "",
+  "commands": {
+    "enabled": false,
+    "template": "{prompt}",
+    "shell": "powershell",
+    "allowModes": ["plan", "act"],
+    "defaultWorkspace": "",
+    "timeoutMs": 600000,
+    "batchSize": 3
+  }
+}

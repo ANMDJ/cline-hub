@@ -1,0 +1,34 @@
+# Cline Hub on a single Ubuntu box.
+#
+# host 网络：Caddy 在宿主机上直接反代 127.0.0.1:3100，
+# 同时容器内也能用 127.0.0.1:5432 连宿主机/其他容器发布的 Postgres。
+# 这与 docs/server-prep.md 里「所有端口只绑 127.0.0.1」的约定一致。
+#
+# 首次部署：
+#   cp .env.example .env      # 填 HUB_DATABASE_URL / HUB_ADMIN_TOKEN
+#   docker compose build
+#   docker compose run --rm hub node src/migrate.js
+#   docker compose up -d
+#   docker compose exec hub node -e "console.log(process.version)"
+#
+# 建 client（token 只在这里打印一次）：
+#   docker compose exec hub npm run create-device -- --id localone --name LocalOne
+
+services:
+  hub:
+    build: .
+    image: cline-hub:0.1.0
+    container_name: cline-hub
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env
+    environment:
+      HUB_HOST: 127.0.0.1
+      # 生产不自动建表：迁移显式跑，避免应用角色拥有 DDL 权限
+      HUB_AUTO_MIGRATE: "0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -1,0 +1,23 @@
+# ntfy 服务端配置 — 放到 /etc/ntfy/server.yml
+# 与 deploy/Caddyfile 里的 ntfy.littlewish.top 配套；只监听回环，由 Caddy 终止 TLS。
+
+base-url: "https://ntfy.littlewish.top"
+listen-http: "127.0.0.1:2586"
+behind-proxy: true
+
+# 缓存：留 72 小时，手机离线一两小时回来还能补到
+cache-file: "/var/cache/ntfy/cache.db"
+cache-duration: "72h"
+attachment-cache-dir: "/var/cache/ntfy/attachments"
+attachment-total-size-limit: "512M"
+
+# 访问控制：默认拒绝，靠 user + token
+#   ntfy user add --role=admin admin
+#   ntfy user add cline            # bridge 推送到 cline-xxxx 话题
+#   ntfy access cline 'cline-*' write-only
+#   ntfy token add cline           # 打印一次，写进 notify.config.json 的 token
+auth-file: "/var/lib/ntfy/user.db"
+auth-default-access: "deny-all"
+
+# 个人自用，不用来做公共推送
+web-root: "disable"

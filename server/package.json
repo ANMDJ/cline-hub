@@ -1,0 +1,20 @@
+{
+  "name": "cline-hub-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cline Console Hub: receives bridge uploads, serves the mobile app, queues remote commands",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "migrate": "node src/migrate.js",
+    "create-device": "node scripts/create-device.mjs",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  }
+}

@@ -1,0 +1,22 @@
+# 本地配置与运行态（含 token，绝不入库）
+bridge/config.json
+bridge/state.json
+bridge/state.local-backup.json
+bridge/outbox.json
+bridge/logs/
+
+# 部署期密钥（设备/手机 token、私钥）
+.secrets/
+*.pem
+
+# 服务端
+server/.env
+server/node_modules/
+server/dist/
+server/logs/
+server/*.out
+
+# 通用
+node_modules/
+*.log
+.DS_Store
