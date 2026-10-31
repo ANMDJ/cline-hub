@@ -7,6 +7,7 @@
 src/index.js        启动：连库 → 迁移 → 注册路由 → listen
 src/env.js          .env 解析（不依赖 dotenv）
 src/http.js         路由/auth 包装/JSON body/SSE
+src/net.js          真实 IP 解析 / CIDR 白名单 / 令牌桶限流
 src/routes/*.js     clients / sessions / hooks / commands
 migrations/*.sql    幂等建表，按文件名顺序只执行一次
 scripts/create-device.mjs  建设备并打印一次性 token
@@ -38,6 +39,9 @@ curl http://127.0.0.1:3100/api/v1/health
 | `HUB_LOG_FILE` | | 空（仅 stdout） | 写文件同时保留控制台输出 |
 | `HUB_CORS_ORIGIN` | | `*` | Flutter Web 调试时可收紧 |
 | `HUB_MAX_BODY_BYTES` | | 4 MB | 单条会话含 300 条命令也远小于此值 |
+| `HUB_RATE_LIMIT_PER_SEC` | | `5` | 每 IP 令牌桶恢复速率（请求/秒） |
+| `HUB_RATE_LIMIT_BURST` | | `120` | 每 IP 瞬时突发上限，超过返回 `429` + `retry-after` |
+| `HUB_ALLOW_IPS` | | 空 | 逗号分隔的 IP / CIDR 白名单；空 = 不限 IP，本机回环永远放行 |
 
 ## 数据模型要点
 

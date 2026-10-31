@@ -66,7 +66,9 @@ async function main() {
     auth,
     logger,
     corsOrigin: config.corsOrigin,
-    maxBodyBytes: config.maxBodyBytes
+    maxBodyBytes: config.maxBodyBytes,
+    rateLimit: { perSec: config.rateLimitPerSec, burst: config.rateLimitBurst },
+    allowIps: config.allowIps
   })
 
   server = createHttpServer(app)
@@ -80,6 +82,8 @@ async function main() {
     db: describeDatabase(config.databaseUrl),
     routes: routes.length,
     autoMigrate: config.autoMigrate,
+    rateLimit: `${config.rateLimitPerSec}/s burst ${config.rateLimitBurst}`,
+    allowIps: config.allowIps.length,
     version: config.version
   })
 }

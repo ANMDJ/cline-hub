@@ -1,5 +1,6 @@
 import http from 'node:http'
 import crypto from 'node:crypto'
+import { clientIp, createRateLimiter, ipAllowed, isLoopback } from './net.js'
 
 export class HttpError extends Error {
   constructor(status, message, code = 'error') {
@@ -87,8 +88,9 @@ const ROLE_RULES = {
  * Minimal router: no framework, no magic. A handler returns a plain object
  * (sent as 200 JSON) or `undefined` when it already wrote the response (SSE).
  */
-export function createApp({ routes, auth, logger, corsOrigin, maxBodyBytes }) {
+export function createApp({ routes, auth, logger, corsOrigin, maxBodyBytes, rateLimit, allowIps = [] }) {
   const compiled = routes.map((route) => ({ ...route, ...compilePattern(route.pattern) }))
+  const takeToken = createRateLimiter(rateLimit ?? {})
 
   return async function handler(req, res) {
     const startedAt = Date.now()
@@ -102,6 +104,22 @@ export function createApp({ routes, auth, logger, corsOrigin, maxBodyBytes }) {
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204).end()
+      return
+    }
+
+    const ip = clientIp(req)
+
+    // 白名单为空时对所有人开放；本机请求永远放行，保证 health/smoke 可用
+    if (allowIps.length > 0 && !isLoopback(ip) && !ipAllowed(ip, allowIps)) {
+      logger.warn('ip not allowed', { requestId, ip, path: url.pathname })
+      sendJson(res, 403, { ok: false, code: 'ip_not_allowed', message: 'this address is not allowed' })
+      return
+    }
+
+    if (!takeToken(ip)) {
+      logger.warn('rate limited', { requestId, ip, path: url.pathname })
+      res.setHeader('retry-after', '1')
+      sendJson(res, 429, { ok: false, code: 'rate_limited', message: 'too many requests, slow down' })
       return
     }
 
@@ -150,6 +168,7 @@ export function createApp({ routes, auth, logger, corsOrigin, maxBodyBytes }) {
         if (result !== undefined) sendJson(res, route.status ?? 200, result)
         logger.info('request', {
           requestId,
+          ip,
           method: req.method,
           path: url.pathname,
           status: res.statusCode,

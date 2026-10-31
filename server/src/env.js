@@ -43,5 +43,12 @@ export const config = {
   corsOrigin: read('HUB_CORS_ORIGIN', '*'),
   maxBodyBytes: readInt('HUB_MAX_BODY_BYTES', 4 * 1024 * 1024),
   sseHeartbeatMs: readInt('HUB_SSE_HEARTBEAT_MS', 25000),
+  // 兜底防护：每 IP 令牌桶 + 可选 CIDR 白名单（白名单为空 = 不限 IP）
+  rateLimitPerSec: readInt('HUB_RATE_LIMIT_PER_SEC', 5),
+  rateLimitBurst: readInt('HUB_RATE_LIMIT_BURST', 120),
+  allowIps: read('HUB_ALLOW_IPS', '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean),
   version: '0.1.0'
 }
