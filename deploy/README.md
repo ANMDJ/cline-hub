@@ -234,3 +234,53 @@ docker compose up -d --build
 
 尚未启用（后续里程碑）：`ntfy.littlewish.top`、`kids.littlewish.top` 两个反代段落，以及 Flutter App。
 
+## 11. 域名被「未备案」拦截 → IP 前缀兜底（2026-10-31 当天发生）
+
+**现象**（部署约 35 分钟后开始，2026-10-31 18:51 CST）：
+
+| 探测 | 结果 | 判断 |
+|---|---|---|
+| `curl -v https://hub.littlewish.top/api/v1/health` | TCP 三次握手成功，`TLS Client hello` 后 `Connection was reset` | 443 被掐，非证书/服务问题 |
+| 服务端本机 `curl https://hub.littlewish.top/api/v1/health` | `200`，`openssl` 看到证书 `CN=hub.littlewish.top`（10-31 → 01-29） | Caddy、证书都正常 |
+| `curl -D - http://hub.littlewish.top/api/v1/health` | `302 Location: https://dnspod.qcloud.com/static/webblock.html?d=hub.littlewish.top` | **腾讯云未备案拦截页，端口 80 被劫持** |
+| `curl http://82.157.153.22/...`（Host 就是 IP） | 正常到达 Caddy | 按 IP 访问不在拦截范围 |
+| 服务端 `tcpdump` 抓 443 | SYN → SYN-ACK → 客户端侧注入 RST（seq≈1413，正好是 ClientHello 长度） | 链路中间设备注入，不在机器上 |
+
+**结论**：大陆机器 + 未备案域名，80/443 会被腾讯云边缘拦；同一台机的 IP 直连不受影响。
+
+**兜底做法**（当前生效）：
+
+1. `deploy/Caddyfile` 增加 `http://82.157.153.22` 站点，只放行 `/_h/<随机前缀>/*`，
+   `uri strip_prefix` 后反代 `127.0.0.1:3100`（`flush_interval -1` 以支持 SSE），其余路径 `404`；
+2. 前缀 `openssl rand -hex 16` 生成，本机存 `.secrets/hub-http-prefix.txt`（gitignore，不写进文档）；
+3. Hub 侧加了每 IP 令牌桶 + 可选 CIDR 白名单（`server/src/net.js`），见 `server/README.md` 环境变量表；
+4. bridge `hubUrl` 与 `HUB_SMOKE_BASE` 都指向 `http://82.157.153.22/_h/<前缀>`。
+
+**验收**（当天实测）：
+
+- `GET http://82.157.153.22/_h/<前缀>/api/v1/health` → `200`；`/`、`/api/v1/health`、错前缀 → `404`
+- 200 个并发请求 → `131×200 / 69×429`，等 2s 再请求 → `200`（令牌桶按 5/s 恢复）
+- `HUB_SMOKE_BASE=http://82.157.153.22/_h/<前缀>` → **20/20 通过**（含 SSE）
+- 手机侧（app token）下发命令 → bridge 执行 → `status=done`，`resultText=ip-entry-ok ...`
+
+**回滚（备案通过后）**：
+
+```bash
+# 1. 删除 deploy/Caddyfile 里 `http://82.157.153.22 { ... }` 整段，然后
+sudo cp deploy/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy
+# 2. 客户端 hubUrl 换回 https://hub.littlewish.top（bridge + App + smoke）
+# 3. 重建并轮换 token（明文期间 token 有暴露风险）
+```
+
+### Caddy 运维三个坑（这次都踩到了）
+
+1. **日志目录**必须是 `/var/lib/caddy/`。`caddy.service` 带 `ProtectSystem=full`，`/var/log/caddy/` 对 `caddy`
+   用户不可写，会报 `open /var/log/caddy/hub.log: permission denied`，而且 **reload 失败时旧进程继续用旧配置**，
+   看起来“没生效”，实际是没加载。
+2. **新增日志文件要用 caddy 身份建**：`sudo install -o caddy -g caddy -m 640 /dev/null /var/lib/caddy/hub-http.log`。
+   直接用 `sudo caddy validate` 校验会以 root 身份把日志文件创建成 `root:root 600`，随后服务启动就 permission denied。
+3. **不要在全局块写 `admin off`**：`systemctl reload` 走 admin API（`127.0.0.1:2019`），关掉只能 `restart`。
+   另外别对 `/var/lib/caddy/*.log` 用普通用户跑 `sudo chown ... *.log`——glob 会在普通用户下展开失败（目录 750），
+   命令看着成功其实什么都没改。
+
+

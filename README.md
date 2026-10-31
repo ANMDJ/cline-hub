@@ -30,16 +30,43 @@
 | 端口 | 归属 | 绑定 |
 |---|---|---|
 | 3210 | bridge hook server | 127.0.0.1 |
-| 3100 | Hub | 127.0.0.1（Caddy 反代 hub.littlewish.top） |
+| 3100 | Hub | 127.0.0.1（Caddy 反代） |
 | 3000 | kids_points API | 127.0.0.1（Caddy 反代 /api） |
 | 2586 | ntfy | 127.0.0.1（Caddy 反代 ntfy.littlewish.top） |
+
+## 当前入口（2026-10-31 起：备案拦截期间）
+
+`hub.littlewish.top` 未备案，部署约 35 分钟后被腾讯云阻断，实测证据：
+
+| 访问方式 | 结果 |
+|---|---|
+| `https://hub.littlewish.top` | TLS 握手被重置（TCP 能连、证书正常，握手阶段被掐） |
+| `http://hub.littlewish.top` | `302` → `https://dnspod.qcloud.com/static/webblock.html?d=hub.littlewish.top`（未备案拦截页） |
+| `http://82.157.153.22/...` | 正常到达 Caddy（**按 IP 访问不在拦截范围**） |
+
+因此暂时改用「IP + 随机前缀」的明文入口，域名与 HTTPS 配置原样保留，备案通过后切回：
+
+```
+Hub 入口   http://82.157.153.22/_h/<随机串>        # 前缀就是口令，存 .secrets/hub-http-prefix.txt
+bridge     bridge/config.json → hubUrl 改成上面这个
+smoke      HUB_SMOKE_BASE=http://82.157.153.22/_h/<随机串> node server/scripts/smoke.mjs ...
+```
+
+兜底配套（已生效）：
+
+- Caddy 只在该前缀下反代（`uri strip_prefix` + `flush_interval -1` 保 SSE），其他路径一律 `404`；
+- Hub 每 IP 令牌桶限流（默认 120 突发 / 每秒恢复 5），超限 `429`；
+- 可选 `HUB_ALLOW_IPS`（CIDR 白名单），默认留空（手机流量 IP 会变），本机回环永远放行。
+
+> ⚠️ 明文 HTTP 意味着 token 在链路上可被嗅探到。备案下来后立刻：删掉 `deploy/Caddyfile` 里的 IP 兜底块 →
+> `systemctl reload caddy` → 客户端 `hubUrl` 换回 `https://hub.littlewish.top` → **轮换 device/app token**。
 
 ## 里程碑
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | M0 | Hook 脚本 + ntfy 通知 | ✅ 完成 |
-| M1 | bridge 采集器 + Hub 服务 + 部署 | ✅ 完成（`https://hub.littlewish.top`，smoke 20/20） |
+| M1 | bridge 采集器 + Hub 服务 + 部署 | ✅ 完成（smoke 20/20；域名被备案拦截后改走 IP 前缀入口，见上节） |
 | M2a | 远程命令通道（bridge 执行器） | ✅ 完成（App→Hub→bridge→PowerShell→回写，实测 6s 闭环） |
 | M2b | Flutter App（会话列表/命令执行） | 待开始 |
 

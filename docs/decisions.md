@@ -83,3 +83,31 @@ token 落盘只在本机 `.secrets/*.token.txt`，用时由脚本读取，不写
   `bridge/config.json` 不含绝对路径（`dataDir` 默认 `~/.cline/data`，`state.json`/`outbox.json` 在 `bridgeRoot`），
   所以会话水位线和 outbox 跟着仓库走，不会重复上报。
 
+## 11. 备案没下来前，入口走「IP + 随机前缀」明文 HTTP
+
+`hub.littlewish.top` 未备案，大陆机器上 80/443 会被腾讯云边缘拦：443 握手阶段注入 RST，
+80 直接 302 到 `dnspod.qcloud.com/static/webblock.html?d=...`；同一台机的 IP 直连不受影响
+（细节与证据见 `deploy/README.md` §11）。
+
+所以临时入口是 `http://82.157.153.22/_h/<openssl rand -hex 16>`：
+
+- 前缀本身就是口令，存在本机 `.secrets/hub-http-prefix.txt`，**不进仓库、不写文档**；
+- Caddy 只在该前缀下反代，其余路径 `404`（配合 `uri strip_prefix`，Hub 代码零改动）；
+- 复用同一套 token/路由，迁移成本为零；域名与 HTTPS 配置保留，备案通过后删除 IP 站点即可切回。
+
+**代价与补偿**：明文传输意味着 token 可被嗅探。补偿是限流（ADR-12）+ 前缀不可猜 + 备案后立刻轮换 token。
+这是「能继续开发 M2b」和「安全」之间刻意选的中间态，不是终态。
+
+## 12. 限流与白名单放在 Hub 自己身上，不依赖 Caddy 插件
+
+Caddy 标准发行版没有 rate_limit 插件（要自己 xcaddy 重编译），而入口可能换（域名 / IP / 以后加 Cloudflare），
+所以把防护做进 Hub：`server/src/net.js` 提供
+
+- `clientIp()`：只有直连方是回环（即本机 Caddy）时才信任 `X-Forwarded-For`，否则用 socket 地址；
+- 令牌桶（默认 `120` 突发、`5/s` 恢复，`HUB_RATE_LIMIT_*` 可调），超限 `429 + retry-after`；
+- 可选 `HUB_ALLOW_IPS`（IP 或 IPv4 CIDR，逗号分隔）。默认留空：手机流量 IP 会变，硬白名单会把自己锁在外面；
+  本机回环永远放行，保证 health/smoke 不被误伤。
+
+单实例部署够用；真要多实例时把桶换成 Redis 计数即可，接口不变。
+
+

@@ -1,12 +1,19 @@
 {
 	# Caddy v2 — 放在 /etc/caddy/Caddyfile
-	# 三个子域已解析到 82.157.153.22；80/443 必须在腾讯云「防火墙」里放行
-	# 才能签证书（HTTP-01 / TLS-ALPN 都要过 80 或 443）。
+	# 三个子域已解析到 82.157.153.22；80/443 必须在腾讯云「防火墙」里放行。
+	#
+	# ⚠️ 不要加 `admin off`：systemd 的 `systemctl reload caddy` 靠 admin API（127.0.0.1:2019）
+	# 把新配置推给旧进程，关掉就只能 restart，会短暂断连。
+	#
+	# ⚠️ 日志写 /var/lib/caddy/（不是 /var/log/caddy/）：caddy.service 带 `ProtectSystem=full`，
+	# /var/log 对 caddy 用户不可写，写 /var/log 会在 reload/启动时报
+	# `open /var/log/caddy/hub.log: permission denied`（旧进程继续跑旧配置，看着像 reload 成功）。
+	# 新增日志文件要先用 caddy 身份建好，否则会残留 root:root 600 的文件：
+	#   sudo install -o caddy -g caddy -m 640 /dev/null /var/lib/caddy/<name>.log
 	email admin@littlewish.top
-	admin off
 }
 
-# ── Cline Hub：REST + SSE ────────────────────────────────────────────────
+# ── Cline Hub：REST + SSE（域名，HTTPS）──────────────────────────────────
 hub.littlewish.top {
 	encode zstd gzip
 
@@ -29,32 +36,72 @@ hub.littlewish.top {
 	}
 
 	log {
-		output file /var/log/caddy/hub.log {
+		output file /var/lib/caddy/hub.log {
 			roll_size 10MiB
 			roll_keep 5
 		}
 	}
 }
 
-# ── ntfy：自建推送（可选，M0 现在直连 ntfy.sh）──────────────────────────
-ntfy.littlewish.top {
-	reverse_proxy 127.0.0.1:2586
+# ── 临时兜底入口：备案未下来时唯一的可用路径（明文 HTTP + 随机前缀）──────
+# 实测证据（2026-10-31，部署约 35 分钟后开始）：
+#   https://hub.littlewish.top → TLS 握手被重置（443 阻断，TCP 能连、证书本身没问题）
+#   http://hub.littlewish.top  → 302 到 https://dnspod.qcloud.com/static/webblock.html?d=hub.littlewish.top
+#                                （腾讯云「未备案」拦截页，劫持端口 80）
+#   http://82.157.153.22/...   → 正常到达 Caddy（按 IP 访问不在拦截范围）
+# 所以兜底入口只能走 IP。前缀就等于口令，本机存 .secrets/hub-http-prefix.txt。
+# 生成前缀：openssl rand -hex 16 → 替换下面的 HUB_HTTP_PREFIX，并同步客户端：
+#   bridge/config.json 的 hubUrl = http://82.157.153.22/_h/<随机串>
+#   HUB_SMOKE_BASE=http://82.157.153.22/_h/<随机串>
+# 备案通过后整段删除，客户端 hubUrl 换回 https://hub.littlewish.top
+http://82.157.153.22 {
+	@prefixed path /_h/HUB_HTTP_PREFIX/*
+	route @prefixed {
+		uri strip_prefix /_h/HUB_HTTP_PREFIX
+		reverse_proxy 127.0.0.1:3100 {
+			# 明文入口也要支持 SSE：关掉反代缓冲
+			flush_interval -1
+			transport http {
+				read_timeout 0
+			}
+		}
+	}
+
+	respond "Not Found" 404
+
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		Cache-Control "no-store"
+	}
+
 	log {
-		output file /var/log/caddy/ntfy.log {
+		output file /var/lib/caddy/hub-http.log {
 			roll_size 10MiB
 			roll_keep 3
 		}
 	}
 }
 
-# ── kids_points：Flutter Web 静态 + /api 反代（已有，占位保留）──────────
-kids.littlewish.top {
-	encode zstd gzip
-	reverse_proxy 127.0.0.1:3000
-	log {
-		output file /var/log/caddy/kids.log {
-			roll_size 10MiB
-			roll_keep 3
-		}
-	}
-}
+# ── ntfy：自建推送（可选，M0 现在直连 ntfy.sh）──────────────────────────
+# ntfy.littlewish.top {
+# 	reverse_proxy 127.0.0.1:2586
+# 	log {
+# 		output file /var/lib/caddy/ntfy.log {
+# 			roll_size 10MiB
+# 			roll_keep 3
+# 		}
+# 	}
+# }
+
+# ── kids_points：Flutter Web 静态 + /api 反代（服务上线后再放开）────────
+# kids.littlewish.top {
+# 	encode zstd gzip
+# 	reverse_proxy 127.0.0.1:3000
+# 	log {
+# 		output file /var/lib/caddy/kids.log {
+# 			roll_size 10MiB
+# 			roll_keep 3
+# 		}
+# 	}
+# }
