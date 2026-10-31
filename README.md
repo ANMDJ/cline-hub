@@ -49,7 +49,7 @@
 notepad $env:USERPROFILE\.cline\notify.config.json
 
 # 2. 起 bridge
-cd C:\Users\alice\projects\cline-hub\bridge
+cd C:\Users\alice\.cline\data\workspaces\chat\cline-hub\bridge
 node src/index.js
 
 # 3. 自检
@@ -59,7 +59,7 @@ curl http://127.0.0.1:3210/health
 ### Hub 本机联调
 
 ```powershell
-cd C:\Users\alice\projects\cline-hub\server
+cd C:\Users\alice\.cline\data\workspaces\chat\cline-hub\server
 copy .env.example .env      # 填 HUB_DATABASE_URL / HUB_ADMIN_TOKEN
 npm install
 npm run migrate
@@ -110,7 +110,7 @@ bridge 每 `pollIntervalMs` 轮询 `/api/v1/commands/pending`（服务端 `FOR U
 ```powershell
 # 起（别用 bash 的 nohup，会把终端 shell 一起带走）
 Start-Process -WindowStyle Hidden node -ArgumentList 'src/index.js' `
-  -WorkingDirectory 'C:\Users\alice\projects\cline-hub\bridge'
+  -WorkingDirectory 'C:\Users\alice\.cline\data\workspaces\chat\cline-hub\bridge'
 ```
 
 开机自启用**启动文件夹**里的 VBS（不需要管理员权限）：
@@ -118,12 +118,12 @@ Start-Process -WindowStyle Hidden node -ArgumentList 'src/index.js' `
 ```vbscript
 ' %APPDATA%\Microsoft\Windows\Start Menu\Programs\StartUp\ClineBridge.vbs
 Set sh = CreateObject("WScript.Shell")
-sh.CurrentDirectory = "C:\Users\alice\projects\cline-hub\bridge"
-sh.Run "node ""C:\Users\alice\projects\cline-hub\bridge\src\index.js""", 0, False
+sh.CurrentDirectory = "C:\Users\alice\.cline\data\workspaces\chat\cline-hub\bridge"
+sh.Run "node ""C:\Users\alice\.cline\data\workspaces\chat\cline-hub\bridge\src\index.js""", 0, False
 ```
 
 > 已在本机创建好该文件。想换成计划任务得用**管理员** PowerShell：
-> `schtasks /create /tn ClineBridge /sc onlogon /rl limited /f /tr "node C:\Users\alice\projects\cline-hub\bridge\src\index.js"`
+> `schtasks /create /tn ClineBridge /sc onlogon /rl limited /f /tr "node C:\Users\alice\.cline\data\workspaces\chat\cline-hub\bridge\src\index.js"`
 > （普通权限会 `ERROR: Access is denied.`）
 
 ## 约定

@@ -101,7 +101,7 @@ topic 上收到的实际消息（中文无乱码）：
 ## 5. bridge 运行方式
 
 ```bash
-cd C:\Users\alice\projects\cline-hub\bridge
+cd C:\Users\alice\.cline\data\workspaces\chat\cline-hub\bridge
 node src/index.js          # 常驻
 node src/index.js --once   # 只跑一轮（调试）
 curl http://127.0.0.1:3210/health
@@ -119,7 +119,7 @@ Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
 
 ```powershell
 schtasks /create /tn "ClineBridge" ^
-  /tr "node C:\Users\alice\projects\cline-hub\bridge\src\index.js" ^
+  /tr "node C:\Users\alice\.cline\data\workspaces\chat\cline-hub\bridge\src\index.js" ^
   /sc onlogon /rl highest /f
 ```
 
