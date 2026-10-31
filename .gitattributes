@@ -1,0 +1,26 @@
+# 行尾统一：仓库会整体拷到 Linux，混着 CRLF/LF 会在 shell 脚本、Caddyfile 上出问题
+* text=auto eol=lf
+
+# Windows 专用脚本保持 CRLF（PowerShell 5.1 更稳）
+*.ps1 text eol=crlf
+*.vbs text eol=crlf
+
+# 明确这几类是 LF
+Caddyfile        text eol=lf
+*.caddyfile      text eol=lf
+*.sh             text eol=lf
+*.js             text eol=lf
+*.mjs            text eol=lf
+*.json           text eol=lf
+*.sql            text eol=lf
+*.md             text eol=lf
+*.yml            text eol=lf
+*.html           text eol=lf
+*.css            text eol=lf
+*.svg            text eol=lf
+*.txt            text eol=lf
+
+# 二进制，别碰
+*.pem  binary
+*.png  binary
+*.ico  binary

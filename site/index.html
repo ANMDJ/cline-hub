@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cline Console · 把 Cline 的每一次执行装进口袋</title>
+<meta name="description" content="Cline Console 是自托管的 Cline 会话看板：Windows 端采集 VS Code Cline 与 CLI 的会话结果，经 Hub 落库后推送到 Android，并支持从手机下发命令回 Windows 执行。单机部署、零前端框架。">
+<meta name="theme-color" content="#0b0f14">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Cline Console · 自托管的 Cline 会话看板">
+<meta property="og:description" content="会话回溯 + 结果预览 + 手机远程下发命令。Windows 采集 → Ubuntu Hub → Android App，全链路自建。">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<header class="nav">
+  <a class="brand" href="#top">
+    <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+      <rect x="2" y="2" width="28" height="28" rx="8" fill="none" stroke="currentColor" stroke-width="2"/>
+      <path d="M10 20.5v-9l6 4.5 6-4.5v9" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <span>Cline<b>Console</b></span>
+  </a>
+  <nav class="nav-links" aria-label="主导航">
+    <a href="#why">为什么</a>
+    <a href="#features">特性</a>
+    <a href="#arch">架构</a>
+    <a href="#start">快速开始</a>
+    <a href="#security">安全</a>
+    <a href="#roadmap">路线图</a>
+    <a class="nav-cta" href="https://github.com/" data-todo="repo">GitHub</a>
+  </nav>
+</header>
+
+<main id="top">
+
+  <section class="hero">
+    <p class="eyebrow">Self-hosted · 自托管 · 单机可跑</p>
+    <h1>把 Cline 的每一次执行<br><em>装进口袋</em></h1>
+    <p class="lede">
+      在 Windows 上跑 Cline，人一走开就失联；<code>sessions.db</code> 里的结果散成一堆 JSON；
+      想让它顺手跑个命令，还得回到电脑前。
+      <strong>Cline Console</strong> 把这三件事一次解决：采集 → 落库 → 手机上看，并且能从手机把命令发回去执行。
+    </p>
+    <div class="hero-actions">
+      <a class="btn btn-primary" href="#start">五分钟自建</a>
+      <a class="btn btn-ghost" href="#arch">先看架构</a>
+    </div>
+    <ul class="hero-facts">
+      <li><span>3</span>个部件：采集器 / Hub / App</li>
+      <li><span>0</span>个前端框架依赖</li>
+      <li><span>1</span>台 Ubuntu 就能跑</li>
+      <li><span>20/20</span>冒烟检查全绿</li>
+    </ul>
+  </section>
+
+  <section id="why" class="section">
+    <h2>它解决什么</h2>
+    <p class="section-lede">不是又一个「AI 聊天壳」，而是给长时间运行的 agent 补上「离开桌面之后」的那一段。</p>
+    <div class="cards cards-3">
+      <article class="card">
+        <span class="card-num">01</span>
+        <h3>离开就失联</h3>
+        <p>Cline 的任务动辄几十分钟。现在你在外面也能看到「跑完了 / 报错了 / 被中断了」，以及最后的输出。</p>
+      </article>
+      <article class="card">
+        <span class="card-num">02</span>
+        <h3>结果散落各处</h3>
+        <p>会话记录存在本机 SQLite，跨机器、跨设备没法翻。Hub 用 Postgres 统一收口，支持全文搜索与游标分页。</p>
+      </article>
+      <article class="card">
+        <span class="card-num">03</span>
+        <h3>回不了指令</h3>
+        <p>看完结果想让它接着干，不必回到电脑前：手机上写一句，Windows 侧按模板执行，结果原路回写。</p>
+      </article>
+    </div>
+  </section>
+
+
+  <section id="features" class="section">
+    <h2>特性</h2>
+    <p class="section-lede">全部围绕一件事：让「本机 agent」变成「可远程观测、可远程驱动」的常驻服务。</p>
+    <div class="cards cards-2">
+      <article class="feature">
+        <h3>会话回溯</h3>
+        <p>按 <code>updated_at</code> 水位线增量读取 <code>sessions.db</code> + <code>messages.json</code>，只抽结果文本与命令，
+           重复上报走 upsert，断网时先进 outbox 队列，恢复后补传。</p>
+      </article>
+      <article class="feature">
+        <h3>实时下行</h3>
+        <p>一条 SSE 长连接 <code>GET /api/v1/events</code>，新会话、新命令即时到达；断线自动退化为轮询，不丢事件。</p>
+      </article>
+      <article class="feature">
+        <h3>远程命令</h3>
+        <p>App 下发 → Hub 排队 → 采集器用 <code>FOR UPDATE SKIP LOCKED</code> 领取 → 本地执行 → 回写
+           <code>running / done / failed</code> 与完整输出。</p>
+      </article>
+      <article class="feature">
+        <h3>模板化执行</h3>
+        <p>命令不是一个裸 shell：由 <code>template</code> 决定怎么跑（<code>{prompt}</code> 直接当脚本，或
+           <code>cline --yolo "{prompt}"</code>），脚本先落临时文件，绕开引号转义地狱。</p>
+      </article>
+      <article class="feature">
+        <h3>零框架后端</h3>
+        <p>裸 <code>node:http</code> + <code>pg</code>，唯一依赖就是驱动；4 个 SQL 迁移幂等建表，
+           单文件 Docker 镜像，常驻内存个位数 MB。</p>
+      </article>
+      <article class="feature">
+        <h3>可自证健康</h3>
+        <p>自带 <code>smoke</code> 脚本，20 项检查覆盖鉴权、分页、搜索、命令闭环、SSE，任何一项红就 <code>exit 1</code>，
+           可以直接当部署闸门。</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="arch" class="section">
+    <h2>架构</h2>
+    <p class="section-lede">三段式，没有消息队列、没有 K8s，出问题时一眼能看出卡在哪一段。</p>
+
+    <div class="arch">
+      <div class="arch-node">
+        <h3>Windows</h3>
+        <p class="arch-sub">采集器 · 执行器</p>
+        <ul>
+          <li>Cline Hooks（结束 / 失败 / 中断）</li>
+          <li>增量读 <code>sessions.db</code></li>
+          <li><code>127.0.0.1:3210</code> 本地 hook 服务</li>
+          <li>按模板执行远程命令</li>
+        </ul>
+      </div>
+      <div class="arch-arrow" aria-hidden="true">
+        <span>HTTPS · token</span>
+        <svg viewBox="0 0 64 16"><path d="M0 8h58m0 0-8-6m8 6-8 6" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+      </div>
+      <div class="arch-node arch-node-hub">
+        <h3>Hub</h3>
+        <p class="arch-sub">Ubuntu · Caddy · Docker</p>
+        <ul>
+          <li>REST + SSE（<code>node:http</code>）</li>
+          <li>Postgres：sessions / hooks / commands</li>
+          <li>SHA-256 token + 每 IP 限流</li>
+          <li>只监听 <code>127.0.0.1</code>，Caddy 反代</li>
+        </ul>
+      </div>
+      <div class="arch-arrow" aria-hidden="true">
+        <span>SSE · 轮询</span>
+        <svg viewBox="0 0 64 16"><path d="M0 8h58m0 0-8-6m8 6-8 6" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+      </div>
+      <div class="arch-node">
+        <h3>Android</h3>
+        <p class="arch-sub">Flutter 客户端</p>
+        <ul>
+          <li>会话列表（摘要 + 游标分页）</li>
+          <li>详情 / 搜索 / 命令历史</li>
+          <li>下发命令（高风险模式二次确认）</li>
+          <li>SSE 实时刷新</li>
+        </ul>
+      </div>
+    </div>
+
+    <ol class="flow">
+      <li><b>实时</b>：Cline hook → 本地脚本 → 推送（手机立刻收到）+ <code>/hook</code>（进库）</li>
+      <li><b>回溯</b>：采集器按水位线扫 <code>sessions.db</code> → 抽结果与命令 → 上报 Hub</li>
+      <li><b>下发</b>：App → <code>POST /api/v1/commands</code> → 采集器领取 → 本地执行 → <code>PATCH</code> 回写</li>
+      <li><b>推送</b>：App 保持 <code>GET /api/v1/events</code>，断线退化为轮询</li>
+    </ol>
+  </section>
+
+  <section id="start" class="section">
+    <h2>五分钟自建</h2>
+    <p class="section-lede">三个部件都是普通 Node 进程 / 静态文件，没有魔法。下面以 Linux 服务端 + Windows 本机为例。</p>
+
+    <div class="steps">
+      <div class="step">
+        <h3><span>1</span>服务端：起 Hub</h3>
+<pre><code>git clone &lt;repo&gt; cline-hub &amp;&amp; cd cline-hub/server
+cp .env.example .env        # 填库地址、管理令牌
+docker compose build
+docker compose run --rm hub node src/migrate.js
+docker compose up -d
+node scripts/create-device.mjs --id localone --name "我的 Windows"  # 打印一次性 token
+node scripts/create-device.mjs --id phone --kind app --name "我的手机"</code></pre>
+      </div>
+
+      <div class="step">
+        <h3><span>2</span>反向代理：Caddy 兜住 TLS 与 SSE</h3>
+<pre><code>hub.example.com {
+    encode zstd gzip
+    @events path /api/v1/events*
+    reverse_proxy @events 127.0.0.1:3100 {
+        flush_interval -1      # SSE 必须实时下发
+    }
+    reverse_proxy 127.0.0.1:3100
+}</code></pre>
+      </div>
+
+      <div class="step">
+        <h3><span>3</span>Windows：装 hook + 起采集器</h3>
+<pre><code># hook 放进 Cline 的全局 Hooks 目录
+copy hooks\*.ps1 "%USERPROFILE%\Documents\Cline\Hooks\"
+
+# 采集器（开机自启见 deploy/windows/ClineBridge.vbs）
+cd bridge
+node src/index.js
+curl http://127.0.0.1:3210/health</code></pre>
+      </div>
+
+      <div class="step">
+        <h3><span>4</span>验收：跑冒烟</h3>
+<pre><code>HUB_SMOKE_BASE=https://hub.example.com node server/scripts/smoke.mjs \
+  --token-device &lt;device-token&gt; --token-app &lt;app-token&gt;
+# 20/20 checks passed</code></pre>
+      </div>
+    </div>
+
+    <p class="note">
+      手机端（Flutter App）在 <code>app/</code> 下，<code>baseUrl</code> 与 token 通过 <code>--dart-define</code> 注入，
+      不写死在代码里。
+    </p>
+  </section>
+
+  <section id="security" class="section">
+    <h2>安全边界</h2>
+    <p class="section-lede">「远程执行命令」是这套东西最危险的部分，所以默认全关，且每一步都要留痕。</p>
+    <div class="cards cards-3">
+      <article class="card">
+        <span class="card-num">默认关闭</span>
+        <h3>不配就不执行</h3>
+        <p><code>commands.enabled=false</code> 时，命令会一直停在 <code>pending</code>，采集器看都不看。
+           要开就得显式改配置，并选好模板。</p>
+      </article>
+      <article class="card">
+        <span class="card-num">白名单</span>
+        <h3>模式要过筛</h3>
+        <p><code>allowModes</code> 默认只放行 <code>plan</code> / <code>act</code>，<code>yolo</code> 不在名单里；
+           越权请求直接 <code>failed</code> 并写明原因。</p>
+      </article>
+      <article class="card">
+        <span class="card-num">可回收</span>
+        <h3>能停得下来</h3>
+        <p>超时按进程树强杀（<code>taskkill /t /f</code>），状态机只走
+           <code>pending → delivered → running → done / failed / cancelled</code>，每一步带时间戳。</p>
+      </article>
+      <article class="card">
+        <span class="card-num">鉴权</span>
+        <h3>token 只存哈希</h3>
+        <p>库表里只有 SHA-256 摘要，比对用 <code>timingSafeEqual</code>；设备与 App 是两类角色，
+           拿 App 的 token 打设备接口会 403。</p>
+      </article>
+      <article class="card">
+        <span class="card-num">限流</span>
+        <h3>每 IP 令牌桶</h3>
+        <p>默认 120 突发 / 5 rps 恢复，超限 <code>429 + retry-after</code>；可选 CIDR 白名单，
+           本机回环永远放行，不至于把自己锁在外面。</p>
+      </article>
+      <article class="card">
+        <span class="card-num">网络</span>
+        <h3>只信自己的反代</h3>
+        <p>Hub 只监听 <code>127.0.0.1</code>；只有直连方是回环时才采信 <code>X-Forwarded-For</code>，
+           避免伪造来源绕过限流。</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="roadmap" class="section">
+    <h2>进度</h2>
+    <p class="section-lede">先在真机上跑通，再谈好看。每一步都有可复现的验收命令。</p>
+    <table class="roadmap">
+      <thead>
+        <tr><th>阶段</th><th>内容</th><th>状态</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>M0</td>
+          <td>Cline Hooks + 即时通知</td>
+          <td><span class="tag tag-done">完成</span></td>
+        </tr>
+        <tr>
+          <td>M1</td>
+          <td>采集器 + Hub（REST / SSE / Postgres）+ 上线部署</td>
+          <td><span class="tag tag-done">完成</span></td>
+        </tr>
+        <tr>
+          <td>M2a</td>
+          <td>远程命令通道：App → Hub → 采集器 → 回写，实测 6 秒闭环</td>
+          <td><span class="tag tag-done">完成</span></td>
+        </tr>
+        <tr>
+          <td>M2b</td>
+          <td>Flutter App：会话列表 / 详情 / 搜索 / 下发命令</td>
+          <td><span class="tag tag-wip">进行中</span></td>
+        </tr>
+        <tr>
+          <td>M3</td>
+          <td>自建推送、多设备、命令取消与更细的审计视图</td>
+          <td><span class="tag">计划</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="faq" class="section">
+    <h2>常见问题</h2>
+    <div class="faq">
+      <details open>
+        <summary>为什么不直接用 Cline 自带的历史记录？</summary>
+        <p>自带的记录绑在这台机器上：换个设备看不到，任务跑完人不在也没提示，更没法从外面把下一条指令递进去。</p>
+      </details>
+      <details>
+        <summary>必须有自己的服务器吗？</summary>
+        <p>是。Hub 需要一台能常开的 Linux（1 核 1G 足够）和一个 Postgres。不想自己装数据库也行，
+           用任何托管 Postgres，改 <code>HUB_DATABASE_URL</code> 即可。</p>
+      </details>
+      <details>
+        <summary>没有域名、或者域名还没备案能用吗？</summary>
+        <p>能。Hub 只监听本地回环，对外那层可以随便换：域名、纯 IP、加随机路径前缀、
+          甚至套 Cloudflare Tunnel。客户端只是改 <code>baseUrl</code>，接口和鉴权完全不变
+           —— 这套东西就是被「域名不可用」逼出来验证过的。</p>
+      </details>
+      <details>
+        <summary>远程执行命令会不会很危险？</summary>
+        <p>会，所以默认关闭。开启后仍然有三道闸：模式白名单（<code>yolo</code> 默认不放行）、
+           模板固定可执行形态、超时强杀进程树；每条命令的完整生命周期都带时间戳落库，可事后复盘。</p>
+      </details>
+      <details>
+        <summary>数据会被上传到第三方吗？</summary>
+        <p>不会。会话、命令、token 摘要全部在自己的 Postgres 里；仓库里不出现任何真实口令，
+           <code>.env</code> 与 <code>bridge/config.json</code> 都在 gitignore 里。</p>
+      </details>
+      <details>
+        <summary>Windows 端为什么不注册成系统服务？</summary>
+        <p>为了不要求管理员权限。现在用「启动文件夹 + VBS 隐藏窗口」自启，普通用户即可；
+           想换成计划任务，一条 <code>schtasks</code> 命令的事。</p>
+      </details>
+    </div>
+  </section>
+
+  <section class="cta">
+    <h2>自己跑一份</h2>
+    <p>代码、迁移脚本、Caddy 配置、冒烟用例都在同一个仓库里，没有隐藏的私有依赖。</p>
+    <div class="hero-actions">
+      <a class="btn btn-primary" href="#start">从快速开始出发</a>
+      <a class="btn btn-ghost" href="https://github.com/" data-todo="repo">看源码</a>
+    </div>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <div>
+    <strong>Cline Console</strong>
+    <span>自托管 · Cline 会话看板与远程执行通道</span>
+  </div>
+  <nav aria-label="页脚导航">
+    <a href="#features">特性</a>
+    <a href="#arch">架构</a>
+    <a href="#security">安全</a>
+    <a href="#faq">FAQ</a>
+    <a href="https://github.com/" data-todo="repo">GitHub</a>
+  </nav>
+  <p class="footer-note">
+    为自用而写，顺手开源。许可证与仓库地址见项目根目录。
+  </p>
+</footer>
+
+<script src="/app.js" defer></script>
+</body>
+</html>
+
+
