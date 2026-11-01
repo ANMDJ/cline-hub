@@ -125,7 +125,30 @@ Caddy 标准发行版没有 rate_limit 插件（要自己 xcaddy 重编译），
 （`node site/check-site.mjs` 检查标签配对、CSS 括号、引用文件、锚点 id，非 0 退出，可进 CI）。
 
 站点根目录 `/var/www/cline-hub` 与 Hub 的 API 前缀 `/_h/<prefix>` 共用同一个 IP 站点：
-前缀优先反代到 Hub，其余路径落到 `file_server`，所以「网站」和「API」互不干扰，也不会因为多开端口扩大攻击面。
+前缀优先反代到 Hub，其余路径落到 `file_server`，所以「网站」和「API」互不干扰，
+也不会因为多开端口扩大攻击面。
+
+## 14. App 用「接口抽象 + ChangeNotifier」，Web 预览降级为轮询
+
+M2b 要交付的是「手机上能看会话、能下发命令」。选型上有三条路：
+
+| 方案 | 说明 | 结论 |
+|---|---|---|
+| 上 Riverpod / Bloc + 代码生成 | 生态最主流，但要引 3~5 个包 + build_runner | ✗ 对这个体量是负债 |
+| 直接 `setState` + 页面内各自 fetch | 依赖最少，但 SSE 重连、分页游标会散在五个页面里 | ✗ |
+| `HubApi` 接口 + 单个 `HubStore(ChangeNotifier)` | 依赖只有 `http` / `shared_preferences`，事件与分页集中一处 | ✅ |
+
+配套的三个决定：
+
+1. **`HubApi` 是接口**，`HttpHubApi` 是唯一实现，测试里换 `FakeHubApi`。
+   这样「模型解析、分页去重、事件去抖、断线退避」都能脱离网络单测（19 个用例，秒级跑完）。
+2. **Web 不假装有 SSE**：`package:http` 的 BrowserClient 会把整个响应体缓冲完再给，
+   流式解析拿不到增量帧。与其写一套 `dart:html` 分支，不如让 `events()` 在 Web 下返回
+  6 秒一次的 `tick`，由 `HubStore` 按节拍轮询 REST——行为一致，代码少一半。
+  Android 仍走真 SSE（`HttpClient` 流式），25 秒 `: ping` 心跳 + 1/2/5/10/20s 退避重连。
+3. **明文 HTTP 只在这段时间存在**：Android 侧开了 `usesCleartextTraffic`、并显式声明
+  `INTERNET` 权限（release 构建不会自动带）。备案通过切 HTTPS 后，这个开关要删掉，
+  token 也要轮换——这一点写进了 App 设置页的「安全提示」，避免以后只有我记得。
 
 
 

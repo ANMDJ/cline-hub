@@ -1,0 +1,286 @@
+import 'package:flutter/material.dart';
+
+import '../data/hub_api.dart';
+import '../data/settings_store.dart';
+import '../state/hub_store.dart';
+import 'theme.dart';
+import 'widgets.dart';
+
+/// 设置：连接信息、健康检查、默认设备、换连接。
+class SettingsPage extends StatefulWidget {
+  const SettingsPage({super.key, required this.settings, required this.store});
+
+  final SettingsStore settings;
+  final HubStore store;
+
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  late final TextEditingController _deviceCtrl = TextEditingController(
+    text: widget.settings.deviceId,
+  );
+  bool _checking = false;
+  String? _healthLine;
+  String? _healthError;
+
+  @override
+  void dispose() {
+    _deviceCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _check() async {
+    setState(() {
+      _checking = true;
+      _healthLine = null;
+      _healthError = null;
+    });
+    try {
+      final health = await widget.store.api.health();
+      if (!mounted) return;
+      setState(() {
+        _healthLine =
+            '${health.service} v${health.version} · 运行 ${formatUptime(health.uptimeSec)}\n'
+            '数据库 ${health.dbOk ? '正常' : '异常'}（${health.dbLatencyMs ?? '?'}ms）· SSE 连接 ${health.sseClients} 条';
+      });
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _healthError = error.friendly);
+    } catch (error) {
+      if (mounted) setState(() => _healthError = '$error');
+    } finally {
+      if (mounted) setState(() => _checking = false);
+    }
+  }
+
+  Future<void> _saveDevice() async {
+    await widget.settings.setDeviceId(_deviceCtrl.text);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('默认设备已保存'), duration: Duration(seconds: 1)),
+    );
+  }
+
+  Future<void> _signOut() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: kPanel,
+        title: const Text('换一套连接？'),
+        content: const Text(
+          '会清空本机保存的地址和 token，回到首次启动的向导。App 里的数据都在服务器上，不会丢。',
+          style: TextStyle(fontSize: 13, height: 1.6, color: kMuted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('清空并退出', style: TextStyle(color: kDanger)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await widget.settings.signOut();
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  String formatUptime(int seconds) {
+    if (seconds < 60) return '${seconds}s';
+    final minutes = seconds ~/ 60;
+    if (minutes < 60) return '${minutes}m';
+    final hours = minutes ~/ 60;
+    if (hours < 24) return '${hours}h${minutes % 60}m';
+    return '${hours ~/ 24}d${hours % 24}h';
+  }
+
+  Widget _kv(String label, String value, {bool mono = false}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 64,
+            child: Text(
+              label,
+              style: const TextStyle(fontSize: 12, color: kMuted, height: 1.5),
+            ),
+          ),
+          Expanded(
+            child: SelectableText(
+              value,
+              style: mono
+                  ? kMono
+                  : const TextStyle(fontSize: 12.5, height: 1.5, color: kText),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final settings = widget.settings;
+    return Scaffold(
+      appBar: AppBar(title: const Text('设置')),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(14, 8, 14, 32),
+        children: [
+          SectionCard(
+            title: '连接',
+            trailing: LinkBadge(
+              state: widget.store.link,
+              detail: widget.store.linkError,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _kv('地址', settings.baseUrl, mono: true),
+                _kv('token', settings.maskedToken, mono: true),
+                _kv(
+                  '默认设备',
+                  settings.deviceId.isEmpty ? '（未设置）' : settings.deviceId,
+                  mono: true,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          SectionCard(
+            title: 'Hub 健康',
+            trailing: TextButton(
+              onPressed: _checking ? null : _check,
+              child: Text(
+                _checking ? '检查中…' : '检查',
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (_healthLine == null && _healthError == null)
+                  const Text(
+                    '点「检查」拉一次 /api/v1/health，确认服务、数据库和 SSE 都在。',
+                    style: TextStyle(fontSize: 12, height: 1.65, color: kMuted),
+                  ),
+                if (_healthLine != null)
+                  Text(
+                    _healthLine!,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      height: 1.7,
+                      color: kAccent,
+                    ),
+                  ),
+                if (_healthError != null)
+                  Text(
+                    _healthError!,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      height: 1.7,
+                      color: kDanger,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          SectionCard(
+            title: '默认执行设备',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: _deviceCtrl,
+                  autocorrect: false,
+                  style: kMono,
+                  decoration: const InputDecoration(hintText: 'localone'),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        '下发命令时默认发到这台设备，可在下发面板里临时改。',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          height: 1.6,
+                          color: kMuted,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    FilledButton(
+                      onPressed: _saveDevice,
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 36),
+                      ),
+                      child: const Text('保存', style: TextStyle(fontSize: 12.5)),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          const SectionCard(
+            title: '安全提示',
+            child: Text(
+              '当前是 IP + 随机前缀的明文 HTTP 入口（域名还在等备案）。同网络的其他人理论上能嗅探到 token，'
+              '所以尽量别在公共 Wi-Fi 下用；备案通过后把地址换成 https://hub.littlewish.top，'
+              '并在服务器上轮换 device / app token。',
+              style: TextStyle(fontSize: 12, height: 1.7, color: kMuted),
+            ),
+          ),
+          const SizedBox(height: 12),
+          SectionCard(
+            title: '换个 Hub',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '清空本机的地址和 token，重新走一遍向导。',
+                  style: TextStyle(fontSize: 12, height: 1.65, color: kMuted),
+                ),
+                const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: _signOut,
+                  icon: const Icon(Icons.logout_rounded, size: 16),
+                  label: const Text('清空并退出'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: kDanger,
+                    side: BorderSide(color: kDanger.withValues(alpha: 0.4)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          const SectionCard(
+            title: '关于',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Cline Console 0.1.0',
+                  style: TextStyle(fontSize: 12.5, height: 1.7),
+                ),
+                SizedBox(height: 4),
+                Text(
+                  'Hub API v1 · Flutter Android 客户端 · 数据只存在你自己的服务器',
+                  style: TextStyle(fontSize: 11.5, height: 1.7, color: kMuted),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

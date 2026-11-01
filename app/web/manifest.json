@@ -1,0 +1,35 @@
+{
+    "name": "Cline Console",
+    "short_name": "Cline Console",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#0A0E13",
+    "theme_color": "#0A0E13",
+    "description": "Cline Console · 把 Cline 的每一次执行装进口袋",
+    "orientation": "portrait-primary",
+    "prefer_related_applications": false,
+    "icons": [
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}

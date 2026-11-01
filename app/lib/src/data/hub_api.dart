@@ -1,0 +1,323 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:http/http.dart' as http;
+
+import '../models/models.dart';
+
+/// 统一把服务端的 `{ ok:false, code, message }` 和网络异常转成一句中文。
+class ApiException implements Exception {
+  ApiException(this.status, this.code, this.message);
+
+  /// status == 0 表示请求没走到服务端（DNS / 连接 / 超时）。
+  final int status;
+  final String code;
+  final String message;
+
+  bool get isAuth => status == 401 || code == 'forbidden';
+
+  String get friendly => switch (code) {
+    'network' => '连不上 Hub：检查地址、网络，以及 baseUrl 是否带了 /_h/<前缀>',
+    'timeout' => '请求超时：服务器没响应，稍后再试',
+    'unauthorized' => 'token 无效或已失效（401）——用 create-device 重新签发一个',
+    'forbidden' => '这个 token 的角色没有该权限（403）',
+    'ip_not_allowed' => '服务器 IP 白名单拒绝了本机（403）',
+    'rate_limited' => '触发限流（429），等一两秒再试',
+    'not_found' || 'http_404' => '404：路径不存在，检查 baseUrl 是否包含 /_h/<前缀>',
+    'http_502' || 'http_503' || 'http_504' => '网关后面的服务没起来（$code），去服务器看 Hub 进程',
+    'unknown_device' => '设备不存在：先在 Hub 上创建设备客户端',
+    'auth_unavailable' => 'Hub 连不上数据库（503）',
+    'invalid_field' => '参数不合法：$message',
+    _ => status == 0 ? message : '$message（$status $code）',
+  };
+
+  @override
+  String toString() => 'ApiException($status $code): $message';
+}
+
+/// 去掉末尾斜杠，App 里所有路径都按 `$base + /api/v1/...` 拼。
+String normalizeBaseUrl(String raw) {
+  var value = raw.trim();
+  while (value.endsWith('/')) {
+    value = value.substring(0, value.length - 1);
+  }
+  return value;
+}
+
+/// App 只依赖这个接口：真实实现走 HTTP，测试里换成内存假实现。
+abstract class HubApi {
+  Future<HealthInfo> health();
+
+  Future<SessionPage> sessions({
+    String? cursor,
+    String? query,
+    String? status,
+    String? deviceId,
+    int limit,
+  });
+
+  Future<SessionDetail> session(String sessionId);
+
+  Future<List<CommandItem>> commands({
+    int limit,
+    String? status,
+    String? deviceId,
+  });
+
+  Future<CommandItem> sendCommand({
+    required String deviceId,
+    required String prompt,
+    String mode,
+    String? workspace,
+  });
+
+  Future<List<HookItem>> hooks({int limit, int? beforeId, String? deviceId});
+
+  /// 服务端事件流。Android 走 SSE；web 预览不支持流式响应，退化成心跳轮询。
+  Stream<HubEvent> events();
+
+  Future<void> close();
+}
+
+class HttpHubApi implements HubApi {
+  HttpHubApi({
+    required String baseUrl,
+    required String token,
+    http.Client? client,
+    this.timeout = const Duration(seconds: 15),
+  }) : _base = normalizeBaseUrl(baseUrl),
+       _token = token.trim(),
+       _client = client ?? http.Client();
+
+  final String _base;
+  final String _token;
+  final http.Client _client;
+  final Duration timeout;
+
+  Uri _uri(String path, [Map<String, String>? query]) {
+    final uri = Uri.parse('$_base$path');
+    if (query == null || query.isEmpty) return uri;
+    return uri.replace(queryParameters: {...uri.queryParameters, ...query});
+  }
+
+  Map<String, String> get _headers => {
+    'authorization': 'Bearer $_token',
+    'accept': 'application/json',
+  };
+
+  Future<Map<String, dynamic>> _request(
+    String method,
+    String path, {
+    Map<String, String>? query,
+    Object? body,
+  }) async {
+    final request = http.Request(method, _uri(path, query));
+    request.headers.addAll(_headers);
+    if (body != null) {
+      request.headers['content-type'] = 'application/json; charset=utf-8';
+      request.body = jsonEncode(body);
+    }
+
+    http.StreamedResponse response;
+    try {
+      response = await _client.send(request).timeout(timeout);
+    } on TimeoutException {
+      throw ApiException(
+        0,
+        'timeout',
+        'request timed out after ${timeout.inSeconds}s',
+      );
+    } catch (error) {
+      throw ApiException(0, 'network', '$error');
+    }
+
+    final text = await response.stream.bytesToString();
+    return _decode(response.statusCode, text);
+  }
+
+  Map<String, dynamic> _decode(int status, String text) {
+    Map<String, dynamic>? json;
+    if (text.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(text);
+        if (decoded is Map) json = decoded.cast<String, dynamic>();
+      } catch (_) {
+        // 非 JSON（比如反代返回的 404 页面）走下面的兜底
+      }
+    }
+
+    if (status >= 400 || (json != null && json['ok'] == false)) {
+      final code =
+          json?['code'] as String? ??
+          (status >= 400 ? 'http_$status' : 'unknown');
+      final message =
+          json?['message'] as String? ??
+          (text.isEmpty ? 'empty response' : text);
+      throw ApiException(status, code, message);
+    }
+    if (json == null) {
+      throw ApiException(status, 'bad_response', 'expected JSON, got: $text');
+    }
+    return json;
+  }
+
+  List<Map<String, dynamic>> _items(Map<String, dynamic> json) {
+    final items = json['items'];
+    if (items is! List) return const <Map<String, dynamic>>[];
+    return items
+        .whereType<Map>()
+        .map((item) => item.cast<String, dynamic>())
+        .toList(growable: false);
+  }
+
+  @override
+  Future<HealthInfo> health() async =>
+      HealthInfo.fromJson(await _request('GET', '/api/v1/health'));
+
+  @override
+  Future<SessionPage> sessions({
+    String? cursor,
+    String? query,
+    String? status,
+    String? deviceId,
+    int limit = 30,
+  }) async {
+    final json = await _request(
+      'GET',
+      '/api/v1/sessions',
+      query: {
+        'limit': '$limit',
+        if (cursor != null && cursor.isNotEmpty) 'cursor': cursor,
+        if (query != null && query.isNotEmpty) 'q': query,
+        if (status != null && status.isNotEmpty) 'status': status,
+        if (deviceId != null && deviceId.isNotEmpty) 'deviceId': deviceId,
+      },
+    );
+    return SessionPage.fromJson(json);
+  }
+
+  @override
+  Future<SessionDetail> session(String sessionId) async {
+    final json = await _request(
+      'GET',
+      '/api/v1/sessions/${Uri.encodeComponent(sessionId)}',
+    );
+    final raw = json['session'];
+    return SessionDetail.fromJson(
+      raw is Map ? raw.cast<String, dynamic>() : <String, dynamic>{},
+    );
+  }
+
+  @override
+  Future<List<CommandItem>> commands({
+    int limit = 50,
+    String? status,
+    String? deviceId,
+  }) async {
+    final json = await _request(
+      'GET',
+      '/api/v1/commands',
+      query: {
+        'limit': '$limit',
+        if (status != null && status.isNotEmpty) 'status': status,
+        if (deviceId != null && deviceId.isNotEmpty) 'deviceId': deviceId,
+      },
+    );
+    return _items(json).map(CommandItem.fromJson).toList(growable: false);
+  }
+
+  @override
+  Future<CommandItem> sendCommand({
+    required String deviceId,
+    required String prompt,
+    String mode = 'plan',
+    String? workspace,
+  }) async {
+    final json = await _request(
+      'POST',
+      '/api/v1/commands',
+      body: {
+        'deviceId': deviceId,
+        'prompt': prompt,
+        'mode': mode,
+        if (workspace != null && workspace.isNotEmpty) 'workspace': workspace,
+      },
+    );
+    final raw = json['command'];
+    return CommandItem.fromJson(
+      raw is Map ? raw.cast<String, dynamic>() : <String, dynamic>{},
+    );
+  }
+
+  @override
+  Future<List<HookItem>> hooks({
+    int limit = 50,
+    int? beforeId,
+    String? deviceId,
+  }) async {
+    final json = await _request(
+      'GET',
+      '/api/v1/hooks',
+      query: {
+        'limit': '$limit',
+        if (beforeId != null) 'beforeId': '$beforeId',
+        if (deviceId != null && deviceId.isNotEmpty) 'deviceId': deviceId,
+      },
+    );
+    return _items(json).map(HookItem.fromJson).toList(growable: false);
+  }
+
+  @override
+  Stream<HubEvent> events() => kIsWeb ? _poll() : _sse();
+
+  /// 浏览器拿不到流式响应（BrowserClient 会缓冲整个 body），
+  /// 与其装作有 SSE，不如老实地按固定节拍让上层去拉数据。
+  Stream<HubEvent> _poll() async* {
+    while (true) {
+      await Future<void>.delayed(const Duration(seconds: 6));
+      yield const HubEvent('tick', <String, dynamic>{});
+    }
+  }
+
+  Stream<HubEvent> _sse() async* {
+    final request =
+        http.Request('GET', _uri('/api/v1/events', {'token': _token}))
+          ..headers['accept'] = 'text/event-stream'
+          ..headers['cache-control'] = 'no-cache';
+
+    final response = await _client.send(request);
+    if (response.statusCode != 200) {
+      final body = await response.stream.bytesToString();
+      _decode(response.statusCode, body); // 只为抛异常
+    }
+
+    String? event;
+    final data = StringBuffer();
+
+    await for (final line
+        in response.stream
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())) {
+      if (line.isEmpty) {
+        if (data.isNotEmpty) {
+          final payload = data.toString();
+          data.clear();
+          yield HubEvent.fromSse(event ?? 'message', payload);
+        }
+        event = null;
+        continue;
+      }
+      if (line.startsWith(':')) continue; // ": ping" 心跳
+      if (line.startsWith('event:')) {
+        event = line.substring(6).trim();
+      } else if (line.startsWith('data:')) {
+        if (data.isNotEmpty) data.write('\n');
+        data.write(line.substring(5).trimLeft());
+      }
+    }
+  }
+
+  @override
+  Future<void> close() async => _client.close();
+}

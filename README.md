@@ -13,7 +13,7 @@
 | Bridge | `bridge/` | Windows 常驻进程：收 Hook、增量读 `sessions.db`、上报 Hub、执行远程命令 |
 | Hub | `server/` | Ubuntu 上的接收端：REST + SSE + Postgres（本机已联调通过） |
 | Site | `site/` | 开源落地页（纯静态，Caddy `file_server` 直出，无构建） |
-| App | `app/`（M2） | Flutter Android 客户端 |
+| App | `app/` | Flutter Android 客户端（Web 仅预览）：会话 / 命令 / 动态 + SSE |
 
 ## 数据流
 
@@ -87,6 +87,33 @@ ssh ubuntu@82.157.153.22 'sudo tar -xzf /tmp/site.tgz -C /var/www/cline-hub \
 运行手册见 `site/README.md` 与 `deploy/README.md` §12。
 
 
+## App（M2b）
+
+Flutter 客户端在 `app/`，Android 为主，Web 只作桌面预览（没有 SSE，退化成 6s 轮询）。
+
+```bash
+cd app
+flutter pub get
+flutter run -d android          # 真机
+flutter run -d chrome           # 桌面预览
+flutter test                    # 19 个用例：模型 / 状态层 / 页面
+flutter build apk --release
+```
+
+首次启动进向导，填 Hub 地址（`http://82.157.153.22/_h/<前缀>`）和 **app 角色**的 token
+（`npm run create-device -- --id phone --role app --name Pixel`）。三个 Tab：
+
+| Tab | 内容 |
+|---|---|
+| 会话 | 搜索 + 游标无限翻页；详情有结果全文、执行过的命令、耗时 |
+| 命令 | 下发 `plan/act/yolo`、盯 `pending→delivered→running→done`、直接读输出 |
+| 动态 | hook 事件流（任务开始/结束/中断），比会话采集更快到手机 |
+
+实现上的取舍写在 `app/README.md` 与 `docs/decisions.md` ADR-14。
+两个必须知道的坑：**下发命令必须是 app 角色**（device token 会 403）；
+**当前是明文 HTTP**，所以 Android 开了 `usesCleartextTraffic`，切 HTTPS 后要删掉并轮换 token。
+
+
 ## 里程碑
 
 | 阶段 | 内容 | 状态 |
@@ -94,7 +121,7 @@ ssh ubuntu@82.157.153.22 'sudo tar -xzf /tmp/site.tgz -C /var/www/cline-hub \
 | M0 | Hook 脚本 + ntfy 通知 | ✅ 完成 |
 | M1 | bridge 采集器 + Hub 服务 + 部署 | ✅ 完成（smoke 20/20；域名被备案拦截后改走 IP 前缀入口，见上节） |
 | M2a | 远程命令通道（bridge 执行器） | ✅ 完成（App→Hub→bridge→PowerShell→回写，实测 6s 闭环） |
-| M2b | Flutter App（会话列表/命令执行） | 待开始 |
+| M2b | Flutter App（会话列表/命令执行） | ✅ 完成（三 Tab + SSE 实时 + 下发命令；`flutter test` 19/19） |
 
 
 ## 快速开始（本机）
