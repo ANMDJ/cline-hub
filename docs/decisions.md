@@ -494,3 +494,32 @@ args.push(...clineOpts.extraArgs, '-c', cwd, prompt)
 **历史数据**：误发的 98 条 `session_failed` 已从 Hub 的 `hooks` 表删除，删除前备份在
 `%TEMP%\hooks-kz6g7-backup.csv` 与 `hooks-kz6g7-backup2.csv`（仍在另一台机器上就不可见了，
 需要的话从 VPS 的 `/tmp` 或日志里再取）。
+
+## 27. cline CLI 把「不含空白的单个词」当子命令（2026-11-01）
+
+**现象**：App 下发 `java`、`安装包可以传给我吗` 都立刻 `failed`，错误是
+`Unknown command or unquoted prompt: <prompt>`；同一套配置发
+`只回复一行 ACT-OK，不要运行任何命令。`（带空格）却正常。
+
+**根因**（从 `@cline/cli-windows-x64/bin/cline.exe` 里读到的实现）：
+
+```js
+function Ge(e){ return !!e && /\s/.test(e) }   // 含空白才像 prompt
+function Ye(e){ z(`Unknown command or unquoted prompt: ${e.join(" ")} …`) }
+```
+
+单个位置参数**没有任何空白**时，CLI 会把它当成子命令名（`auth` / `doctor` 那一类），
+认不出来就报上面那句。中文用户一句话经常不打空格，所以这个坑命中率很高。
+跟 provider、token、workspace 全都无关。
+
+**修法**（`bridge/src/command-worker.js` 的 `runCline`）：
+
+```js
+args.push(/\s/.test(prompt) ? prompt : `${prompt} `)
+```
+
+只在「完全不含空白」时才补一个尾随空格，其余原样；模型收到的文本多一个空格，语义无影响。
+备选是 `args.push(prompt, '')`（靠 CLI 自己 `join(' ')` 补），但那是依赖内部行为，不做。
+
+**实测**：`cmd_d443917048ea`，prompt = `只回复SPACE-OK`（无空格）→ `done`，
+`resultText` 含 `SPACE-OK`，`sessionId=1793568956535_um63t` 且已回写。

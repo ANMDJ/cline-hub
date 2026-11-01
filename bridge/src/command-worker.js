@@ -343,7 +343,11 @@ export function createCommandWorker({ cfg, logger }) {
     // 所以带 sessionId 也一律 -c 新开会话（2026-11-01 实测）。
     args.push('-c', cwd)
     // 位置参数必须在最后：commander 会把 prompt 之后的一切当成 prompt 的一部分。
-    args.push(prompt)
+    // cline CLI 用 `/\s/` 判断「这串像不像 prompt」：完全不含空白的词会被当成子命令，
+    // 直接报 `Unknown command or unquoted prompt: xxx`（2026-11-01 实测：
+    // `java`、`安装包可以传给我吗` 都中招；带空格的中文句子正常）。
+    // 中文用户一句话经常不打空格，所以这里补一个尾随空格，对模型语义无影响。
+    args.push(/\s/.test(prompt) ? prompt : `${prompt} `)
     const target = resolveClineTarget()
     return runProcess(target.command, [...target.argv, ...args], cwd, clineOpts.timeoutMs, { shell: target.shell })
   }
