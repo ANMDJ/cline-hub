@@ -21,6 +21,8 @@ const MAX_SENT_MEMORY = 2000
  * 消息级别的实时性靠 transcript 增量（见 emitTranscript）保证，这里只管会话快照。
  */
 const RUNNING_MIN_INTERVAL_MS = Number(process.env.CLINE_HUB_RUNNING_MS) || 5000
+/** 僵尸会话（DB 说 running、进程已死）没必要每轮都发，10 分钟一次足够。 */
+const ZOMBIE_MIN_INTERVAL_MS = 10 * 60 * 1000
 
 /**
  * 重发窗口：messages.json 是追加写的，最后一条 assistant 消息在流式输出时
@@ -39,6 +41,7 @@ const BACKFILL_LIMIT = 100
 
 /** session_id -> 上次上报 running 快照的本地时间，仅内存，重启后最多多推一次。 */
 const runningEmitAt = new Map()
+const zombieEmitAt = new Map()
 
 const cfg = loadConfig()
 const logger = createLogger(cfg.logFile)
@@ -94,6 +97,10 @@ function loadState() {
     sentSessions: {},
     pendingRunning: [],
     needsBackfill: false,
+    /** sessionId -> `${status}|${endedAt}`：完成通知的幂等键，防同一条反复弹 */
+    completionEvents: {},
+    /** sessionId -> { stamp, since, previous }：等待「稳定 30 秒」的终态 */
+    pendingCompletions: {},
     /** sessionId -> { v: 抽取规则版本, n: 已上报条数, tail: 末条文本长度 } */
     transcripts: {},
     /** 尚未回填的历史会话队列，重启后接着跑 */
@@ -107,6 +114,8 @@ function loadState() {
     const { map, migrated } = normalizeSentSessions(merged.sentSessions)
     merged.sentSessions = map
     if (!Array.isArray(merged.pendingRunning)) merged.pendingRunning = []
+    if (!merged.completionEvents || typeof merged.completionEvents !== 'object') merged.completionEvents = {}
+    if (!merged.pendingCompletions || typeof merged.pendingCompletions !== 'object') merged.pendingCompletions = {}
     if (!merged.transcripts || typeof merged.transcripts !== 'object') merged.transcripts = {}
     if (!Array.isArray(merged.transcriptBackfill)) merged.transcriptBackfill = []
     // 迁移过，或者上一次迁移跑到一半（指纹为空串）都要回填一次；
@@ -152,12 +161,51 @@ function allowedWorkspace(row) {
   return whitelist.some((item) => root.includes(normalizePath(item)))
 }
 
+/**
+ * 真实状态：DB 里的 `status` 有两类不可信，都得在这里纠正。
+ *
+ * 1. cline 偶尔把**仍在跑**的会话短暂写成 `failed`（hook 派发失败时落一次），
+ *    过一会儿又翻回 `running`；没有 `ended_at` 的那种，按「还在跑」算。
+ * 2. 反过来，`status=running` 但进程早没了（比如昨天 VS Code 里的会话，pid 已回收），
+ *    那是僵尸：一直显示「执行中」是假的，按 `failed` 处理，并且只通知一次。
+ */
+function isProcessAlive(pid) {
+  if (!pid) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    // EPERM = 进程存在但没权限，仍然算活着
+    return error?.code === 'EPERM'
+  }
+}
+
+function sessionState(row) {
+  const status = String(row.status ?? '')
+  const pidDead = Boolean(row.pid) && !isProcessAlive(row.pid)
+  if (status === 'running') {
+    if (pidDead) return { status: 'failed', zombie: true }
+    return { status, zombie: false }
+  }
+  if (status === 'failed') {
+    if (!row.ended_at) return { status: 'running', zombie: false }
+    // 失败但进程已经没了：可能是真失败，也可能是僵尸会话在 failed/running 之间来回翻，
+    // 统一打上 zombie 标记，交给节流和幂等去压。
+    return { status: 'failed', zombie: pidDead }
+  }
+  return { status, zombie: false }
+}
+
+function effectiveStatus(row) {
+  return sessionState(row).status
+}
+
 function toRecord(row, extraction) {
   const project = projectInfo(row.workspace_root)
   return {
     sessionId: row.session_id,
     source: row.source,
-    status: row.status,
+    status: effectiveStatus(row),
     exitCode: row.exit_code,
     provider: row.provider,
     model: row.model,
@@ -263,17 +311,64 @@ function syncTranscript(row) {
  * `sawRunning` 那道判断是必要的：首次回填会把几十个历史会话一次性翻出来，
  * 没有它手机的开机瞬间会被历史通知刷屏。
  */
-function notifyCompletion(row, record, previous) {
-  const status = String(row.status ?? '')
+/**
+ * 终态必须「稳定」了才算数。
+ *
+ * 实测（2026-11-01）：kids_points_app 那个 VS Code 会话会周期性被写成 `failed`
+ * 再翻回 `running`，每次还带一个新的 `ended_at` —— 按指纹去重根本拦不住，
+ * 手机上「动态」会被同一条「执行失败」刷屏（20 分钟里 91 条）。
+ *
+ * 所以分两步：先排队，`COMPLETION_SETTLE_MS` 后复查，仍是同一个终态才真正发；
+ * 中途翻回 running 或换了个终态，就直接丢弃。
+ */
+const COMPLETION_SETTLE_MS = 30_000
+
+function completionStamp(row) {
+  const state = sessionState(row)
+  // 僵尸会话的 ended_at 会随抖动变化，用它做键会重复通知，固定成 `failed|zombie`。
+  if (state.zombie) return 'failed|zombie'
+  return `${state.status}|${row.ended_at ?? ''}`
+}
+
+function scheduleCompletion(row, previous) {
+  const status = effectiveStatus(row)
   if (!status || status === 'running') return
+  if ((state.completionEvents ?? {})[row.session_id] === completionStamp(row)) return
 
   const sawRunning = String(previous ?? '').startsWith('running|') ||
     state.pendingRunning.includes(row.session_id)
   if (!sawRunning) return
 
+  const pending = state.pendingCompletions ?? (state.pendingCompletions = {})
+  const stamp = completionStamp(row)
+  if (pending[row.session_id]?.stamp === stamp) return
+  pending[row.session_id] = { stamp, since: Date.now(), previous }
+}
+
+/** 每轮 poll 调一次：把「稳住了」的终态真正发出去。 */
+function flushCompletions() {
+  const pending = state.pendingCompletions
+  if (!pending || !db) return
+  const now = Date.now()
+  for (const [sessionId, entry] of Object.entries(pending)) {
+    if (now - entry.since < COMPLETION_SETTLE_MS) continue
+    delete pending[sessionId]
+    const row = getSessionById(db, sessionId)
+    if (!row) continue
+    const status = effectiveStatus(row)
+    if (!status || status === 'running') continue      // 翻回运行：不是终态
+    if (completionStamp(row) !== entry.stamp) continue // 又变了：下一轮重新排队
+    emitCompletion(row, entry.previous)
+  }
+}
+
+function emitCompletion(row, previous) {
+  const status = effectiveStatus(row)
+  const stamp = completionStamp(row)
   const event = status === 'failed'
     ? 'session_failed'
     : (status === 'cancelled' ? 'session_cancelled' : 'session_done')
+  const record = toRecord(row, extractSession(row.messages_path, cfg))
   const summary = String(record.resultText ?? '').replace(/\s+/g, ' ').trim()
 
   outbox.add({
@@ -292,6 +387,7 @@ function notifyCompletion(row, record, previous) {
       }
     }
   })
+  state.completionEvents = { ...(state.completionEvents ?? {}), [row.session_id]: stamp }
   logger.info('session completion event queued', { id: row.session_id, event })
 }
 
@@ -307,10 +403,13 @@ function emitSession(row) {
   const previous = state.sentSessions[row.session_id]
   if (previous === fingerprint) return false
 
-  const isLive = row.status === 'running'
+  const sessionMeta = sessionState(row)
+  const isLive = sessionMeta.status === 'running'
+  const now = Date.now()
   if (isLive) {
-    const lastAt = runningEmitAt.get(row.session_id) ?? 0
-    if (Date.now() - lastAt < RUNNING_MIN_INTERVAL_MS) return false
+    if (now - (runningEmitAt.get(row.session_id) ?? 0) < RUNNING_MIN_INTERVAL_MS) return false
+  } else if (sessionMeta.zombie) {
+    if (now - (zombieEmitAt.get(row.session_id) ?? 0) < ZOMBIE_MIN_INTERVAL_MS) return false
   }
 
   const extraction = extractSession(row.messages_path, cfg)
@@ -318,10 +417,11 @@ function emitSession(row) {
   outbox.add({ kind: 'session', body: { session: record } })
 
   // running → 终态：补一条完成通知（不依赖 Cline hook 是否还活着）
-  if (!isLive) notifyCompletion(row, record, previous)
+  if (!isLive) scheduleCompletion(row, previous)
 
   rememberSent(row.session_id, fingerprint)
-  if (isLive) runningEmitAt.set(row.session_id, Date.now())
+  if (isLive) runningEmitAt.set(row.session_id, now)
+  if (sessionMeta.zombie) zombieEmitAt.set(row.session_id, now)
 
   // 消息流跟会话快照一起收尾，避免手机停在倒数第二条
   syncTranscript(row)
@@ -401,7 +501,7 @@ function pollSessions() {
   for (const row of rows) {
     state.lastUpdatedAt = row.updated_at
     if (!allowedWorkspace(row)) continue
-    if (row.status === 'running') {
+    if (effectiveStatus(row) === 'running') {
       if (!state.pendingRunning.includes(row.session_id)) state.pendingRunning.push(row.session_id)
       emitSession(row)
       continue
@@ -414,7 +514,7 @@ function pollSessions() {
     for (const sessionId of state.pendingRunning) {
       const row = getSessionById(db, sessionId)
       if (!row) continue
-      if (row.status === 'running') {
+      if (effectiveStatus(row) === 'running') {
         stillRunning.push(sessionId)
         continue
       }
@@ -423,6 +523,7 @@ function pollSessions() {
     state.pendingRunning = stillRunning
   }
 
+  flushCompletions()
   saveState()
 }
 

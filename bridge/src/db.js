@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-const SESSION_COLUMNS = `session_id, source, status, exit_code, provider, model, cwd,
+const SESSION_COLUMNS = `session_id, source, status, exit_code, provider, model, cwd, pid,
   workspace_root, prompt, messages_path, transcript_path, started_at, ended_at, updated_at`
 
 export function sessionsDbPath(dataDir) {

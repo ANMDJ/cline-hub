@@ -463,3 +463,34 @@ args.push(...clineOpts.extraArgs, '-c', cwd, prompt)
 
 实测：`cmd_a0ad0afa4574`（act）执行后 `sessionId=1793548380890_qij68`，
 `GET /sessions/1793548380890_qij68` 可查到，`project=cline-hub`。
+
+## 26. 「动态」里正在跑的会话显示执行失败：状态抖动 + 僵尸会话（2026-11-01）
+
+**现象**：手机上「动态」被同一条 `session_failed` 刷屏（kids_points_app 的
+`1793406873889_kz6g7`，20 分钟 91 条），而那条会话看上去还在跑。
+
+**根因（两层）**：
+
+1. **状态抖动**：cline 会把这条会话周期性写成 `failed` 再翻回 `running`，每次还带一个
+   新的 `ended_at`。原来的去重键是 `status + ended_at`，每次都不一样 → 拦不住。
+2. **僵尸会话**：DB 里 `status=running`，但 `pid`（6892）早就没了 —— 这是昨天 VS Code
+   那个会话的残留，既被当「执行中」上架，又会在两态之间来回翻。
+
+**修法**（全部在 bridge，`src/index.js` + `src/db.js`）：
+
+- `sessionState(row)` 统一归一化：
+  - `status=running` 但 pid 已死 → 判 `failed` 并打 `zombie` 标记；
+  - `status=failed` 但没有 `ended_at` → 判 `running`（没结束时间就没结束）；
+  - `status=failed` 且 pid 已死 → 也打 `zombie`（可能是真失败，也可能是抖动，交给下面两层去压）。
+- **完成通知先排队再确认**：`scheduleCompletion` 只入队，`flushCompletions` 在 30 秒后复查，
+  仍是同一个终态才发；中途翻回 running / 换了终态就丢弃。幂等键对僵尸固定成 `failed|zombie`。
+- **快照节流分两档**：live 5 秒一次（原逻辑），僵尸 10 分钟一次 —— 否则每一轮 poll 都会因为
+  `updated_at` 变化而重发一次快照。
+- `db.js` 的 `SESSION_COLUMNS` 补上 `pid`（判断进程存活要用）。
+
+**实测**：改完后 1 分半内该会话只有 1 次快照、0 条完成通知；Hub 上它的状态稳定为 `failed`
+（符合事实：进程已死），正在用的 `1793544082344_zpisz` 仍是 `running`。
+
+**历史数据**：误发的 98 条 `session_failed` 已从 Hub 的 `hooks` 表删除，删除前备份在
+`%TEMP%\hooks-kz6g7-backup.csv` 与 `hooks-kz6g7-backup2.csv`（仍在另一台机器上就不可见了，
+需要的话从 VPS 的 `/tmp` 或日志里再取）。
