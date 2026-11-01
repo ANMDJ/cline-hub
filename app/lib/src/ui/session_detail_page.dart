@@ -9,7 +9,13 @@ import '../util/format.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
-/// 会话详情：概览 + 逐条对话 + 底部「继续这个会话」。
+/// messageId 形如 `msg_xxx:3`，同一条 Cline 消息的正文与工具调用共享前缀。
+String _baseMessageId(String messageId) {
+  final i = messageId.lastIndexOf(':');
+  return i > 0 ? messageId.substring(0, i) : messageId;
+}
+
+/// 会话详情：右上角「概览」弹层 + 逐条对话 + 底部「继续这个会话」。
 ///
 /// 对话来自 Hub 的 session_messages（bridge 增量上报）。一条会话动辄两三百条，
 /// 所以用 SliverList 懒加载；running 时每 3 秒补一次增量，退出页面即停。
@@ -40,6 +46,10 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
   bool _loadingOlder = false;
   bool _hasOlder = true;
 
+  /// 会话开头（seq 最小的几条）：首屏只加载了尾部，这块单独取一次。
+  List<SessionMessage> _head = const <SessionMessage>[];
+  bool _showJumpToLatest = false;
+
   @override
   void initState() {
     super.initState();
@@ -63,10 +73,15 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
   List<SessionMessage> get _chatMessages =>
       _messages.where((m) => !m.isCommand).toList(growable: false);
 
-  /// messageId 形如 `msg_xxx:3`，同一 message 的正文与工具调用共享前缀。
-  static String _baseId(String messageId) {
-    final i = messageId.lastIndexOf(':');
-    return i > 0 ? messageId.substring(0, i) : messageId;
+  /// 会话开头那几条正文（命令已折叠）。
+  List<SessionMessage> get _headMessages =>
+      _head.where((m) => !m.isCommand).toList(growable: false);
+
+  /// 开头与已加载尾部之间缺了多少条（0 表示连着，不需要提示）。
+  int get _headGap {
+    if (_head.isEmpty || _messages.isEmpty) return 0;
+    final gap = _messages.first.seq - _head.last.seq - 1;
+    return gap > 0 ? gap : 0;
   }
 
   /// 每条 Cline 消息对应的命令（同名 message 的多条 tool_use 归到一起）。
@@ -74,7 +89,7 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
     final map = <String, List<SessionMessage>>{};
     for (final m in _messages) {
       if (!m.isCommand) continue;
-      (map[_baseId(m.messageId)] ??= <SessionMessage>[]).add(m);
+      (map[_baseMessageId(m.messageId)] ??= <SessionMessage>[]).add(m);
     }
     return map;
   }
@@ -145,6 +160,7 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
     }
 
     await _loadMessages();
+    await _loadHead();
     if (mounted) _scheduleLive();
   }
 
@@ -169,6 +185,23 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
     }
   }
 
+  /// 取「会话开头」：服务端只要有 `after` 就按 seq 升序取，
+  /// 所以 `after=-1` 就是从第 0 条开始拿 N 条。
+  /// 注意不能用 `after=0` —— 那会把 seq=0 的用户原话漏掉。
+  Future<void> _loadHead() async {
+    try {
+      final head = await widget.store.api.sessionMessages(
+        widget.item.sessionId,
+        limit: 12,
+        after: -1,
+      );
+      if (!mounted) return;
+      setState(() => _head = head);
+    } catch (_) {
+      // 开头拉不到不影响主对话：静默忽略，下拉刷新会再试
+    }
+  }
+
   /// 首次/刷新后贴到最新一条（底部）。
   void _jumpToBottomSoon() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -179,7 +212,22 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
 
   void _onScroll() {
     if (!_scroll.hasClients) return;
-    if (_scroll.position.pixels <= 80) unawaited(_loadOlder());
+    final position = _scroll.position;
+    if (position.pixels <= 80) unawaited(_loadOlder());
+    // 离底部太远时给一个「回到最新」的快捷入口（几百条的会话翻上去就回不来）。
+    final farFromBottom = (position.maxScrollExtent - position.pixels) > 320;
+    if (farFromBottom != _showJumpToLatest) {
+      setState(() => _showJumpToLatest = farFromBottom);
+    }
+  }
+
+  void _jumpToLatest() {
+    if (!_scroll.hasClients) return;
+    _scroll.animateTo(
+      _scroll.position.maxScrollExtent,
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+    );
   }
 
   /// 滑到顶部时向前翻历史：before=<当前最小 seq>，插入头部并补偿滚动位置。
@@ -261,11 +309,31 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
     final summary = _summary;
     // 主对话流只放正文；命令按 messageId 分组，塞进对应气泡的按钮里。
     final chat = _chatMessages;
+    final head = _headMessages;
+    final headGap = _headGap;
     final groups = _commandGroups;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('会话详情'),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('会话详情'),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Pill(
+                label: sessionStatusLabel(summary),
+                color: statusColor(summary.status, ok: summary.succeeded),
+              ),
+            ),
+          ],
+        ),
         actions: [
+          IconButton(
+            tooltip: '概览',
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.info_outline_rounded, size: 20),
+            onPressed: () => showSessionOverview(context, summary),
+          ),
           CopyButton(text: summary.sessionId, label: '复制 ID'),
           const SizedBox(width: 6),
         ],
@@ -285,7 +353,6 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
                     padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
                     sliver: SliverList(
                       delegate: SliverChildListDelegate([
-                        _OverviewCard(item: summary),
                         if (_error != null) ...[
                           const SizedBox(height: 12),
                           SectionCard(
@@ -327,6 +394,12 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
                               ),
                             ),
                           ),
+                        ],
+                        if (head.isNotEmpty && headGap > 0) ...[
+                          const SizedBox(height: 12),
+                          _HeadSection(messages: head, commands: groups),
+                          const SizedBox(height: 8),
+                          _GapHint(count: headGap),
                         ],
                         const SizedBox(height: 14),
                         Row(
@@ -372,7 +445,7 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
                           padding: const EdgeInsets.only(bottom: 8),
                           child: _MessageBubble(
                             message: chat[index],
-                            commands: groups[_baseId(chat[index].messageId)] ??
+                            commands: groups[_baseMessageId(chat[index].messageId)] ??
                                 const <SessionMessage>[],
                           ),
                         ),
@@ -404,71 +477,248 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
           ),
         ],
       ),
+      floatingActionButton: _showJumpToLatest
+          ? FloatingActionButton.small(
+              tooltip: '回到最新',
+              onPressed: _jumpToLatest,
+              backgroundColor: kPanel,
+              foregroundColor: kAccent,
+              child: const Icon(Icons.arrow_downward_rounded, size: 18),
+            )
+          : null,
     );
   }
 }
 
-class _OverviewCard extends StatelessWidget {
-  const _OverviewCard({required this.item});
+/// 会话开头：首屏只加载了最近几十条，这里把最开始那几句也摆出来。
+class _HeadSection extends StatelessWidget {
+  const _HeadSection({required this.messages, required this.commands});
+
+  final List<SessionMessage> messages;
+  final Map<String, List<SessionMessage>> commands;
+
+  @override
+  Widget build(BuildContext context) {
+    return SectionCard(
+      title: '会话开头',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var i = 0; i < messages.length; i++) ...[
+            if (i > 0) const SizedBox(height: 8),
+            _MessageBubble(
+              message: messages[i],
+              commands: commands[_baseMessageId(messages[i].messageId)] ??
+                  const <SessionMessage>[],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// 开头与已加载尾部之间的缺口提示。
+class _GapHint extends StatelessWidget {
+  const _GapHint({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const Expanded(child: Divider(color: kLine, height: 1)),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          child: Text(
+            '… 中间省略 $count 条 · 上滑可继续加载 …',
+            style: const TextStyle(fontSize: 11, color: kMuted),
+          ),
+        ),
+        const Expanded(child: Divider(color: kLine, height: 1)),
+      ],
+    );
+  }
+}
+
+/// 右上角「概览」弹层：把原来压在首屏的元信息收进来，正文从顶部开始。
+void showSessionOverview(BuildContext context, SessionItem item) {
+  showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: kBgSoft,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+    ),
+    builder: (_) => DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.62,
+      minChildSize: 0.35,
+      maxChildSize: 0.92,
+      builder: (context, controller) => ListView(
+        controller: controller,
+        padding: const EdgeInsets.fromLTRB(18, 10, 18, 28),
+        children: [
+          Center(
+            child: Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: kLine,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            '概览',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 12),
+          _OverviewContent(item: item),
+        ],
+      ),
+    ),
+  );
+}
+
+class _OverviewContent extends StatelessWidget {
+  const _OverviewContent({required this.item});
 
   final SessionItem item;
 
   @override
   Widget build(BuildContext context) {
     final color = statusColor(item.status, ok: item.succeeded);
-    return SectionCard(
-      title: '概览',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              Pill(label: sessionStatusLabel(item), color: color),
-              if (item.exitCode != null)
-                Pill(
-                  label: 'exit ${item.exitCode}',
-                  color: item.exitCode == 0 ? kAccent : kDanger,
-                ),
-              Pill(
-                label: item.deviceId,
-                color: kMuted,
-                icon: Icons.computer_rounded,
+    final detail = item is SessionDetail ? item as SessionDetail : null;
+    final resultText = detail?.resultText?.trim() ?? '';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            StatusDot(color: color),
+            const SizedBox(width: 8),
+            Text(
+              sessionStatusLabel(item),
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: color,
               ),
-              if (item.workspace != null)
-                Pill(label: item.workspace!, color: kInfo),
-              if (item.commandCount > 0)
-                Pill(label: '${item.commandCount} 命令', color: kWarn),
-            ],
-          ),
-          const SizedBox(height: 12),
-          MetaLine(
-            parts: [item.model, item.provider, item.source],
-            icon: Icons.memory_rounded,
-          ),
-          const SizedBox(height: 6),
-          MetaLine(
-            parts: [
-              formatSpan(item.startedAt, item.endedAt),
-              '耗时 ${formatDuration(item.duration)}',
-              relativeTime(item.sortAt),
-            ],
-            icon: Icons.schedule_rounded,
-          ),
-          if (item.project != null || item.projectRoot != null) ...[
-            const SizedBox(height: 6),
-            MetaLine(
-              parts: [item.project, item.projectRoot],
-              icon: Icons.work_outline_rounded,
+            ),
+            const Spacer(),
+            Pill(
+              label: item.deviceId,
+              color: kMuted,
+              icon: Icons.computer_rounded,
             ),
           ],
-          if (item.workspaceRoot != null) ...[
-            const SizedBox(height: 6),
-            MetaLine(parts: [item.workspaceRoot], icon: Icons.folder_outlined),
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            if (item.exitCode != null)
+              Pill(
+                label: 'exit ${item.exitCode}',
+                color: item.exitCode == 0 ? kAccent : kDanger,
+              ),
+            if (item.workspace != null)
+              Pill(label: item.workspace!, color: kInfo),
+            if (item.commandCount > 0)
+              Pill(label: '${item.commandCount} 命令', color: kWarn),
+            if (item.projectKind == 'loose')
+              const Pill(label: '散会话', color: kMuted),
           ],
+        ),
+        const SizedBox(height: 14),
+        SectionCard(
+          title: '运行',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              MetaLine(
+                parts: [item.model, item.provider, item.source],
+                icon: Icons.memory_rounded,
+              ),
+              const SizedBox(height: 6),
+              MetaLine(
+                parts: [
+                  formatSpan(item.startedAt, item.endedAt),
+                  '耗时 ${formatDuration(item.duration)}',
+                  relativeTime(item.sortAt),
+                ],
+                icon: Icons.schedule_rounded,
+              ),
+            ],
+          ),
+        ),
+        if (item.project != null || item.projectRoot != null) ...[
+          const SizedBox(height: 10),
+          SectionCard(
+            title: '项目',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (item.project != null)
+                  Text(
+                    item.project!,
+                    style: const TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                if (item.projectRoot != null) ...[
+                  const SizedBox(height: 6),
+                  SelectableText(
+                    item.projectRoot!,
+                    style: kMono.copyWith(fontSize: 11.5, color: kMuted),
+                  ),
+                ],
+              ],
+            ),
+          ),
         ],
-      ),
+        if (item.workspaceRoot != null) ...[
+          const SizedBox(height: 10),
+          SectionCard(
+            title: '工作目录',
+            child: SelectableText(
+              item.workspaceRoot!,
+              style: kMono.copyWith(fontSize: 11.5, color: kMuted),
+            ),
+          ),
+        ],
+        if ((item.prompt ?? '').trim().isNotEmpty) ...[
+          const SizedBox(height: 10),
+          SectionCard(
+            title: '开头提问',
+            trailing: CopyButton(text: item.prompt!, label: '复制'),
+            child: Text(
+              item.prompt!.trim(),
+              style: const TextStyle(fontSize: 12.5, height: 1.6),
+            ),
+          ),
+        ],
+        if (resultText.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          SectionCard(
+            title: '结果',
+            trailing: CopyButton(text: resultText, label: '复制'),
+            child: Text(
+              resultText,
+              style: const TextStyle(
+                fontSize: 12.5,
+                height: 1.6,
+                color: Color(0xFFA9BBCB),
+              ),
+            ),
+          ),
+        ],
+      ],
     );
   }
 }

@@ -14,6 +14,7 @@ app/
 │     ├─ state/hub_store.dart       列表 + 分页游标 + 事件流 + 断线重连
 │     ├─ util/format.dart           相对时间、时长
 │     └─ ui/                        gate / setup / home_shell / 三个 Tab / 详情 / 工作区 / 设置
+│                                   （详情页：右上角「概览」弹层 + 顶部「会话开头」+ 回到最新）
 │                                   （session_tile 是列表与工作区页共用的卡片）
 └─ test/                            fake_api + 模型、状态层、页面测试
 ```
@@ -125,7 +126,7 @@ flutter build apk --release     # → build/app/outputs/flutter-apk/app-release.
 | 启动 / 设置健康检查 | `GET /api/v1/health` |
 | 会话列表（扁平、最新优先 + 游标翻页） | `GET /api/v1/sessions?limit=&before=&q=` |
 | 工作区页（按项目分组） | `GET /api/v1/sessions?limit=&project=` |
-| 会话详情（含 PLAN/ACT 续聊） | `GET /api/v1/sessions/:sessionId` + `POST /api/v1/commands` |
+| 会话详情（概览弹层 / 会话开头 / PLAN·ACT 续聊） | `GET /api/v1/sessions/:sessionId` + `GET …/messages?after=-1&limit=12` + `POST /api/v1/commands` |
 | 命令列表 | `GET /api/v1/commands?limit=50` |
 | 下发命令 | `POST /api/v1/commands`（角色必须是 `app`） |
 | 动态 | `GET /api/v1/hooks?limit=50&beforeId=` |

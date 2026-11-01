@@ -32,6 +32,9 @@ class FakeHubApi implements HubApi {
   String? sessionQuery;
   bool closed = false;
 
+  /// 测试用：让 `before` 请求返回空，模拟「历史已经翻到头」。
+  bool ignoreBefore = false;
+
   void emit(String type, Map<String, dynamic> data) =>
       _events.add(HubEvent(type, data));
 
@@ -76,10 +79,19 @@ class FakeHubApi implements HubApi {
     int? before,
   }) async {
     messageCalls++;
-    var list = messageItems;
-    if (after != null) list = list.where((item) => item.seq > after).toList();
-    if (before != null) list = list.where((item) => item.seq < before).toList();
-    return list;
+    // 语义对齐服务端：有 after 就升序取 seq > after（after=-1 即「从开头取」）；
+    // 只有 before 时取 seq < before 的最后 N 条；都没有就取最后 N 条。
+    final all = <SessionMessage>[...messageItems]
+      ..sort((a, b) => a.seq.compareTo(b.seq));
+    if (after != null) {
+      return all.where((item) => item.seq > after).take(limit).toList();
+    }
+    if (before != null) {
+      if (ignoreBefore) return const <SessionMessage>[];
+      final older = all.where((item) => item.seq < before).toList();
+      return older.skip(older.length > limit ? older.length - limit : 0).toList();
+    }
+    return all.skip(all.length > limit ? all.length - limit : 0).toList();
   }
 
   @override

@@ -133,6 +133,9 @@ SSE 例外：`GET /api/v1/events?token=<token>`（EventSource 不能设置请求
 
 - 按 `seq asc` 返回；`after` 只返回 `seq > after` 的部分，用于会话还在跑时续拉。
 - 注意实现细节：**不传 `after` 时不能当成 0**，否则 `seq=0` 的第一条（用户原话）会被永久过滤掉。
+- 「取会话开头」= `after=-1&limit=12`：只要有 `after` 就按升序取，`seq > -1` 即从第 0 条开始。
+  不要写 `after=0`（会漏掉 `seq=0`）；即使以后语义改成 `>=`，`-1` 依然成立。
+- 不传 `after` 时取的是**最近** `limit` 条（内部 desc 再反转），翻更早用 `before=<最小 seq>`。
 
 ## 会话列表
 

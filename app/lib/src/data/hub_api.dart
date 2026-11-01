@@ -21,7 +21,7 @@ class ApiException implements Exception {
     'network' => '连不上 Hub：检查地址、网络，以及 baseUrl 是否带了 /_h/<前缀>',
     'timeout' => '请求超时：服务器没响应，稍后再试',
     'unauthorized' => 'token 无效或已失效（401）——用 create-device 重新签发一个',
-    'forbidden' => '这个 token 的角色没有该权限（403）',
+    'forbidden' => 'token 角色不对（403）：手机发命令要用 app token，device token 只给 bridge 上报用',
     'ip_not_allowed' => '服务器 IP 白名单拒绝了本机（403）',
     'rate_limited' => '触发限流（429），等一两秒再试',
     'not_found' || 'http_404' => '404：路径不存在，检查 baseUrl 是否包含 /_h/<前缀>',

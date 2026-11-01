@@ -157,4 +157,103 @@ void main() {
     expect(find.textContaining('还没有可显示的消息'), findsOneWidget);
     store.dispose();
   });
+
+  testWidgets('概览收到右上角按钮里，点开才显示', (tester) async {
+    final settings = await _settings();
+    final fake = FakeHubApi(
+      messageItems: const <SessionMessage>[
+        SessionMessage(
+          messageId: 'u1:0',
+          role: 'user',
+          kind: 'text',
+          text: '要不要上 Docker',
+          seq: 0,
+        ),
+      ],
+      detail: const SessionDetail(
+        deviceId: 'localone',
+        sessionId: 's1',
+        workspace: 'kids_points_app',
+        workspaceRoot: r'C:\work\kids_points_app',
+        project: 'kids_points_app',
+        projectRoot: r'C:\work\kids_points_app',
+        projectKind: 'project',
+        status: 'completed',
+        provider: 'deepseek',
+        model: 'deepseek-flash',
+        prompt: '要不要上 Docker',
+      ),
+    );
+    final store = HubStore(settings: settings, apiFactory: (_) => fake);
+
+    await tester.pumpWidget(_wrap(store));
+    await tester.pumpAndSettle();
+
+    // 首屏不再有概览卡，正文直接开始
+    expect(find.text('概览'), findsNothing);
+    expect(find.text('项目'), findsNothing);
+
+    await tester.tap(find.byIcon(Icons.info_outline_rounded));
+    await tester.pumpAndSettle();
+
+    expect(find.text('概览'), findsOneWidget);
+    expect(find.text('运行'), findsOneWidget);
+    expect(find.text('项目'), findsOneWidget);
+    expect(find.text('开头提问'), findsOneWidget);
+    expect(find.textContaining('deepseek'), findsWidgets);
+    expect(find.text('kids_points_app'), findsWidgets);
+
+    // 点遮罩关闭
+    await tester.tapAt(const Offset(200, 40));
+    await tester.pumpAndSettle();
+    expect(find.text('概览'), findsNothing);
+
+    store.dispose();
+  });
+
+  testWidgets('会话很长时，顶部补出「会话开头」并标注省略条数', (tester) async {
+    final settings = await _settings();
+    final messages = <SessionMessage>[
+      for (var i = 0; i < 100; i++)
+        SessionMessage(
+          messageId: 'm$i:0',
+          role: i.isEven ? 'user' : 'assistant',
+          kind: 'text',
+          text: i == 0 ? '第一句话：帮我搭好后端' : '第 $i 条消息',
+          seq: i,
+        ),
+    ];
+    final fake = FakeHubApi(
+      messageItems: messages,
+      detail: const SessionDetail(
+        deviceId: 'localone',
+        sessionId: 's1',
+        status: 'completed',
+      ),
+    );
+    final store = HubStore(settings: settings, apiFactory: (_) => fake);
+    // 历史已经翻到头：上滑只触发一次空请求，不会把开头并入正文
+    fake.ignoreBefore = true;
+
+    await tester.pumpWidget(_wrap(store));
+    await tester.pumpAndSettle();
+
+    // 首屏贴着底部（尾部 60 条），先滚到顶部才能看到「会话开头」
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, 4000));
+    await tester.pumpAndSettle();
+
+    expect(find.text('会话开头'), findsOneWidget);
+    expect(find.text('第一句话：帮我搭好后端'), findsOneWidget);
+
+    // 标题在顶部，缺口提示在开头卡片下方，往下滚一点才会构建出来
+    await tester.scrollUntilVisible(
+      find.textContaining('中间省略'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    // 缺口 = 40 - 11 - 1 = 28
+    expect(find.textContaining('中间省略 28 条'), findsOneWidget);
+
+    store.dispose();
+  });
 }
