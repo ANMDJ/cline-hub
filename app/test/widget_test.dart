@@ -9,6 +9,7 @@ import 'package:cline_console/src/data/settings_store.dart';
 import 'package:cline_console/src/models/models.dart';
 import 'package:cline_console/src/state/hub_store.dart';
 import 'package:cline_console/src/ui/commands_page.dart';
+import 'package:cline_console/src/ui/session_detail_page.dart';
 import 'package:cline_console/src/ui/session_tile.dart';
 import 'package:cline_console/src/ui/sessions_page.dart';
 import 'package:cline_console/src/ui/workspaces_page.dart';
@@ -246,6 +247,47 @@ void main() {
     await tester.tap(find.text('2 条'));
     await tester.pump();
     expect(find.text('改登录页'), findsOneWidget);
+
+    store.dispose();
+  });
+
+  testWidgets('命令详情能跳到它创建出来的会话', (tester) async {
+    tester.view.physicalSize = const Size(411, 914);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final settings = await configuredSettings();
+    final fake = FakeHubApi(
+      commandItems: [
+        CommandItem(
+          id: 'cmd_link',
+          deviceId: 'localone',
+          prompt: '跑一下测试',
+          mode: 'act',
+          status: 'done',
+          workspace: r'C:\work\hub',
+          sessionId: '1793548380890_qij68',
+          createdAt: DateTime.now(),
+        ),
+      ],
+    );
+    final store = HubStore(settings: settings, apiFactory: (_) => fake);
+    await store.refreshCommands();
+
+    await tester.pumpWidget(wrap(CommandsPage(store: store)));
+    await tester.pump();
+
+    await tester.tap(find.text('跑一下测试'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('打开会话'), findsOneWidget);
+    expect(find.text('1793548380890_qij68'), findsOneWidget);
+
+    await tester.tap(find.text('打开会话'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SessionDetailPage), findsOneWidget);
 
     store.dispose();
   });

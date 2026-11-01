@@ -445,3 +445,21 @@ args.push(...clineOpts.extraArgs, '-c', cwd, prompt)
 
 **当前取值**（`bridge/config.json`）：`provider=deepseek`、`model=deepseek-flash`、
 `allowModes=["plan","act"]`、`commands.enabled=true`。
+
+## 25. 命令要回写它创建出来的会话 ID（2026-11-01）
+
+`commands.session_id` 以前只有「App 指定续会话」时才填；bridge 一律 `-c` 新开会话，
+于是它永远是 `null`，手机上发完命令看不到这条命令落到了哪条会话。
+
+**做法**：
+
+1. bridge 运行前快照 `~/.cline/data/sessions/` 的目录名；
+2. 运行中每 1.5s 扫新增项，用会话 JSON 里的 `cwd` / `workspace_root` 跟本次工作目录比对
+   （并发跑多条命令时靠它区分，只有一个新增就直接用）；
+3. 拿到 ID 立刻 `PATCH status=running&sessionId=...` 回写，命令结束前再查一次兜底；
+4. 服务端 PATCH 接受 `sessionId`，SQL 写成 `coalesce($5, session_id)` —— 只写一次，
+   后续上报不会把它清空；
+5. App 命令详情新增「打开会话」，点一下直接推 `SessionDetailPage`。
+
+实测：`cmd_a0ad0afa4574`（act）执行后 `sessionId=1793548380890_qij68`，
+`GET /sessions/1793548380890_qij68` 可查到，`project=cline-hub`。

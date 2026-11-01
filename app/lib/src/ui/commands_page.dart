@@ -4,6 +4,7 @@ import '../models/models.dart';
 import '../state/hub_store.dart';
 import '../util/format.dart';
 import 'new_command_sheet.dart';
+import 'session_detail_page.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
@@ -51,7 +52,7 @@ class CommandsPage extends StatelessWidget {
           final item = store.commands[index];
           return _CommandTile(
             item: item,
-            onTap: () => _showCommandDetail(context, item),
+            onTap: () => _showCommandDetail(context, item, store),
           );
         },
       ),
@@ -157,7 +158,8 @@ class _BridgeHint extends StatelessWidget {
   }
 }
 
-void _showCommandDetail(BuildContext context, CommandItem item) {
+void _showCommandDetail(BuildContext context, CommandItem item, HubStore store) {
+  final pageContext = context;
   showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -223,6 +225,50 @@ void _showCommandDetail(BuildContext context, CommandItem item) {
             if (item.workspace != null) ...[
               const SizedBox(height: 10),
               MetaLine(parts: [item.workspace], icon: Icons.folder_outlined),
+            ],
+            // bridge 执行完会把新开会话的 ID 回写到这里，点一下直接进会话。
+            if ((item.sessionId ?? '').isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: MetaLine(
+                      parts: [item.sessionId!],
+                      icon: Icons.forum_outlined,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  TextButton.icon(
+                    onPressed: () {
+                      Navigator.of(sheetContext).pop();
+                      Navigator.of(pageContext).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => SessionDetailPage(
+                            store: store,
+                            item: SessionItem(
+                              deviceId: item.deviceId,
+                              sessionId: item.sessionId!,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.arrow_forward_rounded, size: 14),
+                    label: const Text(
+                      '打开会话',
+                      style: TextStyle(fontSize: 12.5),
+                    ),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+                ],
+              ),
             ],
             if (item.resultText != null) ...[
               const SizedBox(height: 16),

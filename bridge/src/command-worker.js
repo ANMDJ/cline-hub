@@ -176,6 +176,56 @@ export function createCommandWorker({ cfg, logger }) {
   }
 
   /**
+   * cline 每次运行都会在 `<dataDir>/sessions/<id>/<id>.json` 落一份元数据，
+   * 里面同时有 `session_id` / `cwd` / `started_at`。命令记录要回写会话 ID，
+   * 就靠「运行前快照 + 运行中轮询新增目录」拿。
+   */
+  const sessionsDir = path.join(cfg.dataDir, 'sessions')
+
+  function listSessionIds() {
+    try {
+      return new Set(fs.readdirSync(sessionsDir))
+    } catch {
+      return new Set()
+    }
+  }
+
+  function readSessionMeta(id) {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(sessionsDir, id, `${id}.json`), 'utf8'))
+    } catch {
+      return null
+    }
+  }
+
+  function samePath(a, b) {
+    if (!a || !b) return false
+    const norm = (value) => path.resolve(String(value)).replace(/\\/g, '/').toLowerCase()
+    return norm(a) === norm(b)
+  }
+
+  /**
+   * 本次运行新建的会话：新增目录里挑 `cwd` / `workspace_root` 与工作目录一致的那个；
+   * 并发跑多条命令时靠这一步区分，只有一个新增时直接用它。
+   */
+  function findNewSession(before, cwd) {
+    let entries = []
+    try {
+      entries = fs.readdirSync(sessionsDir)
+    } catch {
+      return null
+    }
+    const fresh = entries.filter((id) => !before.has(id))
+    if (fresh.length === 0) return null
+    for (const id of fresh) {
+      const meta = readSessionMeta(id)
+      if (!meta) continue
+      if (samePath(meta.cwd, cwd) || samePath(meta.workspace_root, cwd)) return id
+    }
+    return fresh.length === 1 ? fresh[0] : null
+  }
+
+  /**
    * 失败原因：光写 `exit code 1` 在手机上等于没说，
    * 把 stderr 里第一条像错误的行带出来（PowerShell 的 CommandNotFoundException 就在那）。
    */
@@ -364,15 +414,44 @@ export function createCommandWorker({ cfg, logger }) {
       logger.error('command running-report failed', { id: command.id, message: error.message })
     }
 
+    // cline 会新开一个会话；先把目录快照下来，运行中一旦出现新会话就回写 ID，
+    // 这样手机端在命令详情里能直接点进那条会话（否则 sessionId 永远是 null）。
+    const sessionBefore = runner === 'cline' ? listSessionIds() : null
+    let sessionWatcher = null
+    const stopWatcher = () => {
+      if (!sessionWatcher) return
+      clearInterval(sessionWatcher)
+      sessionWatcher = null
+    }
+    if (runner === 'cline') {
+      sessionWatcher = setInterval(() => {
+        const found = findNewSession(sessionBefore, cwd)
+        if (!found) return
+        stopWatcher()
+        report(command.id, 'running', { sessionId: found })
+          .then(() => logger.info('command session linked', { id: command.id, sessionId: found }))
+          .catch((error) => logger.error('command session link failed', {
+            id: command.id,
+            message: error.message
+          }))
+      }, 1500)
+    }
+
     const limitMs = runner === 'cline' ? clineOpts.timeoutMs : timeoutMs
     const result = runner === 'cline'
       ? await runCline({ prompt, mode, cwd, sessionId })
       : await runScript(hardenScript(fillTemplate(template, { prompt, mode, workspace: cwd }), shell), cwd)
 
+    stopWatcher()
+    // 轮询可能还没跑到（命令很短），收尾时再查一次。
+    const createdSession = runner === 'cline' ? findNewSession(sessionBefore, cwd) : null
+    const link = createdSession ? { sessionId: createdSession } : {}
+
     const ok = !result.timedOut && result.code === 0
     const body = ok
-      ? { resultText: truncate(result.output) || '(no output)' }
+      ? { ...link, resultText: truncate(result.output) || '(no output)' }
       : {
+          ...link,
           resultText: truncate(result.output),
           errorText: failureReason(result, limitMs)
         }
@@ -384,7 +463,8 @@ export function createCommandWorker({ cfg, logger }) {
         runner,
         status: ok ? 'done' : 'failed',
         exit: result.code,
-        outChars: result.output.length
+        outChars: result.output.length,
+        sessionId: createdSession ?? null
       })
     } catch (error) {
       logger.error('command result report failed', { id: command.id, message: error.message })

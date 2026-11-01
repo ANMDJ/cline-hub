@@ -166,17 +166,20 @@ export function createCommandRoutes({ db, logger, sse }) {
         }
         const resultText = optionalString(body.resultText, 'resultText', 20000)
         const errorText = optionalString(body.errorText, 'errorText', 4000)
+        // bridge 新开会话后回写会话 ID；coalesce 保证只写一次，后续上报不会把它清掉。
+        const sessionId = optionalString(body.sessionId, 'sessionId', 200)
 
         const updated = await db.one(
           `update commands set
              status      = $2,
              result_text = coalesce($3, result_text),
              error_text  = coalesce($4, error_text),
+             session_id  = coalesce($5, session_id),
              started_at  = case when $2 = 'running' and started_at is null then now() else started_at end,
              finished_at = case when $2 in ('done', 'failed', 'cancelled') then now() else finished_at end
            where id = $1
            returning *`,
-          [params.id, status, resultText, errorText]
+          [params.id, status, resultText, errorText, sessionId]
         )
 
         logger.info('command updated', { id: params.id, status })

@@ -228,11 +228,18 @@ POST /api/v1/commands
 
 ```json
 PATCH /api/v1/commands/cmd_9f2c1a4b3d5e
-{ "status": "done", "resultText": "全部 42 个测试通过", "errorText": null }
+{
+  "status": "done",
+  "resultText": "全部 42 个测试通过",
+  "errorText": null,
+  "sessionId": "1793548380890_qij68"
+}
 ```
 
 - 允许的状态：`running` / `done` / `failed` / `cancelled`。
 - `running` 首次会写 `started_at`；终态写 `finished_at`。
+- `sessionId`：bridge 新开 cline 会话后回写（`coalesce` 只写一次，不会被后续上报清空），
+  App 的命令详情据此直接跳进那条会话。
 
 ## SSE 事件
 
