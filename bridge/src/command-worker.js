@@ -438,11 +438,16 @@ export function createCommandWorker({ cfg, logger }) {
     }
 
     const limitMs = runner === 'cline' ? clineOpts.timeoutMs : timeoutMs
-    const result = runner === 'cline'
-      ? await runCline({ prompt, mode, cwd, sessionId })
-      : await runScript(hardenScript(fillTemplate(template, { prompt, mode, workspace: cwd }), shell), cwd)
+    let result
+    try {
+      result = runner === 'cline'
+        ? await runCline({ prompt, mode, cwd, sessionId })
+        : await runScript(hardenScript(fillTemplate(template, { prompt, mode, workspace: cwd }), shell), cwd)
+    } finally {
+      // 无论成功、失败还是抛异常，都要停掉会话轮询，否则定时器一直挂着。
+      stopWatcher()
+    }
 
-    stopWatcher()
     // 轮询可能还没跑到（命令很短），收尾时再查一次。
     const createdSession = runner === 'cline' ? findNewSession(sessionBefore, cwd) : null
     const link = createdSession ? { sessionId: createdSession } : {}
