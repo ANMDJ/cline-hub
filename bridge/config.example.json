@@ -23,14 +23,24 @@
     "runner": "cline",
     "template": "{prompt}",
     "shell": "powershell",
-    "allowModes": ["plan"],
+    "allowModes": [
+      "plan",
+      "act"
+    ],
     "defaultWorkspace": "",
     "timeoutMs": 600000,
     "batchSize": 3,
     "cline": {
       "bin": "C:\\path\\to\\cline.cmd",
-      "planArgs": ["-p"],
-      "actArgs": ["--auto-approve", "true"],
+      "provider": "",
+      "model": "",
+      "planArgs": [
+        "-p"
+      ],
+      "actArgs": [
+        "--auto-approve",
+        "true"
+      ],
       "extraArgs": [],
       "resume": false,
       "timeoutMs": 1800000

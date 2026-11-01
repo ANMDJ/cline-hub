@@ -42,6 +42,9 @@ class SessionItem {
     required this.sessionId,
     this.workspace,
     this.workspaceRoot,
+    this.project,
+    this.projectRoot,
+    this.projectKind,
     this.source,
     this.status,
     this.exitCode,
@@ -67,6 +70,9 @@ class SessionItem {
     sessionId: _str(json['sessionId']) ?? '',
     workspace: _str(json['workspace']),
     workspaceRoot: _str(json['workspaceRoot']),
+    project: _str(json['project']),
+    projectRoot: _str(json['projectRoot']),
+    projectKind: _str(json['projectKind']),
     source: _str(json['source']),
     status: _str(json['status']),
     exitCode: _int(json['exitCode']),
@@ -95,6 +101,11 @@ class SessionItem {
   final String sessionId;
   final String? workspace;
   final String? workspaceRoot;
+  /// 项目名（bridge 从工作目录向上找到 .git / 构建标记的目录名）。
+  final String? project;
+  final String? projectRoot;
+  /// project = 识别到项目根；loose = 家目录等散会话。
+  final String? projectKind;
   final String? source;
   final String? status;
   final int? exitCode;
@@ -153,6 +164,9 @@ class SessionDetail extends SessionItem {
     required super.sessionId,
     super.workspace,
     super.workspaceRoot,
+    super.project,
+    super.projectRoot,
+    super.projectKind,
     super.source,
     super.status,
     super.exitCode,
@@ -182,6 +196,9 @@ class SessionDetail extends SessionItem {
       sessionId: base.sessionId,
       workspace: base.workspace,
       workspaceRoot: base.workspaceRoot,
+      project: base.project,
+      projectRoot: base.projectRoot,
+      projectKind: base.projectKind,
       source: base.source,
       status: base.status,
       exitCode: base.exitCode,

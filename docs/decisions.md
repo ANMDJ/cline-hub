@@ -361,3 +361,87 @@ Defender 无威胁、4104 脚本块日志只来自本机会话。**能下命令�
   改 JSON 必须用 `[IO.File]::WriteAllText(path, text, [Text.UTF8Encoding]::new($false))`。
 - 本机某些会话里 `netstat` 看不到 `127.0.0.1:3210`（`Get-NetTCPConnection` 也不报），用它判断 bridge
   是否存活会误判；改用 `Invoke-WebRequest http://127.0.0.1:3210/health`（`verify-hub.ps1` 已改）。
+
+## 22. 用「项目根」而不是「启动目录」识别工作区（2026-11-01）
+
+**问题**：会话的 `workspace` 来自 cline 记录的 `workspace_root`，也就是「终端在哪个目录启动的」。
+在 `C:\Users\alice` 里开的会话就叫 `alice`，在 `...\chat` 里开就叫 `chat` —— 分组是一堆目录名，
+跟「我在做哪个项目」完全对不上。
+
+**做法**：bridge 的 `src/project.js` 里 `projectInfo(dir)` 向上最多 8 层找项目根：
+
+1. **第一轮只看 `.git`**。必须整条链扫完 `.git` 再扫标记文件 —— 否则 `...\cline-hub\bridge`
+   会先命中自己的 `package.json`，被判成 `bridge` 项目（实测就是这样错的）。
+2. 第二轮才认 `pubspec.yaml` / `package.json` / `go.mod` / `Cargo.toml` / `pyproject.toml` /
+   `gradlew` / `pom.xml` / `*.sln` / `*.csproj`。
+3. 都没有：在家目录（含子目录）之下 → `projectKind=loose`（散会话）；其余用目录名。
+4. 结果按小写路径缓存，同一目录不重复 stat。
+
+判定随会话上报（`project` / `projectRoot` / `projectKind`），Hub 存在 `003_projects.sql` 新增的三列，
+App 按 `projectRoot` 分组。实测：`C:\Users\alice` → loose；`...\chat\cline-hub` 与
+`...\chat\cline-hub\bridge` → 都是 `cline-hub`。
+
+**代价**：
+
+- 迁移前入库的旧会话 `project` 为 `null`，App 回退到按绝对路径分组；
+- 改识别规则后要重算历史，得清空 `state.json` 的 `sentSessions`（指纹没变不会重推），
+  实测重扫 67 条、耗时 1s 量级。`notifyCompletion` 依赖 `previous` 是 running 才发通知，
+  所以清空不会刷一屏通知。
+
+## 23. 会话列表扁平化，「按项目翻」下沉到二级页（2026-11-01）
+
+**问题**：列表按工作区分组 + 组内折叠，最新会话会被压在某个组里；开 App 十有八九是想看
+「最近发生了什么」。
+
+**做法**：
+
+- 主列表改**扁平**，顺序完全由服务端 `sortAt`（`coalesce(ended_at, updated_at, started_at)`）决定，
+  客户端不重排 —— 最上面永远是最新对话；
+- 分组能力保留在 `WorkspacesPage`（主列表顶部「按工作区浏览」进入），组头可折叠，
+  散会话（`loose`）永远排最后；
+- 卡片抽成 `SessionTile` 给两个页面共用，避免样式漂移。
+
+**分页**：首屏 60 条，滚到底用 `before=<cursor>` 上拉翻历史；`running` 会话有新消息时
+自动贴底，不打断正在翻旧消息。
+
+## 24. 无头跑 cline 必须显式 `-P/-m`（2026-11-01 事故复盘）
+
+**现象**：App 下发的 3 条 act 命令全部 `failed`（`exit 1`），输出：
+
+```
+error: hook dispatch failed: session.hook requires a valid hook event payload
+error: Free model promotion ended
+```
+
+**根因**：`runCline()` 只拼了 `[planArgs|actArgs, ...extraArgs, -c cwd, prompt]`，**没传 `-P/-m`**。
+CLI 于是按 `~/.cline/data/settings/providers.json` 的 `lastUsedProvider`（当时是 `cline` →
+`cline-free/deepseek-v4.1-flash`）跑；那个免费模型下线后，每次无头运行都 exit 1。
+`hook dispatch failed` 只是同一轮失败的噪音，不是根因。
+
+**修复**：新增 `commands.cline.provider` / `commands.cline.model`，渲染成 `-P`/`-m`，
+位置在模式参数之后、`extraArgs` 之前：
+
+```js
+const args = [...(mode === 'plan' ? planArgs : actArgs)]
+if (clineOpts.provider) args.push('-P', clineOpts.provider)
+if (clineOpts.model) args.push('-m', clineOpts.model)
+args.push(...clineOpts.extraArgs, '-c', cwd, prompt)
+```
+
+验证：`cmd_1a45c01cc11a`（act）→ `done`，`resultText` 是 `[thinking] … ACT-OK`，
+`cline.log` 里该会话 `providerId=deepseek`、`modelId=deepseek-flash`。
+
+**顺带踩到的三个坑**：
+
+1. **`-m` 会落盘**：临时跑一次 `cline … -m cline-free/mimo-v2.6-flash`，CLI 把
+   `providers.cline.settings.model` 改成了 mimo（`providers.json` 的 `updatedAt` 同步刷新）。
+   所以做验证必须 `--config <临时目录> --data-dir <临时目录>`，别碰用户主配置。
+2. **在会话里跑 `cline` 会接入活会话**：子进程继承环境变量，命令行里带上 `--id <当前会话>`；
+   它失败时会把正在用的会话标成 `session_failed`（实测 23:09:53 触发，终端直接断连重连）。
+   要么用隔离 data 目录，要么先清掉 `CLINE_*` 环境变量。
+3. **ID 打错会污染终端**：`cline --id 1793544082344_zpis`（少一个 `z`）→ `SessionNotFoundError`
+   → `unhandledRejection` 直接甩进终端；TUI 被中断时没关鼠标追踪，之后鼠标一动就往输入行吐
+   `[555;39;1M` 这类 `CSI M` 转义码。清理：`Ctrl+C` 然后 `cls`，不行就关标签重开。
+
+**当前取值**（`bridge/config.json`）：`provider=deepseek`、`model=deepseek-flash`、
+`allowModes=["plan","act"]`、`commands.enabled=true`。

@@ -171,17 +171,19 @@ bridge 每 `pollIntervalMs` 轮询 `/api/v1/commands/pending`（服务端 `FOR U
 
 ```json
 "commands": {
-  "enabled": false,
+  "enabled": true,
   "runner": "cline",
   "template": "{prompt}",
   "shell": "powershell",
-  "allowModes": ["plan"],
+  "allowModes": ["plan", "act"],
   "workspaceWhitelist": ["C:\\Users\\<你>\\.cline\\data\\workspaces\\chat\\cline-hub"],
   "defaultWorkspace": "C:\\Users\\alice\\projects",
   "timeoutMs": 600000,
   "batchSize": 3,
   "cline": {
     "bin": "C:\\\\Users\\\\alice\\\\AppData\\\\Local\\\\Author Software\\\\nvm\\\\installs\\\\v26.10.0\\\\cline.cmd",
+    "provider": "deepseek",
+    "model": "deepseek-flash",
     "planArgs": ["-p"],
     "actArgs": ["--auto-approve", "true"],
     "extraArgs": [],
@@ -198,9 +200,10 @@ bridge 每 `pollIntervalMs` 轮询 `/api/v1/commands/pending`（服务端 `FOR U
 | `template` | 仅 `runner="shell"` 时生效，支持 `{prompt}` / `{mode}` / `{workspace}` |
 | `shell` | `powershell` / `cmd` / `bash`；脚本先落成临时文件再执行，绕开引号与换行转义 |
 | `cline.bin` | **必须绝对路径**：Windows 上 `cline` 通常不在 PATH 里（`%LOCALAPPDATA%\...\cline.cmd`） |
+| `cline.provider` / `cline.model` | **无头运行必须显式指定**，渲染成 `-P <provider> -m <model>`。不填就会吃 `~/.cline` 里 `providers.json` 的 `lastUsedProvider`，可能是已下线的免费模型（2026-11-01 踩坑，见 ADR-24） |
 | `cline.planArgs` / `actArgs` | plan 走 `-p`（只读），act 走 `--auto-approve true` |
 | `cline.resume` | **已停用（默认 false）**：`--id` 续会话要求 TTY，无头 bridge 用不了；一律 `-c <workspace>` 新开会话 |
-| `allowModes` | 模式白名单，`yolo` 默认不在内；被拒命令直接 `failed` 并写明原因。**2026-11-01 起默认只留 `plan`** |
+| `allowModes` | 模式白名单，`yolo` 默认不在内；被拒命令直接 `failed` 并写明原因。模板默认只留 `plan`，本机 2026-11-01 起放开 `plan` + `act` |
 | `workspaceWhitelist` | **同时约束远程执行的工作目录**（空数组 = 不限制）。条目是绝对路径按前缀比，是纯名字按目录名精确比；不命中直接 `failed`。自检：`npm run check:whitelist` |
 | `defaultWorkspace` | 命令未带 `workspace`（或路径不存在）时的默认工作目录 |
 | `timeoutMs` | 超时强杀进程树（`taskkill /t /f`），回写 `timeout after ...` |
@@ -246,8 +249,8 @@ sh.Run "node ""C:\Users\alice\.cline\data\workspaces\chat\cline-hub\bridge\src\i
 
 | 项 | 现在 | 说明 |
 |---|---|---|
-| `commands.enabled` | `false` | 命令一直留在 `pending`，不会被执行 |
-| `commands.allowModes` | `["plan"]` | `act`/`yolo` 从手机下发一律 `failed`；要开 act 必须**同时**改这里和 `actArgs` |
+| `commands.enabled` | 模板默认 `false`，本机 `true` | 关掉时命令一直留在 `pending`，不会被执行 |
+| `commands.allowModes` | 模板默认 `["plan"]`，本机 `["plan","act"]` | `act`/`yolo` 不在白名单时一律 `failed`；要开 act 必须**同时**改这里 |
 | `workspaceWhitelist` | 两个绝对路径 | **执行侧也校验**（原来只用于采集），手机传 `workspace=C:\Windows\System32` 会被拒 |
 | 开机自启 | 已停用 | 启动文件夹里是 `ClineBridge.vbs.disabled`，恢复方法见下节 |
 
@@ -293,7 +296,7 @@ sh.Run "node ""C:\Users\alice\.cline\data\workspaces\chat\cline-hub\bridge\src\i
 |---|---|
 | 外网 `https://hub.littlewish.top:8443/api/v1/health` | **200**，证书链严格校验通过（`verify=0`，CN=hub.littlewish.top，到期 2027-01-29） |
 | 安全组 | 已放行 TCP 8443 |
-| `bridge/config.json` | 已切 `https://hub.littlewish.top:8443`，`commands.enabled=false`、`allowModes=["plan"]` |
+| `bridge/config.json` | 已切 `https://hub.littlewish.top:8443`，`commands.enabled=true`、`allowModes=["plan","act"]`、`cline.provider=deepseek`、`cline.model=deepseek-flash` |
 | token | device 已轮换（`clh_b194fa8c…`，更早的值全部失效）；app token 未变（`clh_ad58bfa7…`），在 `.secrets/phone-token.txt` |
 | bridge 进程 | 手动启动（不自启），日志出现 `command worker disabled`，会话上报走 HTTPS |
 | 鉴权验证 | `GET /sessions` 200；`http://82.157.153.22/_h/<前缀>/api/v1/health` → **404**（明文入口已关） |

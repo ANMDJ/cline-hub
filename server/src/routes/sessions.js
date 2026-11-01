@@ -15,11 +15,13 @@ const UPSERT_SESSION = `
   insert into sessions (
     device_id, session_id, workspace, workspace_root, source, status, exit_code,
     provider, model, started_at, ended_at, updated_at, prompt, user_prompt,
-    result_ok, result_error, result_text, result_truncated, commands, metrics, collected_at
+    result_ok, result_error, result_text, result_truncated, commands, metrics, collected_at,
+    project, project_root, project_kind
   ) values (
     $1, $2, $3, $4, $5, $6, $7,
     $8, $9, $10, $11, $12, $13, $14,
-    $15, $16, $17, $18, $19::jsonb, $20::jsonb, coalesce($21::timestamptz, now())
+    $15, $16, $17, $18, $19::jsonb, $20::jsonb, coalesce($21::timestamptz, now()),
+    $22, $23, $24
   )
   on conflict (device_id, session_id) do update set
     workspace        = excluded.workspace,
@@ -41,6 +43,9 @@ const UPSERT_SESSION = `
     commands         = excluded.commands,
     metrics          = excluded.metrics,
     collected_at     = excluded.collected_at,
+    project          = excluded.project,
+    project_root     = excluded.project_root,
+    project_kind     = excluded.project_kind,
     updated_row_at   = now()
   returning (xmax = 0) as inserted
 `
@@ -57,6 +62,7 @@ const SORT_AT = 'coalesce(ended_at, updated_at, started_at)'
 const LIST_COLUMNS = `
   device_id, session_id, workspace, workspace_root, source, status, exit_code,
   provider, model, started_at, ended_at, updated_at, prompt, user_prompt,
+  project, project_root, project_kind,
   result_ok, result_error, result_truncated, metrics, collected_at,
   left(coalesce(result_text, ''), 400) as result_preview,
   jsonb_array_length(commands) as command_count,
@@ -69,6 +75,9 @@ function toListItem(row) {
     sessionId: row.session_id,
     workspace: row.workspace,
     workspaceRoot: row.workspace_root,
+    project: row.project,
+    projectRoot: row.project_root,
+    projectKind: row.project_kind,
     source: row.source,
     status: row.status,
     exitCode: row.exit_code,
@@ -148,7 +157,10 @@ export function createSessionRoutes({ db, logger, sse }) {
           boolOrFalse(session.resultTruncated),
           JSON.stringify(commands),
           JSON.stringify(metrics),
-          isoOrNull(session.collectedAt)
+          isoOrNull(session.collectedAt),
+          optionalString(session.project, 'session.project', 200),
+          optionalString(session.projectRoot, 'session.projectRoot', 1000),
+          optionalString(session.projectKind, 'session.projectKind', 20)
         ])
 
         logger.info('session upserted', {
@@ -317,6 +329,7 @@ export function createSessionRoutes({ db, logger, sse }) {
         const status = optionalString(url.searchParams.get('status'), 'status', 50)
         const deviceId = optionalString(url.searchParams.get('deviceId'), 'deviceId', 100)
         const search = optionalString(url.searchParams.get('q'), 'q', 200)
+        const project = optionalString(url.searchParams.get('project'), 'project', 200)
 
         const where = []
         const values = []
@@ -334,6 +347,7 @@ export function createSessionRoutes({ db, logger, sse }) {
           where.push(`${column} = $${values.length}`)
         }
         equals('workspace', workspace)
+        equals('project', project)
         equals('status', status)
         equals('device_id', deviceId)
 

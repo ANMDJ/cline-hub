@@ -111,6 +111,13 @@ export function createCommandWorker({ cfg, logger }) {
   const clineOpts = {
     bin: String(opts.cline?.bin ?? '').trim(),
     jsEntry: String(opts.cline?.jsEntry ?? '').trim(),
+    /**
+     * provider / model：无头运行必须显式指定，否则 CLI 会吃 `~/.cline` 里
+     * `providers.json` 的 `lastUsedProvider`（可能是免费额度模型，随时下线）。
+     * 2026-11-01 实测：不指定时用的是 `cline-free/*`，官方下线后每次 exit 1。
+     */
+    provider: String(opts.cline?.provider ?? '').trim(),
+    model: String(opts.cline?.model ?? '').trim(),
     planArgs: toArgs(opts.cline?.planArgs, ['-p']),
     actArgs: toArgs(opts.cline?.actArgs, ['--auto-approve', 'true']),
     extraArgs: toArgs(opts.cline?.extraArgs, []),
@@ -275,7 +282,12 @@ export function createCommandWorker({ cfg, logger }) {
    * 模式：plan 走 `-p`（只读），act 走 `--auto-approve true`；yolo 由 allowModes 拦掉。
    */
   function runCline({ prompt, mode, cwd, sessionId }) {
-    const args = [...(mode === 'plan' ? clineOpts.planArgs : clineOpts.actArgs), ...clineOpts.extraArgs]
+    const args = [...(mode === 'plan' ? clineOpts.planArgs : clineOpts.actArgs)]
+    // provider / model 必须显式传：CLI 缺省时会用 providers.json 里的
+    // `lastUsedProvider`（可能是已下线的免费模型），无头运行直接 exit 1。
+    if (clineOpts.provider) args.push('-P', clineOpts.provider)
+    if (clineOpts.model) args.push('-m', clineOpts.model)
+    args.push(...clineOpts.extraArgs)
     // cline CLI 4.x 的 --id 续会话要求 TTY（非 TTY 下报
     // "interactive mode requires a TTY"），bridge 的 spawn 没有终端，
     // 所以带 sessionId 也一律 -c 新开会话（2026-11-01 实测）。
@@ -286,11 +298,19 @@ export function createCommandWorker({ cfg, logger }) {
     return runProcess(target.command, [...target.argv, ...args], cwd, clineOpts.timeoutMs, { shell: target.shell })
   }
 
+  /**
+   * 决定命令在哪个目录执行。
+   *
+   * 以前拿不到有效目录时会静默回落到 bridgeRoot（bridge 自己的源码目录），
+   * 命令就在那儿乱跑；现在候选都无效就抛错，由 handle() 回写 failed。
+   */
   function resolveWorkspace(command) {
     const wanted = String(command.workspace ?? '').trim()
     if (wanted && fs.existsSync(wanted) && fs.statSync(wanted).isDirectory()) return wanted
     if (defaultWorkspace && fs.existsSync(defaultWorkspace)) return defaultWorkspace
-    return bridgeRoot
+    throw new Error(
+      'no usable workspace: 这条命令没带 workspace，且 commands.defaultWorkspace 未配置或不存在'
+    )
   }
 
   async function handle(command) {
@@ -309,7 +329,17 @@ export function createCommandWorker({ cfg, logger }) {
       return
     }
 
-    const cwd = resolveWorkspace(command)
+    let cwd
+    try {
+      cwd = resolveWorkspace(command)
+    } catch (error) {
+      await report(command.id, 'failed', { errorText: error.message })
+      logger.warn('command rejected: no usable workspace', {
+        id: command.id,
+        wanted: command.workspace ?? null
+      })
+      return
+    }
     if (!isWorkspaceAllowed(cwd, workspaceWhitelist)) {
       await report(command.id, 'failed', {
         errorText: `workspace "${cwd}" is not in workspaceWhitelist (${workspaceWhitelist.join(', ')})`

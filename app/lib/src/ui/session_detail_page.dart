@@ -35,6 +35,8 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
   final TextEditingController _composer = TextEditingController();
   final ScrollController _scroll = ScrollController();
   bool _sending = false;
+  /// 继续对话的执行模式：plan = 只读；act = 会改文件。默认 plan。
+  String _mode = 'plan';
   bool _loadingOlder = false;
   bool _hasOlder = true;
 
@@ -229,7 +231,7 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
       await widget.store.api.sendCommand(
         deviceId: widget.item.deviceId,
         prompt: text,
-        mode: 'act',
+        mode: _mode,
         workspace: _summary.workspaceRoot,
         sessionId: widget.item.sessionId,
       );
@@ -397,6 +399,8 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
             controller: _composer,
             sending: _sending,
             onSend: _send,
+            mode: _mode,
+            onModeChanged: (value) => setState(() => _mode = value),
           ),
         ],
       ),
@@ -452,6 +456,13 @@ class _OverviewCard extends StatelessWidget {
             ],
             icon: Icons.schedule_rounded,
           ),
+          if (item.project != null || item.projectRoot != null) ...[
+            const SizedBox(height: 6),
+            MetaLine(
+              parts: [item.project, item.projectRoot],
+              icon: Icons.work_outline_rounded,
+            ),
+          ],
           if (item.workspaceRoot != null) ...[
             const SizedBox(height: 6),
             MetaLine(parts: [item.workspaceRoot], icon: Icons.folder_outlined),
@@ -667,11 +678,17 @@ class _Composer extends StatelessWidget {
     required this.controller,
     required this.sending,
     required this.onSend,
+    required this.mode,
+    required this.onModeChanged,
   });
 
   final TextEditingController controller;
   final bool sending;
   final VoidCallback onSend;
+
+  /// 执行模式：plan = 只读；act = 会改文件。
+  final String mode;
+  final ValueChanged<String> onModeChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -683,65 +700,123 @@ class _Composer extends StatelessWidget {
           color: kBgSoft,
           border: Border(top: BorderSide(color: kLine)),
         ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Expanded(
-              child: TextField(
-                controller: controller,
-                minLines: 1,
-                maxLines: 4,
-                textInputAction: TextInputAction.send,
-                onSubmitted: (_) => onSend(),
-                style: const TextStyle(fontSize: 13.5, height: 1.4),
-                decoration: InputDecoration(
-                  hintText: '继续对话（会新建 Cline 会话）…',
-                  hintStyle: const TextStyle(fontSize: 13, color: kMuted),
-                  filled: true,
-                  fillColor: kPanel,
-                  isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: kLine),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: kLine),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: kAccent),
+            _ModeBar(mode: mode, onChanged: onModeChanged),
+            const SizedBox(height: 6),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: controller,
+                    minLines: 1,
+                    maxLines: 4,
+                    textInputAction: TextInputAction.send,
+                    onSubmitted: (_) => onSend(),
+                    style: const TextStyle(fontSize: 13.5, height: 1.4),
+                    decoration: InputDecoration(
+                      hintText: '继续对话（会新建 Cline 会话）…',
+                      hintStyle: const TextStyle(fontSize: 13, color: kMuted),
+                      filled: true,
+                      fillColor: kPanel,
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: kLine),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: kLine),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: kAccent),
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            IconButton.filled(
-              onPressed: sending ? null : onSend,
-              style: IconButton.styleFrom(
-                backgroundColor: kAccent,
-                foregroundColor: kBg,
-                disabledBackgroundColor: kLine,
-                minimumSize: const Size(42, 42),
-              ),
-              icon: sending
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: kBg,
-                      ),
-                    )
-                  : const Icon(Icons.send_rounded, size: 18),
+                const SizedBox(width: 8),
+                IconButton.filled(
+                  onPressed: sending ? null : onSend,
+                  style: IconButton.styleFrom(
+                    backgroundColor: kAccent,
+                    foregroundColor: kBg,
+                    disabledBackgroundColor: kLine,
+                    minimumSize: const Size(42, 42),
+                  ),
+                  icon: sending
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: kBg,
+                          ),
+                        )
+                      : const Icon(Icons.send_rounded, size: 18),
+                ),
+              ],
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+/// 模式切换：PLAN（只读）/ ACT（会改文件），右侧一句风险提示。
+class _ModeBar extends StatelessWidget {
+  const _ModeBar({required this.mode, required this.onChanged});
+
+  final String mode;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final act = mode == 'act';
+    return Row(
+      children: [
+        SegmentedButton<String>(
+          segments: const [
+            ButtonSegment<String>(value: 'plan', label: Text('PLAN')),
+            ButtonSegment<String>(value: 'act', label: Text('ACT')),
+          ],
+          selected: <String>{mode},
+          showSelectedIcon: false,
+          style: ButtonStyle(
+            visualDensity: VisualDensity.compact,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            textStyle: const WidgetStatePropertyAll<TextStyle>(
+              TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+            ),
+            side: const WidgetStatePropertyAll<BorderSide>(
+              BorderSide(color: kLine),
+            ),
+            foregroundColor: WidgetStateProperty.resolveWith<Color>((states) {
+              if (states.contains(WidgetState.selected)) {
+                return act ? kDanger : kInfo;
+              }
+              return kMuted;
+            }),
+          ),
+          onSelectionChanged: (values) => onChanged(values.first),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            act ? 'ACT：会直接改文件' : 'PLAN：只读，不改文件',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 11, color: act ? kDanger : kMuted),
+          ),
+        ),
+      ],
     );
   }
 }

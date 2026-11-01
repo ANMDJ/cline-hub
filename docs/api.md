@@ -59,6 +59,10 @@ SSE 例外：`GET /api/v1/events?token=<token>`（EventSource 不能设置请求
 | PATCH | `/api/v1/commands/:id` | device | 回报 `running` / `done` / `failed` / `cancelled` |
 | GET | `/api/v1/events` | any | SSE 实时事件 |
 
+`GET /api/v1/sessions` 的过滤参数：`limit`、`before`、`status`、`workspace`、`project`、`q`。
+`project` 精确匹配 bridge 上报的项目名；散会话（`projectKind=loose`）的 `project` 是 `null`，
+按 `project` 过滤取不到它们。
+
 ## 会话上报（bridge 用）
 
 `POST /api/v1/sessions`
@@ -76,6 +80,9 @@ SSE 例外：`GET /api/v1/events?token=<token>`（EventSource 不能设置请求
     "cwd": "C:\\Users\\alice\\.cline\\data\\workspaces\\chat",
     "workspaceRoot": "C:\\Users\\alice\\.cline\\data\\workspaces\\chat",
     "workspace": "chat",
+    "project": "cline-hub",
+    "projectRoot": "C:\\Users\\alice\\.cline\\data\\workspaces\\chat\\cline-hub",
+    "projectKind": "project",
     "prompt": "开发这个app",
     "startedAt": "2026-09-20T02:47:19.711Z",
     "endedAt": "2026-09-20T07:43:15.138Z",

@@ -94,7 +94,7 @@ void main() {
     store.dispose();
   });
 
-  testWidgets('底部输入框把消息作为同一会话的 act 命令发出', (tester) async {
+  testWidgets('底部输入框默认按 plan 发送，切到 ACT 后按 act 发送', (tester) async {
     final settings = await _settings();
     final fake = _fake();
     final store = HubStore(settings: settings, apiFactory: (_) => fake);
@@ -102,15 +102,30 @@ void main() {
     await tester.pumpWidget(_wrap(store));
     await tester.pumpAndSettle();
 
+    // 默认 plan：只读，不会悄悄改文件
     await tester.enterText(find.byType(TextField), '继续把测试补全');
     await tester.tap(find.byIcon(Icons.send_rounded));
     await tester.pumpAndSettle();
 
     expect(fake.sentCommands, hasLength(1));
-    final sent = fake.sentCommands.single;
-    expect(sent['prompt'], '继续把测试补全');
+    expect(fake.sentCommands.single['mode'], 'plan');
+    expect(fake.sentCommands.single['sessionId'], 's1');
+
+    // 等「已发送」的 SnackBar 淡出，否则它会盖住发送按钮
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+    // 手动切到 ACT：这次才允许改文件
+    await tester.tap(find.text('ACT'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '把测试补全并跑一遍');
+    await tester.tap(find.byIcon(Icons.send_rounded));
+    await tester.pumpAndSettle();
+
+    expect(fake.sentCommands, hasLength(2));
+    final sent = fake.sentCommands.last;
+    expect(sent['prompt'], '把测试补全并跑一遍');
     expect(sent['mode'], 'act');
-    // 关键：带上 sessionId，bridge 才会用 cline --id 续在原会话里
+    // 关键：带上 sessionId，bridge 才会在原会话里续聊
     expect(sent['sessionId'], 's1');
     expect(sent['workspace'], 'C:\\work\\kids_points_app');
 

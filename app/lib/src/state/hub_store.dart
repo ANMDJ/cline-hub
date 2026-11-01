@@ -55,6 +55,18 @@ class HubStore extends ChangeNotifier {
   String query = '';
   String? _sessionCursor;
 
+  /// 工作区二级页的数据源：进页时单独整批拉一次（服务端 `limit` 上限 200），
+  /// 这样组头的「N 条」统计的是全部会话，而不是主列表恰好翻到了哪儿。
+  List<SessionItem> workspaceSessions = <SessionItem>[];
+  bool loadingWorkspaces = false;
+  String? workspacesError;
+
+  /// 主列表首屏 / 每次上拉条数。
+  static const int sessionPageSize = 60;
+
+  /// 工作区页整批拉取的条数（= 服务端 `limitFrom(url, 50, 200)` 的上限）。
+  static const int workspaceOverviewLimit = 200;
+
   // ---------------------------------------------------------------- commands
   List<CommandItem> commands = <CommandItem>[];
   bool loadingCommands = false;
@@ -138,8 +150,10 @@ class HubStore extends ChangeNotifier {
   /// 会话按工作目录分组：组顺序跟每组第一条会话走（列表本身按时间倒序），
   /// 组内保持原顺序。同一个目录的不同写法（大小写差异）会并成一组。
   List<SessionGroup> get sessionGroups {
+    // 工作区页优先用整批数据；还没拉到（或拉失败）时退回主列表已加载的部分。
+    final source = workspaceSessions.isNotEmpty ? workspaceSessions : sessions;
     final buckets = <String, List<SessionItem>>{};
-    for (final item in sessions) {
+    for (final item in source) {
       buckets.putIfAbsent(_groupKey(item), () => <SessionItem>[]).add(item);
     }
     return <SessionGroup>[
@@ -163,6 +177,15 @@ class HubStore extends ChangeNotifier {
   }
 
   static String _groupKey(SessionItem item) {
+    // 有 project 信息时按「项目根」分组；loose（家目录等）统一进散会话。
+    final kind = (item.projectKind ?? '').trim();
+    final project = (item.project ?? '').trim();
+    final root = (item.projectRoot ?? '').trim();
+    if (kind.isNotEmpty || project.isNotEmpty) {
+      if (kind == 'loose' || project.isEmpty) return '__loose__';
+      return (root.isNotEmpty ? root : 'project:$project').toLowerCase();
+    }
+    // 旧数据（还没回填 project）：保持原来的按绝对路径分组
     final path = _absoluteWorkspace(item);
     if (path != null) return path.toLowerCase();
     final name = (item.workspace ?? '').trim();
@@ -170,6 +193,12 @@ class HubStore extends ChangeNotifier {
   }
 
   static String _groupLabel(SessionItem item) {
+    final kind = (item.projectKind ?? '').trim();
+    final project = (item.project ?? '').trim();
+    if (kind.isNotEmpty || project.isNotEmpty) {
+      if (kind == 'loose' || project.isEmpty) return '散会话（无项目）';
+      return project;
+    }
     final name = (item.workspace ?? '').trim();
     if (name.isNotEmpty) return name;
     final path = _absoluteWorkspace(item);
@@ -193,7 +222,7 @@ class HubStore extends ChangeNotifier {
     notifyListeners();
     try {
       final page = await api.sessions(
-        limit: 30,
+        limit: sessionPageSize,
         query: query.isEmpty ? null : query,
       );
       sessions = List<SessionItem>.of(page.items);
@@ -218,7 +247,7 @@ class HubStore extends ChangeNotifier {
     notifyListeners();
     try {
       final page = await api.sessions(
-        limit: 30,
+        limit: sessionPageSize,
         cursor: cursor,
         query: query.isEmpty ? null : query,
       );
@@ -240,6 +269,39 @@ class HubStore extends ChangeNotifier {
         loadingMoreSessions = false;
         notifyListeners();
       }
+    }
+  }
+
+  /// 工作区页进页时调用：整批拉一次，用于按项目分组统计。
+  ///
+  /// 不复用主列表的 `sessions`，因为主列表是「滚到哪算哪」的分页结果，
+  /// 用它分组会让组头条数偏小（实测只加载 30 条时 cline-hub 只显示 1 条）。
+  Future<void> refreshWorkspaceOverview({bool force = false}) async {
+    if (_disposed || loadingWorkspaces) return;
+    if (!force && workspaceSessions.isNotEmpty) {
+      // 已经拉过：静默刷新，页面上不出现骨架/转圈。
+      unawaited(_reloadWorkspaceOverview());
+      return;
+    }
+    loadingWorkspaces = true;
+    workspacesError = null;
+    notifyListeners();
+    await _reloadWorkspaceOverview();
+    if (!_disposed) {
+      loadingWorkspaces = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _reloadWorkspaceOverview() async {
+    try {
+      final page = await api.sessions(limit: workspaceOverviewLimit);
+      workspaceSessions = List<SessionItem>.of(page.items);
+      workspacesError = null;
+    } on ApiException catch (error) {
+      workspacesError = error.friendly;
+    } catch (error) {
+      workspacesError = '$error';
     }
   }
 

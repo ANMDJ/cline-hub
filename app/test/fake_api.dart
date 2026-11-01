@@ -26,6 +26,8 @@ class FakeHubApi implements HubApi {
 
   int healthCalls = 0;
   int messageCalls = 0;
+  int sessionsCalls = 0;
+  int? lastSessionsLimit;
   final List<Map<String, Object?>> sentCommands = <Map<String, Object?>>[];
   String? sessionQuery;
   bool closed = false;
@@ -53,6 +55,8 @@ class FakeHubApi implements HubApi {
     String? deviceId,
     int limit = 30,
   }) async {
+    sessionsCalls++;
+    lastSessionsLimit = limit;
     sessionQuery = query;
     return SessionPage(items: sessionItems, nextCursor: nextCursor);
   }

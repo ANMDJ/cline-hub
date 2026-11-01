@@ -5,6 +5,7 @@ import { loadConfig } from './config.js'
 import { createLogger } from './logger.js'
 import { openSessionsDb, listSessionsSince, getSessionById, listRecentSessions } from './db.js'
 import { extractSession, extractTranscript, TRANSCRIPT_VERSION } from './extract.js'
+import { projectInfo } from './project.js'
 import { startHookServer } from './hook-server.js'
 import { Outbox } from './outbox.js'
 import { createCommandWorker } from './command-worker.js'
@@ -152,6 +153,7 @@ function allowedWorkspace(row) {
 }
 
 function toRecord(row, extraction) {
+  const project = projectInfo(row.workspace_root)
   return {
     sessionId: row.session_id,
     source: row.source,
@@ -162,6 +164,10 @@ function toRecord(row, extraction) {
     cwd: row.cwd,
     workspaceRoot: row.workspace_root,
     workspace: workspaceName(row.workspace_root),
+    // 项目根：从工作目录向上找 .git / 构建标记，找不到就归为散会话（loose）
+    project: project.project,
+    projectRoot: project.projectRoot,
+    projectKind: project.projectKind,
     prompt: row.prompt ?? '',
     startedAt: row.started_at,
     endedAt: row.ended_at,

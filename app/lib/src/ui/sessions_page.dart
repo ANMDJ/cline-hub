@@ -4,8 +4,9 @@ import 'package:flutter/material.dart';
 
 import '../models/models.dart';
 import '../state/hub_store.dart';
-import '../util/format.dart';
 import 'session_detail_page.dart';
+import 'session_tile.dart';
+import 'workspaces_page.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
@@ -23,8 +24,6 @@ class _SessionsPageState extends State<SessionsPage> {
   final TextEditingController _searchCtrl = TextEditingController();
   final ScrollController _scrollCtrl = ScrollController();
 
-  /// 被折叠的工作目录分组 key。默认全部展开 —— 折叠是用户主动收起，不该藏内容。
-  final Set<String> _collapsed = <String>{};
 
   @override
   void initState() {
@@ -61,6 +60,28 @@ class _SessionsPageState extends State<SessionsPage> {
     final store = widget.store;
     return Column(
       children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+          child: Row(
+            children: [
+              TextButton.icon(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => WorkspacesPage(store: widget.store),
+                  ),
+                ),
+                icon: const Icon(Icons.folder_copy_outlined, size: 16),
+                label: const Text('按工作区浏览', style: TextStyle(fontSize: 12.5)),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+            ],
+          ),
+        ),
+
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 6, 14, 10),
           child: TextField(
@@ -127,19 +148,8 @@ class _SessionsPageState extends State<SessionsPage> {
       );
     }
 
-    // 分组只在有多个目录时才有意义；搜索是跨组的定向查找，平铺更好翻。
-    final groups = store.sessionGroups;
-    final grouped = store.query.isEmpty && groups.length > 1;
-    final rows = <_SessionRow>[
-      if (grouped)
-        for (final group in groups) ...[
-          _SessionRow.header(group),
-          if (!_collapsed.contains(group.key))
-            for (final item in group.items) _SessionRow.session(item),
-        ]
-      else
-        for (final item in store.sessions) _SessionRow.session(item),
-    ];
+    // 扁平列表：服务端已按「最后一次对话时间」倒序，最上面永远是最新会话。
+    final items = store.sessions;
 
     return RefreshIndicator(
       onRefresh: store.refreshSessions,
@@ -149,29 +159,15 @@ class _SessionsPageState extends State<SessionsPage> {
         controller: _scrollCtrl,
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(14, 2, 14, 96),
-        itemCount: rows.length + 1,
+        itemCount: items.length + 1,
         separatorBuilder: (_, _) => const SizedBox(height: 10),
         itemBuilder: (context, index) {
-          if (index == rows.length) return _buildFooter(store);
-          final group = rows[index].group;
-          if (group != null) {
-            return _GroupHeader(
-              group: group,
-              collapsed: _collapsed.contains(group.key),
-              onToggle: () => _toggleGroup(group.key),
-            );
-          }
-          final item = rows[index].item!;
-          return _SessionTile(item: item, onTap: () => _open(item));
+          if (index == items.length) return _buildFooter(store);
+          final item = items[index];
+          return SessionTile(item: item, onTap: () => _open(item));
         },
       ),
     );
-  }
-
-  void _toggleGroup(String key) {
-    setState(() {
-      if (!_collapsed.remove(key)) _collapsed.add(key);
-    });
   }
 
   Widget _buildFooter(HubStore store) {
@@ -196,167 +192,3 @@ class _SessionsPageState extends State<SessionsPage> {
     );
   }
 }
-
-class _SessionTile extends StatelessWidget {
-  const _SessionTile({required this.item, required this.onTap});
-
-  final SessionItem item;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = statusColor(item.status, ok: item.succeeded);
-    return Material(
-      color: kPanel,
-      borderRadius: BorderRadius.circular(kRadius),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(kRadius),
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(kRadius),
-            border: Border.all(color: kLine),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: StatusDot(color: color),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      item.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        height: 1.4,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  if (item.status == 'running') ...[
-                    const SizedBox(width: 8),
-                    Pill(
-                      label: '执行中',
-                      color: kInfo,
-                      icon: Icons.play_arrow_rounded,
-                    ),
-                  ],
-                  if (item.commandCount > 0) ...[
-                    const SizedBox(width: 8),
-                    Pill(
-                      label: '${item.commandCount} 命令',
-                      color: kInfo,
-                      icon: Icons.bolt_rounded,
-                    ),
-                  ],
-                ],
-              ),
-              const SizedBox(height: 8),
-              MetaLine(
-                parts: [item.workspace, relativeTime(item.sortAt), item.model],
-              ),
-              if (item.resultPreview != null) ...[
-                const SizedBox(height: 6),
-                Text(
-                  item.resultPreview!.replaceAll(RegExp(r'\s+'), ' ').trim(),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 12.5,
-                    height: 1.55,
-                    color: Color(0xFFA9BBCB),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// 列表里的一行：要么是工作目录分组头，要么是一条会话。
-class _SessionRow {
-  const _SessionRow.header(this.group) : item = null;
-
-  const _SessionRow.session(this.item) : group = null;
-
-  final SessionGroup? group;
-  final SessionItem? item;
-}
-
-/// 工作目录分组头：点一下收起 / 展开；收起时右侧多显示条数和最近时间。
-class _GroupHeader extends StatelessWidget {
-  const _GroupHeader({
-    required this.group,
-    required this.collapsed,
-    required this.onToggle,
-  });
-
-  final SessionGroup group;
-  final bool collapsed;
-  final VoidCallback onToggle;
-
-  @override
-  Widget build(BuildContext context) {
-    final latest = group.items.first.sortAt;
-    return Material(
-      color: kBgSoft,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10),
-        side: const BorderSide(color: kLine),
-      ),
-      child: InkWell(
-        onTap: onToggle,
-        borderRadius: BorderRadius.circular(10),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(10, 9, 12, 9),
-          child: Row(
-            children: [
-              Icon(
-                collapsed
-                    ? Icons.chevron_right_rounded
-                    : Icons.expand_more_rounded,
-                size: 18,
-                color: kMuted,
-              ),
-              const SizedBox(width: 4),
-              const Icon(Icons.folder_outlined, size: 14, color: kMuted),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  group.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: kMono.copyWith(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Pill(label: '${group.items.length} 条', color: kInfo),
-              if (collapsed && latest != null) ...[
-                const SizedBox(width: 8),
-                Text(
-                  relativeTime(latest),
-                  style: const TextStyle(fontSize: 11, color: kMuted),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-

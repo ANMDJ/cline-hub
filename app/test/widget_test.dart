@@ -9,7 +9,9 @@ import 'package:cline_console/src/data/settings_store.dart';
 import 'package:cline_console/src/models/models.dart';
 import 'package:cline_console/src/state/hub_store.dart';
 import 'package:cline_console/src/ui/commands_page.dart';
+import 'package:cline_console/src/ui/session_tile.dart';
 import 'package:cline_console/src/ui/sessions_page.dart';
+import 'package:cline_console/src/ui/workspaces_page.dart';
 import 'package:cline_console/src/ui/setup_page.dart';
 import 'package:cline_console/src/ui/theme.dart';
 import 'package:flutter/material.dart';
@@ -178,52 +180,53 @@ void main() {
     store.dispose();
   });
 
-  testWidgets('同一工作目录的会话折叠成一组', (tester) async {
+  testWidgets('会话列表按最近对话时间扁平排序，不再分组', (tester) async {
     tester.view.physicalSize = const Size(411, 914);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
     final settings = await configuredSettings();
-    final fake = FakeHubApi(
-      sessionItems: [
-        SessionItem(
-          deviceId: 'localone',
-          sessionId: 's1',
-          workspace: 'kids_points_app',
-          workspaceRoot: r'C:\work\kids_points_app',
-          userPrompt: '改登录页',
-          status: 'completed',
-          resultOk: true,
-          sortAt: DateTime(2026, 10, 31, 10),
-        ),
-        SessionItem(
-          deviceId: 'localone',
-          sessionId: 's2',
-          workspace: 'kids_points_app',
-          workspaceRoot: r'C:\work\kids_points_app',
-          userPrompt: '补测试',
-          status: 'completed',
-          resultOk: true,
-          sortAt: DateTime(2026, 10, 30, 10),
-        ),
-        SessionItem(
-          deviceId: 'localone',
-          sessionId: 's3',
-          workspace: 'hub',
-          workspaceRoot: r'C:\work\hub',
-          userPrompt: '修 SSE',
-          status: 'completed',
-          resultOk: true,
-          sortAt: DateTime(2026, 10, 29, 10),
-        ),
-      ],
-    );
+    final fake = FakeHubApi(sessionItems: _projectSessions());
     final store = HubStore(settings: settings, apiFactory: (_) => fake);
     await store.start();
 
     await tester.pumpWidget(wrap(SessionsPage(store: store)));
     await tester.pump();
+
+    // 扁平列表：没有组头
+    expect(find.text('2 条'), findsNothing);
+    expect(find.text('1 条'), findsNothing);
+
+    // 顺序 = 最近对话时间倒序（服务端 sortAt 已排好，客户端不再重排）
+    final tiles =
+        tester.widgetList<SessionTile>(find.byType(SessionTile)).toList();
+    expect(
+      tiles.map((tile) => tile.item.sessionId).toList(),
+      ['s1', 's2', 's3'],
+    );
+
+    store.dispose();
+  });
+
+  testWidgets('工作区页按项目分组，可收起单组', (tester) async {
+    tester.view.physicalSize = const Size(411, 914);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final settings = await configuredSettings();
+    final fake = FakeHubApi(sessionItems: _projectSessions());
+    final store = HubStore(settings: settings, apiFactory: (_) => fake);
+    await store.start();
+
+    await tester.pumpWidget(wrap(WorkspacesPage(store: store)));
+    await tester.pump();
+    await tester.pump();
+
+    // 进页会整批拉一次（服务端上限 200），分组条数不受主列表分页影响
+    expect(fake.lastSessionsLimit, HubStore.workspaceOverviewLimit);
+    expect(store.workspaceSessions.length, 3);
 
     // 两个组头：2 条的 kids_points_app、1 条的 hub
     expect(find.text('2 条'), findsOneWidget);
@@ -247,3 +250,47 @@ void main() {
     store.dispose();
   });
 }
+
+/// 三条会话：两条在 kids_points_app、一条在 hub，按最近对话时间倒序。
+List<SessionItem> _projectSessions() => [
+      SessionItem(
+        deviceId: 'localone',
+        sessionId: 's1',
+        workspace: 'kids_points_app',
+        workspaceRoot: r'C:\work\kids_points_app',
+        project: 'kids_points_app',
+        projectRoot: r'C:\work\kids_points_app',
+        projectKind: 'project',
+        userPrompt: '改登录页',
+        status: 'completed',
+        resultOk: true,
+        sortAt: DateTime(2026, 10, 31, 10),
+      ),
+      SessionItem(
+        deviceId: 'localone',
+        sessionId: 's2',
+        workspace: 'kids_points_app',
+        workspaceRoot: r'C:\work\kids_points_app',
+        project: 'kids_points_app',
+        projectRoot: r'C:\work\kids_points_app',
+        projectKind: 'project',
+        userPrompt: '补测试',
+        status: 'completed',
+        resultOk: true,
+        sortAt: DateTime(2026, 10, 30, 10),
+      ),
+      SessionItem(
+        deviceId: 'localone',
+        sessionId: 's3',
+        workspace: 'hub',
+        workspaceRoot: r'C:\work\hub',
+        project: 'hub',
+        projectRoot: r'C:\work\hub',
+        projectKind: 'project',
+        userPrompt: '修 SSE',
+        status: 'completed',
+        resultOk: true,
+        sortAt: DateTime(2026, 10, 29, 10),
+      ),
+    ];
+
