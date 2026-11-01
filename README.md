@@ -213,3 +213,14 @@ sh.Run "node ""C:\Users\alice\.cline\data\workspaces\chat\cline-hub\bridge\src\i
 - 仓库内**不出现任何真实口令/token**；`bridge/config.json` 与 `.env` 均被 gitignore。
 - `.ps1` 文件保持 **ASCII-only**（Windows PowerShell 5.1 会把无 BOM 的 UTF-8 当 ANSI 读，中文会乱码）。
 - Hook 脚本**永不阻塞**：任何异常都 `exit 0`，失败只写 `%USERPROFILE%\.cline\notify.log`。
+
+## 许可证
+
+代码以 [MIT](LICENSE) 发布（Copyright © 2026 a9653）：随便用、改、商用、闭源分发，
+只需保留版权与许可声明。不提供任何担保。
+
+两点说明：
+
+- **名字与标识不在授权范围内**——基于本仓库改的东西请另起名，别让人误以为是上游版本
+  （MIT 本身没有商标条款，这句只是态度）。
+- `docs/` 与 `site/` 里的文字同 MIT 发布，但里面的截图/示例若有第三方内容，各自归属原主。

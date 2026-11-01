@@ -71,8 +71,10 @@ sudo cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.bak-$(date +%s)
 sudo cp /tmp/Caddyfile.new /etc/caddy/Caddyfile && sudo systemctl reload caddy
 ```
 
-## 发布前要改的两处
+## 发布前要改的一处
 
 1. `index.html` 里 4 个 `data-todo="repo"` 的链接：把 `https://github.com/` 换成真实仓库地址
    （没换也不会跳错，点击会提示「地址还没填」）。
-2. 许可证说明：页脚写的是「见项目根目录」，仓库里加了 `LICENSE` 之后可以顺手改成 MIT / Apache-2.0。
+
+许可证已经定了：仓库根目录的 `LICENSE` 是 MIT，页脚文案与 `server/` / `bridge/` 的
+`package.json` 都已对齐，换协议时这几处要一起改。

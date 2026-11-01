@@ -2,6 +2,7 @@
   "name": "cline-hub-server",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "Cline Console Hub: receives bridge uploads, serves the mobile app, queues remote commands",
   "engines": {
