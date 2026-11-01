@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 与 Flutter 侧 kBg (#0A0E13) 保持一致：
+         启动图、窗口背景、Android 12 系统 splash 都用它，冷启动不会先闪一帧白屏。 -->
+    <color name="launch_background">#FF0A0E13</color>
+</resources>

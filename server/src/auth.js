@@ -31,7 +31,7 @@ export function createAuth({ db, adminToken, logger }) {
     const key = hashToken(token)
     const cached = cache.get(key)
     if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
-      void touch(cached.client, cached.touchedAt)
+      void touch(key, cached.client)
       return cached.client
     }
 
@@ -41,15 +41,20 @@ export function createAuth({ db, adminToken, logger }) {
       return null
     }
 
-    cache.set(key, { at: Date.now(), touchedAt: Date.now(), client: row })
-    void touch(row, Date.now())
+    // touchedAt 表示「上次写库时间」，首次必须给 0：否则 Date.now() - last 恒为 0，
+    // 永远落在节流窗口内，last_seen_at 就一直是 null（实测踩过）。
+    cache.set(key, { at: Date.now(), touchedAt: 0, client: row })
+    void touch(key, row)
     return row
   }
 
-  /** last_seen_at is only an ops signal, so it is written at most once a minute. */
-  async function touch(client, now) {
+  /** last_seen_at 只是运维信号：同一个 client 60 秒最多写一次。 */
+  async function touch(key, client) {
     if (!client?.id || client.id === 'admin') return
-    if (now && Date.now() - now < TOUCH_INTERVAL_MS) return
+    const entry = cache.get(key)
+    const last = entry?.touchedAt ?? 0
+    if (Date.now() - last < TOUCH_INTERVAL_MS) return
+    if (entry) entry.touchedAt = Date.now()
     try {
       await db.query('update clients set last_seen_at = now() where id = $1', [client.id])
     } catch (error) {

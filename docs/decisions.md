@@ -169,3 +169,195 @@ M2b 收尾时要发布落地页，页脚和根目录都缺许可证，得先定�
    工具和平台（GitHub 许可证识别、公司合规扫描）都会认不出来，损失大于收益。
 3. **依赖侧不另外维护清单**：不分发预编译二进制（APK 由使用者自己 `flutter build`），
    `flutter pub deps` / `npm ls` 随时可查，没有额外的 bundle 义务。
+
+
+## 16. 会话上报：`running` 也上传，靠「指纹」而不是「id 名单」去重
+
+手机上一直看不到「正在跑的那条会话」和最新一句话。根因在 bridge 的上报策略，
+不在 App —— App 早就支持 `running → 执行中` 的展示。
+
+| 方案 | 说明 | 结论 |
+|---|---|---|
+| 只上报终态（原实现） | `running` 只塞进 `pendingRunning`，等结束再发 | ✗ 长会话几十分钟都查不到，最新消息也看不到 |
+| 每条消息都推 | Cline 每产生一条消息都会刷 `updated_at` | ✗ 长会话把 outbox 和 Hub 的 upsert 打成每 5 秒一次 |
+| 指纹 + 节流（现方案） | `status\|updated_at` 没变就不发；`running` 最多 15 秒一次 | ✅ |
+
+配套的三个修正：
+
+1. **去重从「id 数组」升级成 `{ sessionId: 指纹 }`**：旧实现是
+   `if (sentSessions.includes(id)) return`，一个会话只要上报过一次，后续再聊、
+   状态从 `failed` 变 `completed` 都不会再推，手机永远停在第一次的快照。
+   迁移时旧 id 给空指纹，并打 `needsBackfill`。
+2. **一次性回填**：水位线（`lastUpdatedAt`）只向前推进，被旧逻辑静默跳过的会话
+   其 `updated_at` 早已落在水位线以下，`listSessionsSince` 再也扫不到。
+   升级后按 `updated_at desc limit 100` 取一次最近会话重推，指纹相同的自动跳过，
+   `needsBackfill` 落盘为 `false`，不会每次启动都跑。
+3. **`userPrompt` 取「最后一条真人输入」**：Cline 会把 `[TASK RESUMPTION] …`、
+   `<hook_context …>`、`<environment_details>` 这类注入文本也放进 `user role`，
+   原来的 `last user text wins` 会把真实 prompt 顶掉（实测 `userPrompt` 变成了
+   `[TASK RESUMPTION] Please continue where you left off.`）。
+   现在只认 `<user_input>…</user_input>` 里的正文，其余以 `<` 开头的注入文本跳过，
+   全被跳过时退回 `sessions.prompt`。
+
+## 17. 指令执行要「诚实」：非终止错误 + 失败原因回写
+
+实测：手机上发「app 开机加载白屏，会话详情加载卡顿」，Hub 上显示 `done`、`exit 0`，
+而 `resultText` 只有一段 `CommandNotFoundException` —— 手机以为跑成功了，实际什么都没干。
+
+两层原因：
+
+1. `commands.template` 默认 `{prompt}` ＝「prompt 就是 PowerShell 脚本」，中文自然语言
+   被当成命令名；而 PowerShell 的「找不到命令」只是**非终止错误**，`-File` 仍然返回 0。
+2. bridge 只看退出码，`0` 一律判 `done`，`errorText` 为空，失败原因被埋进 `resultText`。
+
+改法（`bridge/src/command-worker.js`）：
+
+- `hardenScript()`：powershell 脚本前置 `$ErrorActionPreference = 'Stop'`
+  （脚本自己赋过就不加，后赋值会覆盖前缀），让「命令/路径不存在」变成终止错误 → `exit 1` → 上报 `failed`。
+- `failureReason()`：非 0 退出且没有 `child.on('error')` 信息时，从输出里挑第一条匹配
+  `error|not recognized|not found|denied|cannot|无法|不是` 的行，写成 `exit code 1: <那行>`，
+  App 的红色错误框直接显示根因，而不是干巴巴的 `exit code 1`。
+
+顺带纠正一条旧结论：本机**有** `cline` CLI（`cline@3.0.74`，装在
+`%LOCALAPPDATA%\Author Software\nvm\installs\v26.10.0\cline.cmd`），
+但**不在 PATH 上**（新开的 PowerShell 里 `Get-Command cline` 解析不到）。
+若想把手机指令交给 AI 执行，`template` 必须写绝对路径 + 调用符：
+
+```json
+"template": "& \"C:\\Users\\alice\\AppData\\Local\\Author Software\\nvm\\installs\\v26.10.0\\cline.cmd\" --yolo \"{prompt}\""
+```
+
+`--yolo` 真的会改文件、跑命令，等价于把手机变成无人监督的执行端，先确认 headless 授权再开。
+
+## 18. 会话详情要「逐条」，完成通知由 bridge 自己兜底
+
+三个现象同一批修：详情页只有一句话、执行中的消息不出现、动态页永远收不到「已完成」。
+
+| 层 | 根因 | 改法 |
+|---|---|---|
+| 抽取 | `extract.js` 里 `resultText` / `userPrompt` 都是 last-wins，`sessions` 表只有一列 `result_text` | 新增 `extractTranscript()`，把 `messages.json` 拍平成逐条消息 |
+| 存储 | 没有消息级表 | `002_messages.sql`：`session_messages`，主键 `(device, session, message_id)` |
+| 上报 | bridge 每次只发整条会话 | `state.json` 记 `{v, n, tail}` 水位（抽取版本/条数/末条长度），增量发、每批 40 条 |
+| 通知 | Cline 4.1.26 把 hooks 目录改成工作区级 `.clinerules/hooks`，老的外挂 `.ps1` 不再触发 | bridge 自己盯 `status` 跃迁，`running → completed/failed/cancelled` 就补一条 hook 事件 |
+| 执行 | 手机指令进不来真会话 | `commands.runner: "cline"`，带 `sessionId` 用 `--id` 续会话，否则 `-c` 新开 |
+
+实测口径（会话 `1793505205932_g0u8h`）：454 条原始记录 → 241 条可读消息
+（5 条真人输入 / 60 条正文 / 176 条命令过程），详情页从「1 条」变成完整对话。
+
+五个必须记住的细节：
+
+1. **`after` 不能默认成 0**。`Number(searchParams.get('after') ?? '')` 里空串转数字是 `0`，
+   `seq > 0` 会把第一条（用户原话）永久过滤掉。必须先判 `null`/空串再转数字。
+2. **重叠重发 6 条**。流式回复的同一条消息内容会一直变长，只按条数追新会漏更新；
+   服务端按 `message_id` upsert，重发是安全的。
+3. **`spawn` 必须 `stdio: ['ignore', 'pipe', 'pipe']`**。不关 stdin 时 cline 会等终端输入，
+   进程永不退出，手机侧就卡在「执行中」（实测挂住 8 分钟以上）。
+4. **Windows 上 `cline.cmd` 是批处理**，Node 不能直接 exec，需要 `shell: true` 且自己给参数加引号。
+5. **完成通知只在「见过它 running」时发**：首次回填会翻出几十个历史会话，
+   不做这个判断，手机开机会被历史通知刷屏。
+
+### Phase 0 两项实验的结论（2026-11-01 实测）
+
+1. **`cline --id` 不是抢锁，是无头环境下根本用不了**：
+
+   ```
+   $ cline --id 1791688899478_78ppl -p "reply ..."      # stdin/stdout 都是管道
+   error: interactive mode requires a TTY (stdin/stdout must both be terminals)
+   ```
+
+   加 `--zen` 一样报错；换成 `cline -c <cwd> -p "..."` 则正常（实测 7.6s、`exit 0`、输出 `got it`）。
+   本机既没有 `winpty` 也没有 `node-pty`，`cline connect` 是「接外部 channel」而非续会话。
+
+   → 结论：`commands.cline.resume` 停用（默认 `false`），带 `sessionId` 也一律 `-c` 新开会话。
+   App 的「继续对话」语义因此变成「新建一个会话接着说」，UI 已同步注明。
+   想要真正的续聊，后续只有两条路：实现 `cline --acp` 客户端（stdio JSON-RPC），或给 bridge 引入 pty —— 都记在这里备查。
+2. **Cline 4.1.26 不调外部 `.ps1` hook**：侧证是 Hub 的 `hooks` 表里 #1–#12 全部来自 bridge
+   自己生成的 `session_done` / `session_failed`，外挂 hook 一条都没有。现方案（bridge 盯状态跃迁）成立。
+
+## 19. 远程命令默认关闭，工作目录白名单在执行侧也校验（2026-11-01）
+
+**触发**：本机 PowerShell 窗口出现「自动输入 + 下载进度」，被怀疑有人远程控制。逐项排查（证据见
+`docs/bridge-notes.md` §7）结论是**没有入侵**：无远控软件、RDP 禁用且 3389 无监听、无异常启动项/WMI 订阅、
+Defender 无威胁、4104 脚本块日志只来自本机会话。**能下命令的只有本项目的 bridge。**
+
+问题不在「被攻破」，而在「默认太宽松 + 明文 HTTP」：
+
+| 缺口 | 后果 |
+|---|---|
+| `workspaceWhitelist` 只在 `index.js` 用于采集过滤 | 手机发 `workspace=C:\Windows\System32` 就能在任意目录执行 |
+| `allowModes` 默认含 `act` → `--auto-approve true` | 无人值守跑完整 act 会话，机器前没有人在看 |
+| 启动文件夹 VBS 常驻 | 一旦 token 被嗅探，攻击窗口是 7×24 |
+| 明文 HTTP（ADR-11 的已知代价） | token 在链路上裸奔 |
+
+**决定**：
+
+1. `commands.enabled` 默认 `false` —— 命令停在 `pending`，要执行必须显式打开；
+2. `allowModes` 默认只剩 `plan` —— `act`/`yolo` 直接 `failed`，原因回写给手机；
+3. 抽出纯函数 `isWorkspaceAllowed(dir, whitelist)`，**执行侧独立校验**：绝对路径条目按目录前缀比
+   （`...\chat` 不放行 `...\chatty`），纯名字条目按目录名精确比（与采集侧同义）；越权或 `..` 跳出 → `failed`；
+4. 自检脚本 `bridge/scripts/check-workspace-whitelist.mjs`（`npm run check:whitelist`，10 条用例、零依赖），
+   跟 `site/check-site.mjs` 一个路子：非 0 退出码可直接进 CI；
+5. 本机开机自启的 `ClineBridge.vbs` 改为 `.disabled`，等切回 HTTPS + 轮换 token 后再恢复。
+
+**不做的事**：不给 `actArgs` 塞 `--auto-approve false` 这种没实测过的取值 —— 把 `act` 从 `allowModes`
+拿掉更彻底，也不用去猜 CLI 对布尔参数怎么解析（§18 的 Phase 0 实验已经教过一次：别猜，先实测）。
+
+## 20. 备案期内用 `:8443` + 现有 LE 证书提供 HTTPS（2026-11-01）
+
+**问题**：明文 HTTP 入口（ADR-11）让 token 在链路上裸奔；但 80/443 被未备案拦截
+（80 被 302 到拦截页、443 的 TLS 握手按 SNI 重置）。想上 HTTPS，却被「等备案」卡住。
+
+**实测调查**：
+
+| 事实 | 证据 |
+|---|---|
+| 证书其实**早就签下来了** | `/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/hub.littlewish.top/`，`notAfter=2027-01-29`，证书本身没问题 |
+| 服务器只监听 80/443 | `ss -ltn`：`*:80`、`*:443`（Caddy v2.11.7） |
+| 主机防火墙不是卡点 | `ufw` inactive；iptables 只有一条对 `193.32.162.167` 的 22 端口 REJECT |
+| 卡点是**云安全组** | 外网 `80/443` TCP 可连，`8443` TCP 超时 → 只有安全组没放行 |
+
+**决定**：新增一个 `hub.littlewish.top:8443` 站点，复用同一张证书和同一套反代配置
+（SSE 的 `flush_interval -1`、`read_timeout 0` 照抄 443 站点），**不动**现有 80/443 的站点。
+纯加法：`caddy validate` 通过 → `systemctl reload caddy` → 想回退只需 `cp` 回
+`/etc/caddy/Caddyfile.bak-20261101-8443`。
+
+**验证**：服务器内 `curl --resolve hub.littlewish.top:8443:127.0.0.1`（**严格校验证书**）返回 `200`；
+安全组放行 TCP 8443 后，外网 `curl https://hub.littlewish.top:8443/api/v1/health` 也返回 `200`，
+证书链严格校验通过（`verify=0`）。随后 device/app token 全部轮换，bridge 切到 HTTPS 并重启，
+`GET /sessions`、`GET /commands/pending` 均 200；`commands.enabled=false` 时日志打印
+`command worker disabled`——即「能上报、不能远程执行」。
+
+**已知代价 / 退路**：
+
+1. 证书续期不能再用 HTTP-01 / TLS-ALPN，得改 **DNS-01**（DNSPod 插件，需重编译 Caddy）或手动写死 `tls <crt> <key>`；
+2. 非标端口对个别企业网络不友好（一般无碍）；
+3. 若腾讯云连非标端口的 TLS 也拦：退路是 **Cloudflare Tunnel**（零开放端口、无需备案、公网 HTTPS 由 CF 提供）
+   或**自签 CA + 客户端指纹固定**（bridge 用 `NODE_EXTRA_CA_CERTS`，Flutter 用 `SecurityContext`）。
+
+`deploy/Caddyfile` 已同步这段配置，避免以后 `cp deploy/Caddyfile /etc/caddy/Caddyfile` 把它覆盖掉。
+
+
+
+
+
+## 21. cline CLI 无头执行的四个坑（2026-11-01 全部实测）
+
+1. **`--id` 需要 TTY**（详见 ADR-18）：无头 bridge 一律 `-c` 新开会话。
+2. **不要用 `shell: true` 跑 `.cmd`**：cmd 会重解析整行，`...\Author Software\...` 里的空格把命令截断成
+   `'C:\Users\alice\AppData\Local\Author' is not recognized`（cmd_d780a52e6c1a 实测）。
+   改为 `node <node_modules/cline/bin/cline> ...`（`resolveClineTarget()` 自动推导），无 shell、无引号地狱，
+   顺带还能保持 `stdio: ignore`（否则 cline 会等终端输入而挂住）。
+3. **停掉陈旧的 cline hub daemon**：它连续跑满 4h39m 后，CLI 每次都在收尾阶段报
+   `hook dispatch failed: session.hook requires a valid hook event payload` 并 `exit 1` —— 其实活已经干完了。
+   排查特征：同一条命令早先成功、之后必失败，且清空 hooks 目录 / 停 bridge / 换 cwd 都无效。
+   `cline doctor` 会显示 `hub healthy yes (pid=...)`；杀掉那个 pid，CLI 会自动拉起新 daemon，立刻恢复。
+4. **白名单比较必须统一斜杠**：cline CLI 写库用 `C:/...`，人手填的白名单是 `C:\...`，直接 `includes`
+   会把 CLI 产生的会话全部误杀（实测 1793531135718_fl56b 被过滤）。`normalizePath()` 先
+   `replace(/\\/g, '/')` 再比。
+
+两条运维细节：
+
+- PowerShell 5.1 的 `Set-Content -Encoding UTF8` 会写 **BOM**，`JSON.parse` 直接抛错、bridge 起不来；
+  改 JSON 必须用 `[IO.File]::WriteAllText(path, text, [Text.UTF8Encoding]::new($false))`。
+- 本机某些会话里 `netstat` 看不到 `127.0.0.1:3210`（`Get-NetTCPConnection` 也不报），用它判断 bridge
+  是否存活会误判；改用 `Invoke-WebRequest http://127.0.0.1:3210/health`（`verify-hub.ps1` 已改）。

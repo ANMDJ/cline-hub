@@ -43,43 +43,13 @@ hub.littlewish.top {
 	}
 }
 
-# ── 临时兜底入口：备案未下来时唯一的可用路径（明文 HTTP + 随机前缀）──────
-# 实测证据（2026-10-31，部署约 35 分钟后开始）：
-#   https://hub.littlewish.top → TLS 握手被重置（443 阻断，TCP 能连、证书本身没问题）
-#   http://hub.littlewish.top  → 302 到 https://dnspod.qcloud.com/static/webblock.html?d=hub.littlewish.top
-#                                （腾讯云「未备案」拦截页，劫持端口 80）
-#   http://82.157.153.22/...   → 正常到达 Caddy（按 IP 访问不在拦截范围）
-# 所以兜底入口只能走 IP。前缀就等于口令，本机存 .secrets/hub-http-prefix.txt。
-# 生成前缀：openssl rand -hex 16 → 替换下面的 HUB_HTTP_PREFIX，并同步客户端：
-#   bridge/config.json 的 hubUrl = http://82.157.153.22/_h/<随机串>
-#   HUB_SMOKE_BASE=http://82.157.153.22/_h/<随机串>
-# 备案通过后整段删除，客户端 hubUrl 换回 https://hub.littlewish.top
+# ── 开源落地页（按 IP 访问）：只提供静态站，不再反代 API ─────────────────
+# API 已迁到 https://hub.littlewish.top:8443（HTTPS）；这里不再有
+# /_h/<前缀> 的明文入口，token 不会在链路上被嗅探。
 http://82.157.153.22 {
-	@prefixed path /_h/HUB_HTTP_PREFIX/*
-	route @prefixed {
-		# API 响应一律不缓存（SSE / 幂等查询都一样）
-		header Cache-Control "no-store"
-		uri strip_prefix /_h/HUB_HTTP_PREFIX
-		reverse_proxy 127.0.0.1:3100 {
-			# 明文入口也要支持 SSE：关掉反代缓冲
-			flush_interval -1
-			transport http {
-				read_timeout 0
-			}
-		}
-	}
-
-	# 2) 开源落地页：静态站点（公开，目录 /var/www/cline-hub）
-	#    只排除 /_h/*（API 前缀），其余交给 file_server，缺文件自然 404
-	@site not path /_h/*
-	route @site {
-		encode zstd gzip
-		root * /var/www/cline-hub
-		file_server
-	}
-
-	# 3) 其余路径一律 404
-	respond "Not Found" 404
+	encode zstd gzip
+	root * /var/www/cline-hub
+	file_server
 
 	header {
 		X-Content-Type-Options "nosniff"
@@ -145,3 +115,42 @@ http://82.157.153.22 {
 # 		}
 # 	}
 # }
+
+# ── HTTPS 非标端口入口（2026-11-01 新增，绕开 80/443 的未备案拦截）─────────
+# 背景：https://hub.littlewish.top（443）TLS 握手被腾讯云按 SNI 重置，
+#       http（80）被 302 到备案拦截页；但按 IP 或非标端口不触发拦截规则。
+# 做法：复用 Caddy 已签发的 Let's Encrypt 证书（hub.littlewish.top，到期 2027-01-29，
+#       存在 /var/lib/caddy/.local/share/caddy/certificates/...），只在 :8443 上再开一个站点。
+# 客户端把 hubUrl 换成 https://hub.littlewish.top:8443 即可；token 不再明文暴露。
+# 前置条件：腾讯云防火墙必须放行 TCP 8443（控制台 → 防火墙 / 安全组）。
+# 证书续期提醒：Caddy 默认走 HTTP-01（80 端口被劫持）/ TLS-ALPN（443 被重置），
+#       到期前需改 DNS-01（DNSPod API，需重编译 Caddy 带 dns 插件），或手动签发后
+#       用 `tls <crt> <key>` 固定。到期日 2027-01-29。
+hub.littlewish.top:8443 {
+	encode zstd gzip
+
+	# SSE 必须实时下发：关掉反代缓冲（与 443 站点一致）
+	@events path /api/v1/events*
+	reverse_proxy @events 127.0.0.1:3100 {
+		flush_interval -1
+	}
+
+	reverse_proxy 127.0.0.1:3100 {
+		transport http {
+			read_timeout 0
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+	}
+
+	log {
+		output file /var/lib/caddy/hub-https.log {
+			roll_size 10MiB
+			roll_keep 3
+		}
+	}
+}

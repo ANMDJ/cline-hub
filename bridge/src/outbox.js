@@ -55,9 +55,12 @@ export class Outbox {
   }
 
   endpointFor(item) {
-    return item.kind === 'hook'
-      ? `${this.hubUrl}/api/v1/hooks`
-      : `${this.hubUrl}/api/v1/sessions`
+    if (item.kind === 'hook') return `${this.hubUrl}/api/v1/hooks`
+    if (item.kind === 'messages') {
+      const sessionId = encodeURIComponent(String(item.body?.sessionId ?? ''))
+      return `${this.hubUrl}/api/v1/sessions/${sessionId}/messages`
+    }
+    return `${this.hubUrl}/api/v1/sessions`
   }
 
   async flush() {

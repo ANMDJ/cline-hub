@@ -21,3 +21,10 @@ node_modules/
 *.log
 .DS_Store
 .idea/
+
+# 崩溃转储 / 本地备份（config.json 备份里有明文 token，绝不能进仓库）
+*.stackdump
+bash.exe.stackdump
+*.bak-*
+config.json.bak*
+gradle-daemon-jvm.properties

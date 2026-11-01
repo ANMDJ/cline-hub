@@ -10,6 +10,7 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "once": "node src/index.js --once",
-    "health": "node -e \"fetch('http://127.0.0.1:3210/health').then(r=>r.text()).then(console.log)\""
+    "health": "node -e \"fetch('http://127.0.0.1:3210/health').then(r=>r.text()).then(console.log)\"",
+    "check:whitelist": "node scripts/check-workspace-whitelist.mjs"
   }
 }

@@ -9,6 +9,28 @@ import '../models/models.dart';
 /// 与服务端 SSE 的连接状态。
 enum LinkState { idle, connecting, live, retrying, offline }
 
+/// 会话列表按工作目录聚合出的一个组（列表里可折叠）。
+class SessionGroup {
+  const SessionGroup({
+    required this.key,
+    required this.label,
+    required this.path,
+    required this.items,
+  });
+
+  /// 折叠状态的键：优先绝对路径（转小写，Windows 路径不分大小写），
+  /// 退化 `name:<项目名>`，都没有时是空串。
+  final String key;
+
+  /// 组头显示的项目名，如 `kids_points_app`。
+  final String label;
+
+  /// 完整绝对路径；拿不到时为 null（组头只显示项目名）。
+  final String? path;
+
+  final List<SessionItem> items;
+}
+
 /// 页面级状态仓库：三份列表 + 事件流 + 分页游标。
 ///
 /// 只用 ChangeNotifier 是有意选择：依赖越少，几年后越容易还跑得起来。
@@ -74,6 +96,91 @@ class HubStore extends ChangeNotifier {
     if (settings.deviceId.isNotEmpty) return settings.deviceId;
     final known = knownDevices;
     return known.isEmpty ? '' : known.first;
+  }
+
+  /// 下发面板「工作目录」的候选：会话 / 命令 / 动态里出现过的**绝对路径**。
+  ///
+  /// 只收绝对路径是因为 bridge 的 `resolveWorkspace()` 用 `fs.existsSync()`
+  /// 判断目录存不存在：`session.workspace` 那种相对名（`kids_points_app`）
+  /// 必然落空，会静默退回 `commands.defaultWorkspace`，界面上给了反而误导。
+  /// 按出现次数降序、去重，最多 6 条 —— 手机屏幕放不下更多。
+  List<String> get knownWorkspaces {
+    final counts = <String, int>{};
+    void bump(String? raw) {
+      final value = (raw ?? '').trim();
+      if (!_looksAbsolute(value)) return;
+      counts[value] = (counts[value] ?? 0) + 1;
+    }
+
+    for (final item in sessions) {
+      bump(item.workspaceRoot);
+    }
+    for (final item in commands) {
+      bump(item.workspace);
+    }
+    for (final item in hooks) {
+      bump(item.workspace);
+    }
+
+    final ranked = counts.entries.toList()
+      ..sort(
+        (a, b) => a.value == b.value
+            ? a.key.compareTo(b.key)
+            : b.value.compareTo(a.value),
+      );
+    return <String>[for (final entry in ranked.take(6)) entry.key];
+  }
+
+  static final RegExp _windowsPath = RegExp(r'^[a-zA-Z]:[\\/]');
+  static bool _looksAbsolute(String value) =>
+      value.startsWith('/') || _windowsPath.hasMatch(value);
+
+  /// 会话按工作目录分组：组顺序跟每组第一条会话走（列表本身按时间倒序），
+  /// 组内保持原顺序。同一个目录的不同写法（大小写差异）会并成一组。
+  List<SessionGroup> get sessionGroups {
+    final buckets = <String, List<SessionItem>>{};
+    for (final item in sessions) {
+      buckets.putIfAbsent(_groupKey(item), () => <SessionItem>[]).add(item);
+    }
+    return <SessionGroup>[
+      for (final entry in buckets.entries)
+        SessionGroup(
+          key: entry.key,
+          label: _groupLabel(entry.value.first),
+          path: _absoluteWorkspace(entry.value.first),
+          items: entry.value,
+        ),
+    ];
+  }
+
+  /// 绝对工作目录：`workspaceRoot` 是完整路径，`workspace` 通常只是项目名。
+  static String? _absoluteWorkspace(SessionItem item) {
+    final root = (item.workspaceRoot ?? '').trim();
+    if (_looksAbsolute(root)) return root;
+    final name = (item.workspace ?? '').trim();
+    if (_looksAbsolute(name)) return name;
+    return null;
+  }
+
+  static String _groupKey(SessionItem item) {
+    final path = _absoluteWorkspace(item);
+    if (path != null) return path.toLowerCase();
+    final name = (item.workspace ?? '').trim();
+    return name.isEmpty ? '' : 'name:$name';
+  }
+
+  static String _groupLabel(SessionItem item) {
+    final name = (item.workspace ?? '').trim();
+    if (name.isNotEmpty) return name;
+    final path = _absoluteWorkspace(item);
+    if (path != null) {
+      final parts = path
+          .split(RegExp(r'[\\/]'))
+          .where((part) => part.isNotEmpty)
+          .toList(growable: false);
+      if (parts.isNotEmpty) return parts.last;
+    }
+    return '未标注工作区';
   }
 
   int get activeCommandCount => commands.where((item) => item.isActive).length;
@@ -295,6 +402,9 @@ class HubStore extends ChangeNotifier {
         if (item.id.isNotEmpty) _upsertCommand(item);
       case 'tick':
         _refreshTick();
+      case 'open':
+        // 服务端 ": connected" 的回应：单纯告诉上层链路通了，不用拉数据。
+        break;
       default:
         break;
     }

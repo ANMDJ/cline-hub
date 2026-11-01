@@ -9,6 +9,7 @@ class FakeHubApi implements HubApi {
     this.sessionItems = const <SessionItem>[],
     this.commandItems = const <CommandItem>[],
     this.hookItems = const <HookItem>[],
+    this.messageItems = const <SessionMessage>[],
     this.nextCursor,
     this.detail,
   });
@@ -16,6 +17,7 @@ class FakeHubApi implements HubApi {
   List<SessionItem> sessionItems;
   List<CommandItem> commandItems;
   List<HookItem> hookItems;
+  List<SessionMessage> messageItems;
   String? nextCursor;
   SessionDetail? detail;
 
@@ -23,6 +25,7 @@ class FakeHubApi implements HubApi {
       StreamController<HubEvent>.broadcast();
 
   int healthCalls = 0;
+  int messageCalls = 0;
   final List<Map<String, Object?>> sentCommands = <Map<String, Object?>>[];
   String? sessionQuery;
   bool closed = false;
@@ -62,6 +65,20 @@ class FakeHubApi implements HubApi {
   }
 
   @override
+  Future<List<SessionMessage>> sessionMessages(
+    String sessionId, {
+    int limit = 60,
+    int? after,
+    int? before,
+  }) async {
+    messageCalls++;
+    var list = messageItems;
+    if (after != null) list = list.where((item) => item.seq > after).toList();
+    if (before != null) list = list.where((item) => item.seq < before).toList();
+    return list;
+  }
+
+  @override
   Future<List<CommandItem>> commands({
     int limit = 50,
     String? status,
@@ -74,12 +91,14 @@ class FakeHubApi implements HubApi {
     required String prompt,
     String mode = 'plan',
     String? workspace,
+    String? sessionId,
   }) async {
     sentCommands.add(<String, Object?>{
       'deviceId': deviceId,
       'prompt': prompt,
       'mode': mode,
       'workspace': workspace,
+      'sessionId': sessionId,
     });
     return CommandItem(
       id: 'cmd_fake',
@@ -88,6 +107,7 @@ class FakeHubApi implements HubApi {
       mode: mode,
       status: 'pending',
       workspace: workspace,
+      sessionId: sessionId,
       createdAt: DateTime.now(),
     );
   }

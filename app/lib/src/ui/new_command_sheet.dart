@@ -51,6 +51,7 @@ class _NewCommandSheetState extends State<_NewCommandSheet> {
   Future<void> _submit() async {
     final prompt = _promptCtrl.text.trim();
     final device = _deviceCtrl.text.trim();
+    final workspace = _workspaceCtrl.text.trim();
     if (prompt.isEmpty) {
       setState(() => _error = '指令不能为空');
       return;
@@ -61,6 +62,12 @@ class _NewCommandSheetState extends State<_NewCommandSheet> {
     }
     if (device.isEmpty) {
       setState(() => _error = '要指定执行设备（deviceId），比如 localone');
+      return;
+    }
+    if (workspace.length > 1000) {
+      setState(
+        () => _error = 'Hub 限制 workspace 最多 1000 字，当前 ${workspace.length} 字',
+      );
       return;
     }
 
@@ -76,7 +83,7 @@ class _NewCommandSheetState extends State<_NewCommandSheet> {
         prompt: prompt,
         mode: _mode,
         deviceId: device,
-        workspace: _workspaceCtrl.text.trim(),
+        workspace: workspace,
       );
       navigator.pop();
       messenger.showSnackBar(
@@ -103,6 +110,7 @@ class _NewCommandSheetState extends State<_NewCommandSheet> {
   Widget build(BuildContext context) {
     final store = widget.store;
     final devices = store.knownDevices;
+    final workspaces = store.knownWorkspaces;
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(18, 10, 18, 24),
       child: Column(
@@ -205,14 +213,50 @@ class _NewCommandSheetState extends State<_NewCommandSheet> {
             ),
           ],
           const SizedBox(height: 16),
-          const Text('工作区（可选）', style: TextStyle(fontSize: 12, color: kMuted)),
+          const Text('工作目录（可选）', style: TextStyle(fontSize: 12, color: kMuted)),
           const SizedBox(height: 6),
           TextField(
             controller: _workspaceCtrl,
-            style: const TextStyle(fontSize: 12.5),
+            autocorrect: false,
+            style: kMono,
+            onChanged: (_) => setState(() {}),
             decoration: const InputDecoration(
               hintText: r'C:\Users\alice\projects\kids_points_app',
             ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              ChoiceChip(
+                label: const Text('默认', style: TextStyle(fontSize: 11.5)),
+                selected: _workspaceCtrl.text.trim().isEmpty,
+                onSelected: (_) {
+                  _workspaceCtrl.text = '';
+                  setState(() {});
+                },
+              ),
+              for (final path in workspaces)
+                ChoiceChip(
+                  label: Text(
+                    _tailPath(path),
+                    style: const TextStyle(fontSize: 11.5),
+                  ),
+                  selected: _workspaceCtrl.text.trim() == path,
+                  onSelected: (_) {
+                    _workspaceCtrl.text = path;
+                    setState(() {});
+                  },
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            workspaces.isEmpty
+                ? '留空走 bridge 的 commands.defaultWorkspace；也可以直接粘一个绝对路径。'
+                : '点一下就填好；留空（默认）表示用 bridge 的 commands.defaultWorkspace。',
+            style: const TextStyle(fontSize: 11, height: 1.5, color: kMuted),
           ),
           const SizedBox(height: 12),
           Container(
@@ -262,4 +306,15 @@ class _NewCommandSheetState extends State<_NewCommandSheet> {
       ),
     );
   }
+}
+
+/// chips 上只显示路径尾部两级：完整值点一下就填进输入框，一行不至于撑爆。
+String _tailPath(String path) {
+  final separator = path.contains('\\') ? '\\' : '/';
+  final parts = path
+      .split(RegExp(r'[\\/]'))
+      .where((part) => part.isNotEmpty)
+      .toList(growable: false);
+  if (parts.length <= 2) return path;
+  return '…$separator${parts.sublist(parts.length - 2).join(separator)}';
 }

@@ -59,6 +59,15 @@ abstract class HubApi {
 
   Future<SessionDetail> session(String sessionId);
 
+  /// 会话的完整消息流（正文 + 命令过程）。会话还在跑时服务端会继续增长，
+  /// 详情页可以用 `after` 按 seq 增量续拉。
+  Future<List<SessionMessage>> sessionMessages(
+    String sessionId, {
+    int limit,
+    int? after,
+    int? before,
+  });
+
   Future<List<CommandItem>> commands({
     int limit,
     String? status,
@@ -70,6 +79,7 @@ abstract class HubApi {
     required String prompt,
     String mode,
     String? workspace,
+    String? sessionId,
   });
 
   Future<List<HookItem>> hooks({int limit, int? beforeId, String? deviceId});
@@ -210,6 +220,25 @@ class HttpHubApi implements HubApi {
   }
 
   @override
+  Future<List<SessionMessage>> sessionMessages(
+    String sessionId, {
+    int limit = 60,
+    int? after,
+    int? before,
+  }) async {
+    final json = await _request(
+      'GET',
+      '/api/v1/sessions/${Uri.encodeComponent(sessionId)}/messages',
+      query: {
+        'limit': '$limit',
+        if (after != null) 'after': '$after',
+        if (before != null) 'before': '$before',
+      },
+    );
+    return _items(json).map(SessionMessage.fromJson).toList(growable: false);
+  }
+
+  @override
   Future<List<CommandItem>> commands({
     int limit = 50,
     String? status,
@@ -233,6 +262,7 @@ class HttpHubApi implements HubApi {
     required String prompt,
     String mode = 'plan',
     String? workspace,
+    String? sessionId,
   }) async {
     final json = await _request(
       'POST',
@@ -242,6 +272,7 @@ class HttpHubApi implements HubApi {
         'prompt': prompt,
         'mode': mode,
         if (workspace != null && workspace.isNotEmpty) 'workspace': workspace,
+        if (sessionId != null && sessionId.isNotEmpty) 'sessionId': sessionId,
       },
     );
     final raw = json['command'];
@@ -294,6 +325,9 @@ class HttpHubApi implements HubApi {
 
     String? event;
     final data = StringBuffer();
+    // 服务端一连上就先发 ": connected"，把这行当成「链路已就绪」的信号交给上层。
+    // 否则空闲时没有业务事件，UI 会一直停在「连接中」，直到下一次有人干活。
+    var announced = false;
 
     await for (final line
         in response.stream
@@ -308,7 +342,13 @@ class HttpHubApi implements HubApi {
         event = null;
         continue;
       }
-      if (line.startsWith(':')) continue; // ": ping" 心跳
+      if (line.startsWith(':')) {
+        if (!announced) {
+          announced = true;
+          yield const HubEvent('open', <String, dynamic>{});
+        }
+        continue; // ": ping" 心跳
+      }
       if (line.startsWith('event:')) {
         event = line.substring(6).trim();
       } else if (line.startsWith('data:')) {

@@ -30,15 +30,17 @@ export function createHookRoutes({ db, logger, sse }) {
         const title = optionalString(payload.title, 'payload.title', 300)
         const text = optionalString(payload.message ?? payload.body ?? payload.prompt, 'payload.message', 4000)
         const receivedAt = isoOrNull(body.receivedAt)
+        // bridge 的完成通知会把会话 id 带上；Cline 自己的 hook 没有，留 null。
+        const sessionId = optionalString(body.sessionId ?? payload.sessionId, 'sessionId', 200)
 
         const row = await db.one(
-          `insert into hooks (device_id, event, workspace, title, body, payload, received_at)
-           values ($1, $2, $3, $4, $5, $6::jsonb, coalesce($7::timestamptz, now()))
+          `insert into hooks (device_id, event, workspace, title, body, payload, session_id, received_at)
+           values ($1, $2, $3, $4, $5, $6::jsonb, $7, coalesce($8::timestamptz, now()))
            returning id, received_at`,
-          [deviceId, event, workspaceFromPayload(payload), title, text, JSON.stringify(payload), receivedAt]
+          [deviceId, event, workspaceFromPayload(payload), title, text, JSON.stringify(payload), sessionId, receivedAt]
         )
 
-        logger.info('hook stored', { deviceId, event, id: row.id })
+        logger.info('hook stored', { deviceId, event, id: row.id, sessionId })
 
         sse.broadcast('hook', {
           id: row.id,
@@ -46,6 +48,7 @@ export function createHookRoutes({ db, logger, sse }) {
           event,
           title,
           body: text ? text.slice(0, 300) : null,
+          sessionId,
           receivedAt: row.received_at
         })
 
@@ -75,7 +78,7 @@ export function createHookRoutes({ db, logger, sse }) {
         values.push(limit)
 
         const rows = await db.many(
-          `select id, device_id, event, workspace, title, body, received_at
+          `select id, device_id, event, workspace, title, body, session_id, received_at
            from hooks
            ${where.length ? 'where ' + where.join(' and ') : ''}
            order by id desc
@@ -92,6 +95,7 @@ export function createHookRoutes({ db, logger, sse }) {
             workspace: row.workspace,
             title: row.title,
             body: row.body,
+            sessionId: row.session_id,
             receivedAt: row.received_at
           })),
           nextBeforeId: rows.length === limit ? rows.at(-1).id : null

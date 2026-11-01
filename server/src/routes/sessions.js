@@ -45,13 +45,22 @@ const UPSERT_SESSION = `
   returning (xmax = 0) as inserted
 `
 
+/**
+ * 列表、游标、详情三处必须用同一个排序表达式，否则翻页会漏行。
+ *
+ * 进行中的会话 `ended_at` 是 null：这里刻意排成 `updated_at` 优先，
+ * 让它跟着最新一条消息的时间走。若沿用 `started_at`，一个跑了半小时的
+ * 会话会沉到列表下面，看起来像"没有最新记录"。
+ */
+const SORT_AT = 'coalesce(ended_at, updated_at, started_at)'
+
 const LIST_COLUMNS = `
   device_id, session_id, workspace, workspace_root, source, status, exit_code,
   provider, model, started_at, ended_at, updated_at, prompt, user_prompt,
   result_ok, result_error, result_truncated, metrics, collected_at,
   left(coalesce(result_text, ''), 400) as result_preview,
   jsonb_array_length(commands) as command_count,
-  coalesce(ended_at, started_at, updated_at) as sort_at
+  ${SORT_AT} as sort_at
 `
 
 function toListItem(row) {
@@ -164,6 +173,140 @@ export function createSessionRoutes({ db, logger, sse }) {
     },
 
     {
+      /**
+       * bridge 的增量消息上报。
+       *
+       * 按 (device, session, message_id) upsert：流式回复的同一条消息会被重发覆盖，
+       * 详情页不会出现重复气泡；一次最多 200 条，bridge 侧默认 40 条一批。
+       */
+      method: 'POST',
+      pattern: '/api/v1/sessions/:sessionId/messages',
+      auth: 'device',
+      async handler({ params, body, client }) {
+        const deviceId = resolveDeviceId(client, body)
+        const sessionId = String(params.sessionId ?? '').trim()
+        if (!sessionId) throw new HttpError(400, 'sessionId is required', 'invalid_field')
+
+        const list = Array.isArray(body.messages) ? body.messages : []
+        if (list.length === 0) return { ok: true, stored: 0 }
+        if (list.length > 200) {
+          throw new HttpError(400, 'at most 200 messages per call', 'invalid_field')
+        }
+
+        const values = []
+        const tuples = []
+        for (const item of list) {
+          if (!item || typeof item !== 'object' || Array.isArray(item)) continue
+          const messageId = String(item.id ?? '').trim()
+          if (!messageId) continue
+          const role = item.role === 'user' ? 'user' : 'assistant'
+          const kind = item.kind === 'command' ? 'command' : 'text'
+          const text = optionalString(item.text, 'messages[].text', 8000) ?? ''
+          const tool = optionalString(item.tool, 'messages[].tool', 100)
+          const base = values.length
+          values.push(
+            deviceId,
+            sessionId,
+            messageId,
+            intOrNull(item.seq) ?? 0,
+            role,
+            kind,
+            text,
+            tool,
+            isoOrNull(item.ts)
+          )
+          tuples.push(
+            `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, ` +
+            `$${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}::timestamptz)`
+          )
+        }
+        if (tuples.length === 0) return { ok: true, stored: 0 }
+
+        await db.query(
+          `insert into session_messages
+             (device_id, session_id, message_id, seq, role, kind, text, tool, ts)
+           values ${tuples.join(', ')}
+           on conflict (device_id, session_id, message_id) do update set
+             seq        = excluded.seq,
+             role       = excluded.role,
+             kind       = excluded.kind,
+             text       = excluded.text,
+             tool       = excluded.tool,
+             ts         = excluded.ts,
+             updated_at = now()`,
+          values
+        )
+
+        logger.info('session messages stored', { deviceId, sessionId, stored: tuples.length })
+        sse.broadcast('messages', { deviceId, sessionId, stored: tuples.length })
+        return { ok: true, stored: tuples.length }
+      }
+    },
+
+    {
+      /** 详情页用：按 seq 升序，带 after 可做增量续拉。 */
+      method: 'GET',
+      pattern: '/api/v1/sessions/:sessionId/messages',
+      auth: 'any',
+      async handler({ params, url }) {
+        // 不能写成 Number(searchParams.get('after') ?? '')：空串转数字是 0，
+        // 会把 seq=0 的那条（用户原话）永久过滤掉。
+        const afterRaw = url.searchParams.get('after')
+        const after = afterRaw === null || afterRaw === '' ? null : Number(afterRaw)
+        // before：向上翻历史（seq < before），返回顺序仍是正序
+        const beforeRaw = url.searchParams.get('before')
+        const before = beforeRaw === null || beforeRaw === '' ? null : Number(beforeRaw)
+        const limit = limitFrom(url, 200, 2000)
+        const values = [params.sessionId]
+        const where = ['session_id = $1']
+
+        if (after !== null && Number.isFinite(after)) {
+          values.push(after)
+          where.push(`seq > $${values.length}`)
+        }
+        if (before !== null && Number.isFinite(before)) {
+          values.push(before)
+          where.push(`seq < $${values.length}`)
+        }
+        const deviceId = optionalString(url.searchParams.get('deviceId'), 'deviceId', 100)
+        if (deviceId) {
+          values.push(deviceId)
+          where.push(`device_id = $${values.length}`)
+        }
+        values.push(limit)
+
+        // 不带 after 时按 desc 取「最近 N 条」再反转：否则大会话只拿到最旧的一段
+        // （>800 条时最新消息反而不在里面）。after 是追新，必须升序。
+        const asc = after !== null && Number.isFinite(after)
+        const rows = await db.many(
+          `select device_id, session_id, message_id, seq, role, kind, text, tool, ts
+           from session_messages
+           where ${where.join(' and ')}
+           order by seq ${asc ? 'asc' : 'desc'}, created_at ${asc ? 'asc' : 'desc'}
+           limit $${values.length}`,
+          values
+        )
+        if (!asc) rows.reverse()
+
+        return {
+          ok: true,
+          items: rows.map((row) => ({
+            deviceId: row.device_id,
+            sessionId: row.session_id,
+            messageId: row.message_id,
+            seq: row.seq,
+            role: row.role,
+            kind: row.kind,
+            text: row.text,
+            tool: row.tool,
+            ts: row.ts
+          })),
+          hasMore: rows.length === limit
+        }
+      }
+    },
+
+    {
       method: 'GET',
       pattern: '/api/v1/sessions',
       auth: 'any',
@@ -181,8 +324,8 @@ export function createSessionRoutes({ db, logger, sse }) {
         if (cursor) {
           values.push(cursor.sortAt, cursor.sessionId)
           const i = values.length
-          where.push(`(coalesce(ended_at, started_at, updated_at) < $${i - 1}
-            or (coalesce(ended_at, started_at, updated_at) = $${i - 1} and session_id < $${i}))`)
+          where.push(`(${SORT_AT} < $${i - 1}
+            or (${SORT_AT} = $${i - 1} and session_id < $${i}))`)
         }
 
         const equals = (column, value) => {
@@ -205,7 +348,7 @@ export function createSessionRoutes({ db, logger, sse }) {
           select ${LIST_COLUMNS}
           from sessions
           ${where.length ? 'where ' + where.join(' and ') : ''}
-          order by coalesce(ended_at, started_at, updated_at) desc nulls last, session_id desc
+          order by ${SORT_AT} desc nulls last, session_id desc
           limit $${values.length}
         `
 
@@ -231,7 +374,7 @@ export function createSessionRoutes({ db, logger, sse }) {
           `select *,
                   left(coalesce(result_text, ''), 400) as result_preview,
                   jsonb_array_length(commands) as command_count,
-                  coalesce(ended_at, started_at, updated_at) as sort_at
+                  ${SORT_AT} as sort_at
            from sessions
            where session_id = $1
            order by updated_row_at desc

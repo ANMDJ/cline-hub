@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../data/hub_api.dart';
@@ -7,7 +9,10 @@ import '../util/format.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
-/// 会话详情：概览 + 用户请求 + 结果全文 + 执行过的命令。
+/// 会话详情：概览 + 逐条对话 + 底部「继续这个会话」。
+///
+/// 对话来自 Hub 的 session_messages（bridge 增量上报）。一条会话动辄两三百条，
+/// 所以用 SliverList 懒加载；running 时每 3 秒补一次增量，退出页面即停。
 class SessionDetailPage extends StatefulWidget {
   const SessionDetailPage({super.key, required this.store, required this.item});
 
@@ -22,13 +27,102 @@ class SessionDetailPage extends StatefulWidget {
 
 class _SessionDetailPageState extends State<SessionDetailPage> {
   SessionDetail? _detail;
+  List<SessionMessage> _messages = const <SessionMessage>[];
   bool _loading = true;
   String? _error;
+  String? _messagesError;
+  Timer? _liveTimer;
+  final TextEditingController _composer = TextEditingController();
+  final ScrollController _scroll = ScrollController();
+  bool _sending = false;
+  bool _loadingOlder = false;
+  bool _hasOlder = true;
 
   @override
   void initState() {
     super.initState();
+    _scroll.addListener(_onScroll);
     _load();
+  }
+
+  @override
+  void dispose() {
+    _liveTimer?.cancel();
+    _composer.dispose();
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  SessionItem get _summary => _detail ?? widget.item;
+
+  bool get _isLive => _summary.status == 'running';
+
+  /// 主对话流：只保留 user / assistant 正文。
+  List<SessionMessage> get _chatMessages =>
+      _messages.where((m) => !m.isCommand).toList(growable: false);
+
+  /// messageId 形如 `msg_xxx:3`，同一 message 的正文与工具调用共享前缀。
+  static String _baseId(String messageId) {
+    final i = messageId.lastIndexOf(':');
+    return i > 0 ? messageId.substring(0, i) : messageId;
+  }
+
+  /// 每条 Cline 消息对应的命令（同名 message 的多条 tool_use 归到一起）。
+  Map<String, List<SessionMessage>> get _commandGroups {
+    final map = <String, List<SessionMessage>>{};
+    for (final m in _messages) {
+      if (!m.isCommand) continue;
+      (map[_baseId(m.messageId)] ??= <SessionMessage>[]).add(m);
+    }
+    return map;
+  }
+
+  /// 会话还在跑：每 3 秒补一次会话快照 + 消息增量。
+  /// 定时器只在页面存活期间存在，退出去就停，后台不耗电。
+  void _scheduleLive() {
+    _liveTimer?.cancel();
+    if (!_isLive) return;
+    _liveTimer = Timer(const Duration(seconds: 3), () async {
+      if (!mounted) return;
+      await _refreshLive();
+      _scheduleLive();
+    });
+  }
+
+  Future<void> _refreshLive() async {
+    // 只有原本就贴在底部时才自动跟着滚，免得把正在翻历史的用户拽走。
+    final wasNearBottom = _scroll.hasClients &&
+        (_scroll.position.maxScrollExtent - _scroll.position.pixels) < 160;
+    try {
+      final detail = await widget.store.api.session(widget.item.sessionId);
+      final messages = await _fetchMessages();
+      if (!mounted) return;
+      setState(() {
+        _detail = detail;
+        _messages = messages;
+        _messagesError = null;
+      });
+      if (wasNearBottom) _jumpToBottomSoon();
+    } catch (_) {
+      // 轮询失败不弹错：网络恢复后下一轮自己追上
+    }
+  }
+
+  /// 增量拉取：从最后一条往前退 6 条重拉。
+  /// 流式回复的同一条消息内容会一直变长，只按 seq 追新会漏掉它的更新。
+  Future<List<SessionMessage>> _fetchMessages() async {
+    final last = _messages.isEmpty ? null : _messages.last.seq;
+    final incoming = await widget.store.api.sessionMessages(
+      widget.item.sessionId,
+      after: last == null ? null : (last - 6).clamp(0, last),
+    );
+    if (incoming.isEmpty) return _messages;
+
+    final byKey = <String, SessionMessage>{
+      for (final message in _messages) message.key: message,
+      for (final message in incoming) message.key: message,
+    };
+    return byKey.values.toList()..sort((a, b) => a.seq.compareTo(b.seq));
   }
 
   Future<void> _load() async {
@@ -47,12 +141,125 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+
+    await _loadMessages();
+    if (mounted) _scheduleLive();
+  }
+
+  Future<void> _loadMessages() async {
+    try {
+      // 首屏只要最近 60 条，更早的滑到顶部再拉（会话动辄几百条）。
+      final messages = await widget.store.api.sessionMessages(
+        widget.item.sessionId,
+        limit: 60,
+      );
+      if (!mounted) return;
+      setState(() {
+        _messages = messages;
+        _messagesError = null;
+        _hasOlder = messages.length >= 60;
+      });
+      _jumpToBottomSoon();
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _messagesError = error.friendly);
+    } catch (error) {
+      if (mounted) setState(() => _messagesError = '$error');
+    }
+  }
+
+  /// 首次/刷新后贴到最新一条（底部）。
+  void _jumpToBottomSoon() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scroll.hasClients) return;
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+    });
+  }
+
+  void _onScroll() {
+    if (!_scroll.hasClients) return;
+    if (_scroll.position.pixels <= 80) unawaited(_loadOlder());
+  }
+
+  /// 滑到顶部时向前翻历史：before=<当前最小 seq>，插入头部并补偿滚动位置。
+  Future<void> _loadOlder() async {
+    if (_loadingOlder || !_hasOlder || _messages.isEmpty) return;
+    _loadingOlder = true;
+    final beforeSeq = _messages.first.seq;
+    final extentBefore = _scroll.hasClients ? _scroll.position.maxScrollExtent : 0.0;
+    final pixelsBefore = _scroll.hasClients ? _scroll.position.pixels : 0.0;
+    try {
+      final older = await widget.store.api.sessionMessages(
+        widget.item.sessionId,
+        limit: 60,
+        before: beforeSeq,
+      );
+      if (!mounted) return;
+      if (older.isEmpty) {
+        setState(() => _hasOlder = false);
+        return;
+      }
+      setState(() {
+        final byKey = <String, SessionMessage>{
+          for (final m in older) m.key: m,
+          for (final m in _messages) m.key: m,
+        };
+        _messages = byKey.values.toList()..sort((a, b) => a.seq.compareTo(b.seq));
+        _hasOlder = older.length >= 60;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!_scroll.hasClients) return;
+        final delta = _scroll.position.maxScrollExtent - extentBefore;
+        _scroll.jumpTo(pixelsBefore + delta);
+      });
+    } catch (_) {
+      // 翻历史失败不打扰用户，下次滑到顶部再试
+    } finally {
+      _loadingOlder = false;
+    }
+  }
+
+  /// 「继续这个会话」：这句话会变成一条 act 命令，
+  /// bridge 用 `cline --id <sessionId>` 接续原会话，过程和回复仍回到这里。
+  Future<void> _send() async {
+    final text = _composer.text.trim();
+    if (text.isEmpty || _sending) return;
+
+    setState(() => _sending = true);
+    try {
+      await widget.store.api.sendCommand(
+        deviceId: widget.item.deviceId,
+        prompt: text,
+        mode: 'act',
+        workspace: _summary.workspaceRoot,
+        sessionId: widget.item.sessionId,
+      );
+      _composer.clear();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('已发到电脑，Cline 会在这个会话里接着干'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+      _jumpToBottomSoon();
+      _scheduleLive();
+    } on ApiException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('发送失败：${error.friendly}')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final detail = _detail;
-    final summary = detail ?? widget.item;
+    final summary = _summary;
+    // 主对话流只放正文；命令按 messageId 分组，塞进对应气泡的按钮里。
+    final chat = _chatMessages;
+    final groups = _commandGroups;
     return Scaffold(
       appBar: AppBar(
         title: const Text('会话详情'),
@@ -61,53 +268,137 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
           const SizedBox(width: 6),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        color: kAccent,
-        backgroundColor: kPanel,
-        child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(14, 8, 14, 32),
-          children: [
-            _OverviewCard(item: summary),
-            if (_error != null) ...[
-              const SizedBox(height: 12),
-              SectionCard(
-                title: '详情没拉到',
-                trailing: TextButton(
-                  onPressed: _load,
-                  child: const Text('重试', style: TextStyle(fontSize: 12)),
-                ),
-                child: Text(
-                  _error!,
-                  style: const TextStyle(
-                    fontSize: 12.5,
-                    height: 1.6,
-                    color: kMuted,
+      body: Column(
+        children: [
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: _load,
+              color: kAccent,
+              backgroundColor: kPanel,
+              child: CustomScrollView(
+                controller: _scroll,
+                physics: const AlwaysScrollableScrollPhysics(),
+                slivers: [
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
+                    sliver: SliverList(
+                      delegate: SliverChildListDelegate([
+                        _OverviewCard(item: summary),
+                        if (_error != null) ...[
+                          const SizedBox(height: 12),
+                          SectionCard(
+                            title: '详情没拉到',
+                            trailing: TextButton(
+                              onPressed: _load,
+                              child: const Text(
+                                '重试',
+                                style: TextStyle(fontSize: 12),
+                              ),
+                            ),
+                            child: Text(
+                              _error!,
+                              style: const TextStyle(
+                                fontSize: 12.5,
+                                height: 1.6,
+                                color: kMuted,
+                              ),
+                            ),
+                          ),
+                        ],
+                        if (_messagesError != null) ...[
+                          const SizedBox(height: 12),
+                          SectionCard(
+                            title: '对话没拉到',
+                            trailing: TextButton(
+                              onPressed: _loadMessages,
+                              child: const Text(
+                                '重试',
+                                style: TextStyle(fontSize: 12),
+                              ),
+                            ),
+                            child: Text(
+                              _messagesError!,
+                              style: const TextStyle(
+                                fontSize: 12.5,
+                                height: 1.6,
+                                color: kMuted,
+                              ),
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 14),
+                        Row(
+                          children: [
+                            const Text(
+                              '对话',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: kMuted,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              '${chat.length} 条',
+                              style: const TextStyle(
+                                fontSize: 11.5,
+                                color: kMuted,
+                              ),
+                            ),
+                            const Spacer(),
+                            if (_isLive)
+                              const SizedBox(
+                                width: 12,
+                                height: 12,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 1.6,
+                                  color: kAccent,
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                      ]),
+                    ),
                   ),
-                ),
+                  // 会话动辄两三百条，必须懒加载：一次性 Column 会直接卡住首屏。
+                  SliverPadding(
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    sliver: SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) => Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: _MessageBubble(
+                            message: chat[index],
+                            commands: groups[_baseId(chat[index].messageId)] ??
+                                const <SessionMessage>[],
+                          ),
+                        ),
+                        childCount: chat.length,
+                      ),
+                    ),
+                  ),
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(14, 4, 14, 8),
+                      child: _ConversationFooter(
+                        loading: _loading && _messages.isEmpty,
+                        live: _isLive,
+                        empty: _messages.isEmpty,
+                      ),
+                    ),
+                  ),
+                  const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                ],
               ),
-            ],
-            if (summary.userPrompt != null) ...[
-              const SizedBox(height: 12),
-              SectionCard(
-                title: '用户请求',
-                trailing: CopyButton(text: summary.userPrompt!),
-                child: SelectableText(
-                  summary.userPrompt!,
-                  style: const TextStyle(fontSize: 13.5, height: 1.6),
-                ),
-              ),
-            ],
-            const SizedBox(height: 12),
-            _ResultCard(summary: summary, detail: detail, loading: _loading),
-            const SizedBox(height: 12),
-            _CommandsCard(
-              commands: detail?.commands ?? const <SessionCommand>[],
-              loading: _loading,
             ),
-          ],
-        ),
+          ),
+          _Composer(
+            controller: _composer,
+            sending: _sending,
+            onSend: _send,
+          ),
+        ],
       ),
     );
   }
@@ -171,144 +462,308 @@ class _OverviewCard extends StatelessWidget {
   }
 }
 
-class _ResultCard extends StatelessWidget {
-  const _ResultCard({
-    required this.summary,
-    required this.detail,
+class _ConversationFooter extends StatelessWidget {
+  const _ConversationFooter({
     required this.loading,
+    required this.live,
+    required this.empty,
   });
 
-  final SessionItem summary;
-  final SessionDetail? detail;
   final bool loading;
+  final bool live;
+  final bool empty;
 
   @override
   Widget build(BuildContext context) {
-    final text = detail?.resultText ?? summary.resultPreview;
-    return SectionCard(
-      title: '结果',
-      trailing: text == null ? null : CopyButton(text: text, label: '复制全文'),
+    if (loading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: LinearProgressIndicator(minHeight: 2),
+      );
+    }
+    if (live) {
+      return Row(
+        children: [
+          const SizedBox(
+            width: 12,
+            height: 12,
+            child: CircularProgressIndicator(strokeWidth: 1.6, color: kAccent),
+          ),
+          const SizedBox(width: 8),
+          const Text(
+            'Cline 正在处理，回复会一条条出现在上面…',
+            style: TextStyle(fontSize: 11.5, color: kMuted),
+          ),
+        ],
+      );
+    }
+    if (empty) {
+      return const Text(
+        '这个会话还没有可显示的消息。\n历史会话第一次打开时，bridge 会把完整对话回填上来（每轮 2 个会话，稍等一会儿再下拉刷新）。',
+        style: TextStyle(fontSize: 12, height: 1.7, color: kMuted),
+      );
+    }
+    return const SizedBox(height: 4);
+  }
+}
+
+/// 一条消息：真人输入靠右、Cline 回复靠左、工具调用单独一条窄条。
+class _MessageBubble extends StatelessWidget {
+  const _MessageBubble({
+    required this.message,
+    this.commands = const <SessionMessage>[],
+  });
+
+  final SessionMessage message;
+
+  /// 这条消息里产生的工具调用；主流程不渲染，只在气泡下留一个入口。
+  final List<SessionMessage> commands;
+
+  @override
+  Widget build(BuildContext context) {
+    if (message.isCommand) return _CommandBubble(message: message);
+
+    final isUser = message.isUser;
+    final width = MediaQuery.of(context).size.width;
+    return Align(
+      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        constraints: BoxConstraints(maxWidth: width * 0.86),
+        padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
+        decoration: BoxDecoration(
+          color: isUser ? kAccent.withValues(alpha: 0.14) : kPanel,
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(12),
+            topRight: const Radius.circular(12),
+            bottomLeft: Radius.circular(isUser ? 12 : 3),
+            bottomRight: Radius.circular(isUser ? 3 : 12),
+          ),
+          border: Border.all(
+            color: isUser ? kAccent.withValues(alpha: 0.32) : kLine,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              message.text,
+              style: TextStyle(
+                fontSize: 13.5,
+                height: 1.62,
+                color: isUser ? kText : const Color(0xFFD6E2EE),
+              ),
+            ),
+            if (message.ts != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                formatClock(message.ts),
+                style: const TextStyle(fontSize: 10.5, color: kMuted),
+              ),
+            ],
+            if (commands.isNotEmpty) ...[
+              const SizedBox(height: 7),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(999),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => SessionCommandsPage(commands: commands),
+                    ),
+                  ),
+                  child: Pill(
+                    label: '${commands.length} 条命令',
+                    color: kInfo,
+                    icon: Icons.terminal_rounded,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 命令过程默认只露两行：一次任务动辄上百条命令，全展开会把对话冲没。
+class _CommandBubble extends StatefulWidget {
+  const _CommandBubble({required this.message});
+
+  final SessionMessage message;
+
+  @override
+  State<_CommandBubble> createState() => _CommandBubbleState();
+}
+
+class _CommandBubbleState extends State<_CommandBubble> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final message = widget.message;
+    final collapsible = message.text.length > 80 || message.text.contains('\n');
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(10, 7, 10, 8),
+      decoration: BoxDecoration(
+        color: kBgSoft,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: kLine),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (loading && detail == null)
-            const Padding(
-              padding: EdgeInsets.only(bottom: 10),
-              child: LinearProgressIndicator(minHeight: 2),
-            ),
-          if (text == null)
-            const Text(
-              '这次执行没有留下结果文本（可能被中途取消）。',
-              style: TextStyle(fontSize: 12.5, color: kMuted, height: 1.6),
-            )
-          else
-            SelectableText(
-              text,
-              style: const TextStyle(fontSize: 13, height: 1.7),
-            ),
-          if (summary.resultTruncated) ...[
-            const SizedBox(height: 10),
-            const Text(
-              '结果超长，bridge 已按上限截断（默认 4000 字）',
-              style: TextStyle(fontSize: 11.5, color: kWarn),
-            ),
-          ],
-          if (summary.resultError != null) ...[
-            const SizedBox(height: 10),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: kDanger.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: kDanger.withValues(alpha: 0.3)),
+          Row(
+            children: [
+              const Icon(
+                Icons.terminal_rounded,
+                size: 12,
+                color: kInfo,
               ),
-              child: SelectableText(
-                summary.resultError!,
+              const SizedBox(width: 5),
+              Text(
+                message.tool ?? 'tool',
                 style: const TextStyle(
-                  fontSize: 12,
-                  height: 1.6,
-                  color: kDanger,
+                  fontSize: 10.5,
+                  color: kInfo,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
+              const Spacer(),
+              if (collapsible)
+                InkWell(
+                  onTap: () => setState(() => _expanded = !_expanded),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    child: Text(
+                      _expanded ? '收起' : '展开',
+                      style: const TextStyle(fontSize: 10.5, color: kMuted),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 5),
+          Text(
+            message.text,
+            maxLines: _expanded ? null : 2,
+            overflow: _expanded ? null : TextOverflow.ellipsis,
+            style: kMono.copyWith(
+              fontSize: 11.5,
+              height: 1.5,
+              color: const Color(0xFFA9BBCB),
             ),
-          ],
+          ),
         ],
       ),
     );
   }
 }
 
-class _CommandsCard extends StatelessWidget {
-  const _CommandsCard({required this.commands, required this.loading});
+/// 底部输入框：「继续对话」→ 一条 act 命令 → bridge 在电脑上新建一个 cline 会话。
+class _Composer extends StatelessWidget {
+  const _Composer({
+    required this.controller,
+    required this.sending,
+    required this.onSend,
+  });
 
-  final List<SessionCommand> commands;
-  final bool loading;
+  final TextEditingController controller;
+  final bool sending;
+  final VoidCallback onSend;
 
   @override
   Widget build(BuildContext context) {
-    return SectionCard(
-      title: '执行过的命令${commands.isEmpty ? '' : '（${commands.length}）'}',
-      child: commands.isEmpty
-          ? Text(
-              loading ? '正在拉取…' : '这次执行没有调用命令工具。',
-              style: const TextStyle(
-                fontSize: 12.5,
-                color: kMuted,
-                height: 1.6,
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+        decoration: const BoxDecoration(
+          color: kBgSoft,
+          border: Border(top: BorderSide(color: kLine)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: TextField(
+                controller: controller,
+                minLines: 1,
+                maxLines: 4,
+                textInputAction: TextInputAction.send,
+                onSubmitted: (_) => onSend(),
+                style: const TextStyle(fontSize: 13.5, height: 1.4),
+                decoration: InputDecoration(
+                  hintText: '继续对话（会新建 Cline 会话）…',
+                  hintStyle: const TextStyle(fontSize: 13, color: kMuted),
+                  filled: true,
+                  fillColor: kPanel,
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: kLine),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: kLine),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: kAccent),
+                  ),
+                ),
               ),
-            )
-          : Column(
-              children: [
-                for (var i = 0; i < commands.length; i++) ...[
-                  if (i > 0) const Divider(height: 18),
-                  _CommandRow(index: i + 1, command: commands[i]),
-                ],
-              ],
             ),
+            const SizedBox(width: 8),
+            IconButton.filled(
+              onPressed: sending ? null : onSend,
+              style: IconButton.styleFrom(
+                backgroundColor: kAccent,
+                foregroundColor: kBg,
+                disabledBackgroundColor: kLine,
+                minimumSize: const Size(42, 42),
+              ),
+              icon: sending
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: kBg,
+                      ),
+                    )
+                  : const Icon(Icons.send_rounded, size: 18),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
 
-class _CommandRow extends StatelessWidget {
-  const _CommandRow({required this.index, required this.command});
+/// 二级页：某条 Cline 消息里执行过的全部命令。
+/// 主对话流只保留「N 条命令」入口，避免上百条命令把对话冲没。
+class SessionCommandsPage extends StatelessWidget {
+  const SessionCommandsPage({super.key, required this.commands});
 
-  final int index;
-  final SessionCommand command;
+  final List<SessionMessage> commands;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Text(
-              '$index.',
-              style: const TextStyle(
-                fontSize: 11.5,
-                color: kMuted,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Pill(label: command.tool, color: kInfo),
-            const Spacer(),
-            CopyButton(text: command.command),
-          ],
-        ),
-        const SizedBox(height: 6),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: kBg,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: kLine),
-          ),
-          child: SelectableText(command.command, style: kMono),
-        ),
-      ],
+    return Scaffold(
+      appBar: AppBar(title: Text('命令过程 (${commands.length})')),
+      body: ListView.separated(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 28),
+        itemCount: commands.length,
+        separatorBuilder: (_, _) => const SizedBox(height: 8),
+        itemBuilder: (context, index) =>
+            _CommandBubble(message: commands[index]),
+      ),
     );
   }
 }

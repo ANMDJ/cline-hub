@@ -23,6 +23,9 @@ class _SessionsPageState extends State<SessionsPage> {
   final TextEditingController _searchCtrl = TextEditingController();
   final ScrollController _scrollCtrl = ScrollController();
 
+  /// 被折叠的工作目录分组 key。默认全部展开 —— 折叠是用户主动收起，不该藏内容。
+  final Set<String> _collapsed = <String>{};
+
   @override
   void initState() {
     super.initState();
@@ -124,6 +127,20 @@ class _SessionsPageState extends State<SessionsPage> {
       );
     }
 
+    // 分组只在有多个目录时才有意义；搜索是跨组的定向查找，平铺更好翻。
+    final groups = store.sessionGroups;
+    final grouped = store.query.isEmpty && groups.length > 1;
+    final rows = <_SessionRow>[
+      if (grouped)
+        for (final group in groups) ...[
+          _SessionRow.header(group),
+          if (!_collapsed.contains(group.key))
+            for (final item in group.items) _SessionRow.session(item),
+        ]
+      else
+        for (final item in store.sessions) _SessionRow.session(item),
+    ];
+
     return RefreshIndicator(
       onRefresh: store.refreshSessions,
       color: kAccent,
@@ -132,15 +149,29 @@ class _SessionsPageState extends State<SessionsPage> {
         controller: _scrollCtrl,
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(14, 2, 14, 96),
-        itemCount: store.sessions.length + 1,
+        itemCount: rows.length + 1,
         separatorBuilder: (_, _) => const SizedBox(height: 10),
         itemBuilder: (context, index) {
-          if (index == store.sessions.length) return _buildFooter(store);
-          final item = store.sessions[index];
+          if (index == rows.length) return _buildFooter(store);
+          final group = rows[index].group;
+          if (group != null) {
+            return _GroupHeader(
+              group: group,
+              collapsed: _collapsed.contains(group.key),
+              onToggle: () => _toggleGroup(group.key),
+            );
+          }
+          final item = rows[index].item!;
           return _SessionTile(item: item, onTap: () => _open(item));
         },
       ),
     );
+  }
+
+  void _toggleGroup(String key) {
+    setState(() {
+      if (!_collapsed.remove(key)) _collapsed.add(key);
+    });
   }
 
   Widget _buildFooter(HubStore store) {
@@ -210,6 +241,14 @@ class _SessionTile extends StatelessWidget {
                       ),
                     ),
                   ),
+                  if (item.status == 'running') ...[
+                    const SizedBox(width: 8),
+                    Pill(
+                      label: '执行中',
+                      color: kInfo,
+                      icon: Icons.play_arrow_rounded,
+                    ),
+                  ],
                   if (item.commandCount > 0) ...[
                     const SizedBox(width: 8),
                     Pill(
@@ -244,3 +283,80 @@ class _SessionTile extends StatelessWidget {
     );
   }
 }
+
+/// 列表里的一行：要么是工作目录分组头，要么是一条会话。
+class _SessionRow {
+  const _SessionRow.header(this.group) : item = null;
+
+  const _SessionRow.session(this.item) : group = null;
+
+  final SessionGroup? group;
+  final SessionItem? item;
+}
+
+/// 工作目录分组头：点一下收起 / 展开；收起时右侧多显示条数和最近时间。
+class _GroupHeader extends StatelessWidget {
+  const _GroupHeader({
+    required this.group,
+    required this.collapsed,
+    required this.onToggle,
+  });
+
+  final SessionGroup group;
+  final bool collapsed;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final latest = group.items.first.sortAt;
+    return Material(
+      color: kBgSoft,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: const BorderSide(color: kLine),
+      ),
+      child: InkWell(
+        onTap: onToggle,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(10, 9, 12, 9),
+          child: Row(
+            children: [
+              Icon(
+                collapsed
+                    ? Icons.chevron_right_rounded
+                    : Icons.expand_more_rounded,
+                size: 18,
+                color: kMuted,
+              ),
+              const SizedBox(width: 4),
+              const Icon(Icons.folder_outlined, size: 14, color: kMuted),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  group.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: kMono.copyWith(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Pill(label: '${group.items.length} 条', color: kInfo),
+              if (collapsed && latest != null) ...[
+                const SizedBox(width: 8),
+                Text(
+                  relativeTime(latest),
+                  style: const TextStyle(fontSize: 11, color: kMuted),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+

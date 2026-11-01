@@ -11,10 +11,16 @@ import { bridgeRoot } from './config.js'
  * 流程：轮询 GET /api/v1/commands/pending（服务端用 FOR UPDATE SKIP LOCKED 认领，天然防重）
  *      → PATCH status=running → 本地执行 → PATCH done/failed 回写结果。
  *
- * 执行方式由 config.commands.template 决定，模板里可用 {prompt} / {mode} / {workspace} 占位符：
- *   - 纯 shell：template = "{prompt}"（默认，把 prompt 当脚本跑）
- *   - 接 Cline CLI：template = "cline --yolo \"{prompt}\""
- * 脚本会先落成临时文件再交给 shell 执行，避免引号/换行转义踩坑。
+ * 执行方式由 config.commands.runner 决定：
+ *   - 'cline'（推荐）：交给 cline CLI 真正进入一个 Cline 会话。
+ *       一律 `cline -c <workspace> …` 新开会话（`--id` 续会话要求 TTY，无头环境不可用，见 ADR-18/19）。
+ *       模式：plan 走 `-p`，act 走 `--auto-approve true`。
+ *   - 'shell'：把 prompt 当脚本跑，模板里可用 {prompt} / {mode} / {workspace}。
+ *       脚本先落成临时文件再交给 shell，避免引号/换行转义踩坑。
+ *
+ * 安全（2026-11-01 排查后补）：`workspaceWhitelist` 不为空时，命令的工作目录必须命中
+ * 白名单，否则直接 failed。采集侧的白名单只决定「上报哪些会话」，完全管不到「在哪执行」，
+ * 所以执行侧必须自己校验一次，否则手机发一句 `workspace=C:\Windows\System32` 就能到处跑脚本。
  */
 
 const SHELLS = {
@@ -38,12 +44,84 @@ function fillTemplate(template, { prompt, mode, workspace }) {
     .replaceAll('{workspace}', workspace)
 }
 
+function toArgs(value, fallback) {
+  if (!Array.isArray(value)) return [...fallback]
+  return value.map((item) => String(item)).filter((item) => item !== '')
+}
+
+/**
+ * cmd.exe 的参数引号规则：含空格或 shell 元字符时整体加双引号。
+ * 中文 prompt 一般是纯文本，这里只是兜底（`&`/`|` 在双引号内不被解释）。
+ */
+function quoteForCmd(value) {
+  const text = String(value)
+  if (text === '') return '""'
+  if (!/[\s"&|<>^]/.test(text)) return text
+  return `"${text.replaceAll('"', '""')}"`
+}
+
+/**
+ * PowerShell 里「命令找不到」这类只是非终止错误，脚本照样以 0 退出，
+ * 结果就是 App 显示 done、实际一件事没干（cmd_c7c2b2fd1662 那次）。
+ * 前置 Stop 把它变成终止错误（exit 1），失败原因才能通过 errorText 回写。
+ * 脚本自己写了 $ErrorActionPreference 的话以脚本为准（后赋值会覆盖前缀）。
+ */
+function hardenScript(script, shell) {
+  if (shell.command !== 'powershell.exe') return script
+  if (/^\s*\$ErrorActionPreference\s*=/m.test(script)) return script
+  return `$ErrorActionPreference = 'Stop'\n${script}`
+}
+
+/**
+ * 判断工作目录是否命中白名单（纯函数，便于 `scripts/check-workspace-whitelist.mjs` 自检）。
+ *
+ * - 白名单为空 → 不限制（保持旧行为，但 config 里必须显式写明风险）。
+ * - 条目是绝对路径（`C:\...` / `/...`）→ 按目录前缀比较，`...\chat` 不会放行 `...\chatty`。
+ * - 条目是纯名字（如 `kids_points_app`）→ 与目录名精确比较（与 index.js 采集侧同义）。
+ */
+export function isWorkspaceAllowed(dir, whitelist) {
+  const entries = Array.isArray(whitelist)
+    ? whitelist.map((item) => String(item).trim()).filter(Boolean)
+    : []
+  if (entries.length === 0) return true
+
+  const target = path.resolve(dir)
+  const targetLower = target.toLowerCase()
+  const nameLower = path.basename(target).toLowerCase()
+
+  return entries.some((entry) => {
+    if (!/^([a-zA-Z]:[\\/]|[\\/])/.test(entry)) return nameLower === entry.toLowerCase()
+    const allowedLower = path.resolve(entry).toLowerCase()
+    return targetLower === allowedLower || targetLower.startsWith(`${allowedLower}${path.sep}`)
+  })
+}
+
 export function createCommandWorker({ cfg, logger }) {
   const opts = cfg.commands ?? {}
   const enabled = Boolean(opts.enabled)
+  /**
+   * runner 决定「App 发来的一句话」怎么落地：
+   *   shell → 当成 PowerShell 脚本跑（只适合执行指令）
+   *   cline → 交给 cline CLI，真正进入一个 Cline 会话（默认）
+   */
+  const runner = opts.runner === 'cline' ? 'cline' : 'shell'
   const shellName = SHELLS[opts.shell] ? opts.shell : 'powershell'
   const shell = SHELLS[shellName]
   const template = String(opts.template ?? '').trim()
+  const clineOpts = {
+    bin: String(opts.cline?.bin ?? '').trim(),
+    jsEntry: String(opts.cline?.jsEntry ?? '').trim(),
+    planArgs: toArgs(opts.cline?.planArgs, ['-p']),
+    actArgs: toArgs(opts.cline?.actArgs, ['--auto-approve', 'true']),
+    extraArgs: toArgs(opts.cline?.extraArgs, []),
+    // resume 已停用：--id 需要 TTY，无头 bridge 用不了（见 runCline 注释）。
+    resume: false,
+    timeoutMs: Number.isFinite(Number(opts.cline?.timeoutMs)) && Number(opts.cline?.timeoutMs) > 0
+      ? Number(opts.cline.timeoutMs)
+      : 1800000
+  }
+  // Windows 上 cline 通常不在 PATH 里，config.commands.cline.bin 要写绝对路径的 cline.cmd。
+  const clineBin = clineOpts.bin || 'cline'
   const allowModes = Array.isArray(opts.allowModes) && opts.allowModes.length > 0
     ? opts.allowModes.map((m) => String(m).toLowerCase())
     : ['plan', 'act']
@@ -54,6 +132,14 @@ export function createCommandWorker({ cfg, logger }) {
     ? Math.min(10, Number(opts.batchSize))
     : 3
   const defaultWorkspace = opts.defaultWorkspace ? path.resolve(opts.defaultWorkspace) : ''
+
+  /**
+   * 与 index.js 的采集白名单共用同一个配置项，作用却完全不同：
+   * 那边决定「哪些会话能上报」，这边决定「命令在哪些目录能落地」。
+   */
+  const workspaceWhitelist = Array.isArray(cfg.workspaceWhitelist)
+    ? cfg.workspaceWhitelist.map((item) => String(item).trim()).filter(Boolean)
+    : []
 
   const tmpDir = path.join(os.tmpdir(), 'cline-hub-cmd')
   const state = { ticking: false, busy: false, warned: false, child: null, stopped: false }
@@ -82,6 +168,22 @@ export function createCommandWorker({ cfg, logger }) {
     return request('PATCH', `/api/v1/commands/${encodeURIComponent(id)}`, { status, ...extra })
   }
 
+  /**
+   * 失败原因：光写 `exit code 1` 在手机上等于没说，
+   * 把 stderr 里第一条像错误的行带出来（PowerShell 的 CommandNotFoundException 就在那）。
+   */
+  function failureReason(result, limitMs = timeoutMs) {
+    if (result.timedOut) return `timeout after ${limitMs}ms`
+    if (result.message) return result.message
+    const lines = String(result.output ?? '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+    const hit = lines.find((line) => /error|not recognized|not found|denied|cannot|无法|不是/i.test(line)) ?? lines[0] ?? ''
+    const reason = truncate(hit, 300)
+    return reason ? `exit code ${result.code}: ${reason}` : `exit code ${result.code}`
+  }
+
   function killTree(child) {
     if (process.platform === 'win32') {
       spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true })
@@ -93,15 +195,16 @@ export function createCommandWorker({ cfg, logger }) {
     } catch {}
   }
 
-  function runScript(script, cwd) {
+  function runProcess(command, args, cwd, limitMs, options = {}) {
+    const useShell = options.shell === true
     return new Promise((resolve) => {
-      fs.mkdirSync(tmpDir, { recursive: true })
-      const file = path.join(tmpDir, `cmd_${Date.now()}_${Math.random().toString(16).slice(2, 8)}${shell.ext}`)
-      fs.writeFileSync(file, script, 'utf8')
-
-      const child = spawn(shell.command, shell.args(file), {
+      const child = spawn(command, useShell ? args.map(quoteForCmd) : args, {
         cwd,
         windowsHide: true,
+        // stdin 必须是 ignore：不然 cline 会等终端输入，进程永远不退出，
+        // 命令在手机上看就是「一直执行中」（cmd_1757ca588f92 那次）。
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: useShell,
         env: { ...process.env, CLINE_HUB_COMMAND: '1' }
       })
       state.child = child
@@ -118,20 +221,69 @@ export function createCommandWorker({ cfg, logger }) {
       const timer = setTimeout(() => {
         timedOut = true
         killTree(child)
-      }, timeoutMs)
+      }, limitMs)
 
       const finish = (code, message) => {
         clearTimeout(timer)
         state.child = null
-        try {
-          fs.unlinkSync(file)
-        } catch {}
         resolve({ code, output, timedOut, message })
       }
 
       child.on('error', (error) => finish(-1, error.message))
       child.on('close', (code) => finish(code ?? -1, ''))
     })
+  }
+
+  function runScript(script, cwd) {
+    fs.mkdirSync(tmpDir, { recursive: true })
+    const file = path.join(tmpDir, `cmd_${Date.now()}_${Math.random().toString(16).slice(2, 8)}${shell.ext}`)
+    fs.writeFileSync(file, script, 'utf8')
+    return runProcess(shell.command, shell.args(file), cwd, timeoutMs).finally(() => {
+      try {
+        fs.unlinkSync(file)
+      } catch {}
+    })
+  }
+
+  /**
+   * 找到把 cline 跑起来的最稳方式。
+   *
+   * Windows 上 cline 是 .cmd；spawn 时 shell:true 会让 cmd 重新解析整行，
+   * bin 路径里一旦有空格（.../Author Software/...）就会被截断成
+   * 'C:\Users\alice\AppData\Local\Author' is not recognized（cmd_d780a52e6c1a 实测）。
+   * 所以优先用 node 直接跑 cline 的 JS 入口：没有 cmd、没有引号问题，stdin 仍可 ignore。
+   */
+  function resolveClineTarget() {
+    const isBatch = process.platform === 'win32' && /\.(cmd|bat)$/i.test(clineBin)
+    if (clineOpts.jsEntry && fs.existsSync(clineOpts.jsEntry)) {
+      return { command: process.execPath, argv: [clineOpts.jsEntry], shell: false }
+    }
+    if (isBatch) {
+      const derived = path.join(path.dirname(clineBin), 'node_modules', 'cline', 'bin', 'cline')
+      if (fs.existsSync(derived)) {
+        return { command: process.execPath, argv: [derived], shell: false }
+      }
+    }
+    return { command: clineBin, argv: [], shell: isBatch }
+  }
+
+  /**
+   * 把一条命令翻译成 cline CLI 的调用。
+   *
+   * 一律 `-c <workspace>` 新开会话：`--id` 续会话在无 TTY 下会直接报
+   * "interactive mode requires a TTY"（见 ADR-18/19），bridge 是隐藏进程拿不到终端。
+   * 模式：plan 走 `-p`（只读），act 走 `--auto-approve true`；yolo 由 allowModes 拦掉。
+   */
+  function runCline({ prompt, mode, cwd, sessionId }) {
+    const args = [...(mode === 'plan' ? clineOpts.planArgs : clineOpts.actArgs), ...clineOpts.extraArgs]
+    // cline CLI 4.x 的 --id 续会话要求 TTY（非 TTY 下报
+    // "interactive mode requires a TTY"），bridge 的 spawn 没有终端，
+    // 所以带 sessionId 也一律 -c 新开会话（2026-11-01 实测）。
+    args.push('-c', cwd)
+    // 位置参数必须在最后：commander 会把 prompt 之后的一切当成 prompt 的一部分。
+    args.push(prompt)
+    const target = resolveClineTarget()
+    return runProcess(target.command, [...target.argv, ...args], cwd, clineOpts.timeoutMs, { shell: target.shell })
   }
 
   function resolveWorkspace(command) {
@@ -144,11 +296,6 @@ export function createCommandWorker({ cfg, logger }) {
   async function handle(command) {
     const mode = String(command.mode ?? 'plan').toLowerCase()
 
-    if (!template) {
-      await report(command.id, 'failed', { errorText: 'commands.template is empty in bridge/config.json' })
-      logger.warn('command rejected: empty template', { id: command.id })
-      return
-    }
     if (!allowModes.includes(mode)) {
       await report(command.id, 'failed', {
         errorText: `mode "${mode}" is not allowed on this device (commands.allowModes: ${allowModes.join(', ')})`
@@ -156,36 +303,55 @@ export function createCommandWorker({ cfg, logger }) {
       logger.warn('command rejected: mode not allowed', { id: command.id, mode })
       return
     }
+    if (runner === 'shell' && !template) {
+      await report(command.id, 'failed', { errorText: 'commands.template is empty in bridge/config.json' })
+      logger.warn('command rejected: empty template', { id: command.id })
+      return
+    }
 
     const cwd = resolveWorkspace(command)
-    const script = fillTemplate(template, {
-      prompt: truncate(command.prompt, 8000),
-      mode,
-      workspace: cwd
-    })
+    if (!isWorkspaceAllowed(cwd, workspaceWhitelist)) {
+      await report(command.id, 'failed', {
+        errorText: `workspace "${cwd}" is not in workspaceWhitelist (${workspaceWhitelist.join(', ')})`
+      })
+      logger.warn('command rejected: workspace not whitelisted', { id: command.id, cwd })
+      return
+    }
+    const sessionId = String(command.sessionId ?? '').trim()
+    const prompt = truncate(command.prompt, 8000)
 
-    logger.info('command started', { id: command.id, mode, cwd, chars: script.length })
+    logger.info('command started', {
+      id: command.id,
+      mode,
+      runner,
+      cwd,
+      sessionId: sessionId || null,
+      chars: prompt.length
+    })
     try {
       await report(command.id, 'running')
     } catch (error) {
       logger.error('command running-report failed', { id: command.id, message: error.message })
     }
 
-    const result = await runScript(script, cwd)
+    const limitMs = runner === 'cline' ? clineOpts.timeoutMs : timeoutMs
+    const result = runner === 'cline'
+      ? await runCline({ prompt, mode, cwd, sessionId })
+      : await runScript(hardenScript(fillTemplate(template, { prompt, mode, workspace: cwd }), shell), cwd)
+
     const ok = !result.timedOut && result.code === 0
     const body = ok
       ? { resultText: truncate(result.output) || '(no output)' }
       : {
           resultText: truncate(result.output),
-          errorText: result.timedOut
-            ? `timeout after ${timeoutMs}ms`
-            : (result.message || `exit code ${result.code}`)
+          errorText: failureReason(result, limitMs)
         }
 
     try {
       await report(command.id, ok ? 'done' : 'failed', body)
       logger.info('command finished', {
         id: command.id,
+        runner,
         status: ok ? 'done' : 'failed',
         exit: result.code,
         outChars: result.output.length

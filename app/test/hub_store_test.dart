@@ -182,4 +182,128 @@ void main() {
     expect(fake.sessionQuery, 'Flutter');
     store.dispose();
   });
+
+  test('knownWorkspaces 只收绝对路径，按出现次数降序去重', () async {
+    final settings = await makeSettings();
+    const chatRoot = r'C:\Users\alice\.cline\data\workspaces\chat\kids_points_app';
+    final fake = FakeHubApi(
+      sessionItems: [
+        SessionItem(
+          deviceId: 'localone',
+          sessionId: 's1',
+          workspace: 'kids_points_app', // 相对名，进不了候选
+          workspaceRoot: chatRoot,
+        ),
+        SessionItem(
+          deviceId: 'localone',
+          sessionId: 's2',
+          workspace: 'kids_points_app',
+          workspaceRoot: chatRoot,
+        ),
+        SessionItem(
+          deviceId: 'localone',
+          sessionId: 's3',
+          workspace: 'legacy', // 只有相对名 -> 丢掉
+        ),
+      ],
+      commandItems: const [
+        CommandItem(
+          id: 'cmd_1',
+          deviceId: 'localone',
+          prompt: 'dir',
+          mode: 'plan',
+          status: 'done',
+          workspace: r'C:\work\other',
+        ),
+        CommandItem(
+          id: 'cmd_2',
+          deviceId: 'localone',
+          prompt: 'dir',
+          mode: 'plan',
+          status: 'done',
+          workspace: 'other', // 相对名，丢掉
+        ),
+      ],
+      hookItems: [
+        HookItem(
+          id: 1,
+          event: 'agent_end',
+          workspace: chatRoot,
+        ),
+      ],
+    );
+    final store = HubStore(settings: settings, apiFactory: (_) => fake);
+    await store.start();
+
+    expect(store.knownWorkspaces, [chatRoot, r'C:\work\other']);
+    store.dispose();
+  });
+
+  test('knownWorkspaces 认 POSIX 绝对路径，最多给 6 条', () async {
+    final settings = await makeSettings();
+    final fake = FakeHubApi(
+      commandItems: [
+        for (var i = 0; i < 8; i += 1)
+          CommandItem(
+            id: 'cmd_$i',
+            deviceId: 'localone',
+            prompt: 'ls',
+            mode: 'plan',
+            status: 'done',
+            workspace: '/home/ubuntu/proj$i',
+          ),
+      ],
+    );
+    final store = HubStore(settings: settings, apiFactory: (_) => fake);
+    await store.start();
+
+    expect(store.knownWorkspaces, hasLength(6));
+    expect(store.knownWorkspaces.first, '/home/ubuntu/proj0'); // 同票数按字典序
+    expect(store.knownWorkspaces.every((path) => path.startsWith('/')), isTrue);
+    store.dispose();
+  });
+
+  test('sessionGroups 按工作目录归并，组顺序跟时间走', () async {
+    final settings = await makeSettings();
+    final fake = FakeHubApi(
+      sessionItems: [
+        SessionItem(
+          deviceId: 'localone',
+          sessionId: 's1',
+          workspace: 'b',
+          workspaceRoot: r'C:\work\b',
+          sortAt: DateTime(2026, 11, 1, 9),
+        ),
+        SessionItem(
+          deviceId: 'localone',
+          sessionId: 's2',
+          workspace: 'a',
+          workspaceRoot: r'C:\work\a',
+          sortAt: DateTime(2026, 10, 31, 9),
+        ),
+        SessionItem(
+          deviceId: 'localone',
+          sessionId: 's3',
+          workspace: 'b',
+          workspaceRoot: r'C:\WORK\b', // 大小写不同，仍是同一个目录
+          sortAt: DateTime(2026, 10, 30, 9),
+        ),
+        SessionItem(
+          deviceId: 'localone',
+          sessionId: 's4',
+          sortAt: DateTime(2026, 10, 29, 9),
+        ),
+      ],
+    );
+    final store = HubStore(settings: settings, apiFactory: (_) => fake);
+    await store.start();
+
+    final groups = store.sessionGroups;
+    expect(groups.map((group) => group.label), ['b', 'a', '未标注工作区']);
+    expect(groups.first.items.map((item) => item.sessionId), ['s1', 's3']);
+    expect(groups.first.path, r'C:\work\b');
+    expect(groups.first.key, r'c:\work\b');
+    expect(groups.first.items, hasLength(2));
+    store.dispose();
+  });
 }

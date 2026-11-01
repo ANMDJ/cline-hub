@@ -5,6 +5,7 @@
   "hookHost": "127.0.0.1",
   "hookPort": 3210,
   "pollIntervalMs": 5000,
+  "runningPollIntervalMs": 3000,
   "batchSize": 20,
   "workspaceWhitelist": [],
   "commandTools": [
@@ -14,14 +15,25 @@
   "maxResultChars": 4000,
   "maxCommands": 300,
   "maxCommandChars": 2000,
+  "maxTextChars": 2000,
+  "messageBatch": 40,
   "dataDir": "",
   "commands": {
     "enabled": false,
+    "runner": "cline",
     "template": "{prompt}",
     "shell": "powershell",
-    "allowModes": ["plan", "act"],
+    "allowModes": ["plan"],
     "defaultWorkspace": "",
     "timeoutMs": 600000,
-    "batchSize": 3
+    "batchSize": 3,
+    "cline": {
+      "bin": "C:\\path\\to\\cline.cmd",
+      "planArgs": ["-p"],
+      "actArgs": ["--auto-approve", "true"],
+      "extraArgs": [],
+      "resume": false,
+      "timeoutMs": 1800000
+    }
   }
 }

@@ -45,3 +45,20 @@ export function getSessionById(db, sessionId) {
     .get(sessionId)
   return row ?? null
 }
+
+/**
+ * 最近活跃的会话（不看水位线），用于一次性回填。
+ *
+ * 水位线只会向前推进：旧版本对"已上报过的 session_id"是直接静默跳过的，
+ * 这些会话的 updated_at 早就落到水位线以下，再也不会被 listSessionsSince
+ * 扫到。升级后靠这个查询把它们的最新快照补推一遍。
+ */
+export function listRecentSessions(db, limit = 100) {
+  return db
+    .prepare(
+      `SELECT ${SESSION_COLUMNS} FROM sessions
+       ORDER BY updated_at DESC
+       LIMIT ?`
+    )
+    .all(limit)
+}

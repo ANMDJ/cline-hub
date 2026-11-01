@@ -234,6 +234,7 @@ class CommandItem {
     required this.mode,
     required this.status,
     this.workspace,
+    this.sessionId,
     this.requestedBy,
     this.resultText,
     this.errorText,
@@ -250,6 +251,7 @@ class CommandItem {
     mode: _str(json['mode']) ?? 'plan',
     status: _str(json['status']) ?? 'pending',
     workspace: _str(json['workspace']),
+    sessionId: _str(json['sessionId']),
     requestedBy: _str(json['requestedBy']),
     resultText: _str(json['resultText']),
     errorText: _str(json['errorText']),
@@ -265,6 +267,9 @@ class CommandItem {
   final String mode;
   final String status;
   final String? workspace;
+
+  /// 有值时表示这条命令是「在某个已有会话里继续说」。
+  final String? sessionId;
   final String? requestedBy;
   final String? resultText;
   final String? errorText;
@@ -300,6 +305,7 @@ class HookItem {
     this.workspace,
     this.title,
     this.body,
+    this.sessionId,
     this.receivedAt,
   });
 
@@ -310,6 +316,7 @@ class HookItem {
     workspace: _str(json['workspace']),
     title: _str(json['title']),
     body: _str(json['body']),
+    sessionId: _str(json['sessionId']),
     receivedAt: _dt(json['receivedAt']),
   );
 
@@ -319,7 +326,51 @@ class HookItem {
   final String? workspace;
   final String? title;
   final String? body;
+
+  /// bridge 的完成通知会带上会话 id，动态卡片靠它跳进详情页；
+  /// Cline 自己的 hook 没有这个字段，所以是 null。
+  final String? sessionId;
   final DateTime? receivedAt;
+}
+
+/// 会话里的一条消息：一段正文，或一次工具调用（命令过程）。
+///
+/// 服务端按 `(device, session, message_id)` upsert，流式回复的同一条消息
+/// 会被覆盖成最新内容，所以这里不需要自己去重。
+class SessionMessage {
+  const SessionMessage({
+    required this.messageId,
+    required this.role,
+    required this.kind,
+    required this.text,
+    this.tool,
+    this.ts,
+    this.seq = 0,
+  });
+
+  factory SessionMessage.fromJson(Map<String, dynamic> json) => SessionMessage(
+    messageId: _str(json['messageId']) ?? _str(json['id']) ?? '',
+    role: _str(json['role']) ?? 'assistant',
+    kind: _str(json['kind']) ?? 'text',
+    text: _str(json['text']) ?? '',
+    tool: _str(json['tool']),
+    ts: _dt(json['ts']),
+    seq: _int(json['seq']) ?? 0,
+  );
+
+  final String messageId;
+  final String role;
+  final String kind;
+  final String text;
+  final String? tool;
+  final DateTime? ts;
+  final int seq;
+
+  bool get isUser => role == 'user';
+  bool get isCommand => kind == 'command';
+
+  /// 列表 key：message_id 全局稳定，列表刷新时不会整屏重排。
+  String get key => messageId.isNotEmpty ? messageId : '$seq-$role-$kind';
 }
 
 class HealthInfo {

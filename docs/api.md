@@ -46,6 +46,8 @@ SSE 例外：`GET /api/v1/events?token=<token>`（EventSource 不能设置请求
 | POST | `/api/v1/clients` | admin | 创建设备，返回一次性 token |
 | DELETE | `/api/v1/clients/:id?confirm=1` | admin | 删除设备（级联删数据） |
 | POST | `/api/v1/sessions` | device | 上报/更新一条会话（幂等 upsert） |
+| POST | `/api/v1/sessions/:sessionId/messages` | device | 增量上报会话消息（按 message_id 幂等 upsert） |
+| GET | `/api/v1/sessions/:sessionId/messages` | any | 会话消息流（seq 升序，`after` 做增量续拉） |
 | GET | `/api/v1/sessions` | any | 会话列表（游标分页 + 过滤 + 搜索） |
 | GET | `/api/v1/sessions/:sessionId` | any | 会话详情（含结果全文与命令列表） |
 | POST | `/api/v1/hooks` | device | 上报 hook 事件 |
@@ -96,6 +98,35 @@ SSE 例外：`GET /api/v1/events?token=<token>`（EventSource 不能设置请求
 - 时间接受 ISO8601 或 epoch 毫秒；无法解析时为 `null`。
 - `commands` 全量覆盖（bridge 每次上报的都是该会话最新抽取结果）。
 
+## 会话消息（bridge 增量上报）
+
+`POST /api/v1/sessions/:sessionId/messages`（device）
+
+```json
+{
+  "deviceId": "localone",
+  "messages": [
+    { "id": "d7287361-...:0", "role": "user", "kind": "text", "text": "如何启动 bridge", "seq": 0, "ts": "2026-11-01T03:53:40.411Z" },
+    { "id": "msg_uEIvbzwi:1", "role": "assistant", "kind": "command", "text": "ls -la", "tool": "run_commands", "seq": 2, "ts": "2026-11-01T03:53:45.570Z" }
+  ]
+}
+```
+
+- 主键 `(device_id, session_id, message_id)`：流式回复的同一条消息会被重发覆盖，
+  详情页不会出现重复气泡。
+- `kind`：`text` = 正文，`command` = 白名单工具的调用（命令过程）。
+- 一次最多 200 条；bridge 默认 40 条一批。
+- `text` 超过 8000 字会被服务端截断（bridge 侧已按 `maxTextChars` 截到 2000）。
+
+`GET /api/v1/sessions/:sessionId/messages?limit=800&after=<seq>`（any）
+
+```json
+{ "ok": true, "items": [ { "messageId": "...", "seq": 0, "role": "user", "kind": "text", "text": "...", "tool": null, "ts": "..." } ], "hasMore": false }
+```
+
+- 按 `seq asc` 返回；`after` 只返回 `seq > after` 的部分，用于会话还在跑时续拉。
+- 注意实现细节：**不传 `after` 时不能当成 0**，否则 `seq=0` 的第一条（用户原话）会被永久过滤掉。
+
 ## 会话列表
 
 ```
@@ -103,7 +134,9 @@ GET /api/v1/sessions?limit=30&workspace=chat&status=completed&q=Flutter&cursor=<
 ```
 
 - `limit`：1–200，默认 50。
-- 排序：`coalesce(ended_at, started_at, updated_at) desc`。
+- 排序：`coalesce(ended_at, updated_at, started_at) desc nulls last`。
+  进行中的会话 `ended_at` 为空，用 `updated_at` 排序才会跟着最新一条消息走；
+  游标与 `ORDER BY` 必须用同一个表达式，否则翻页会漏行。
 - 过滤：`workspace` / `status` / `deviceId` 精确匹配；`q` 对 `result_text`、`prompt`、`user_prompt` 做 `ilike` 模糊匹配。
 - 分页：把响应里的 `nextCursor` 原样回传；`nextCursor` 为 `null` 表示到底。
 
@@ -152,7 +185,15 @@ GET /api/v1/sessions?limit=30&workspace=chat&status=completed&q=Flutter&cursor=<
 ```
 
 - `payload` 原样存进 `jsonb`；`title` / `message` 会额外抽出来做列表展示。
+- `sessionId` 可选：bridge 的兜底通知会带上它，App 的动态卡片靠它跳进会话详情。
 - `GET /api/v1/hooks?limit=50&beforeId=123`：倒序分页。
+
+### 完成通知从哪来
+
+Cline 4.1.26 起把全局 hooks 目录改为工作区级 `.clinerules/hooks`，机器上原有外挂 hook
+不再触发。所以 bridge 自己在 `sessions.db` 里盯状态跃迁（`running` →
+`completed` / `failed` / `cancelled`），发现就补一条 `session_done` /
+`session_failed` / `session_cancelled` 事件，不依赖 Cline 侧的任何配置。
 
 ## 远程命令
 
@@ -164,7 +205,10 @@ POST /api/v1/commands
 ```
 
 - `mode`：`plan`（默认，只出方案）/ `act` / `yolo`。
-- 返回 `{ ok, command: { id, status: "pending", ... } }`。
+- `sessionId` 可选：记录「这条指令来自哪个会话」。注意 cline CLI 4.x 的 `--id` 续会话要求 TTY，
+  bridge 是无头进程，所以**实际执行一律 `cline -c <workspace>` 新开会话**（2026-11-01 实测）。
+  该字段目前只用于溯源，客户端不要指望消息出现在原会话里；新会话会由 bridge 下一轮扫描自动上报。
+- 返回 `{ ok, command: { id, status: "pending", sessionId, ... } }`。
 
 ### 领取（bridge）
 

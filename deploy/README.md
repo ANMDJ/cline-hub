@@ -116,6 +116,40 @@ cp .env.example .env
 chmod 600 .env
 ```
 
+### 4.1 单文件热修（只改 `server/src/` 下某个文件）
+
+镜像里是 `COPY src ./src`，**改源码必须 rebuild**：只跑 `docker compose up -d` 不会生效。
+
+```bash
+cd <仓库>
+scp -i <下载目录>/kids.pem \
+  server/src/routes/sessions.js ubuntu@82.157.153.22:/tmp/x.js
+
+ssh -i <下载目录>/kids.pem ubuntu@82.157.153.22 'set -e
+  sed -i "s/\r$//" /tmp/x.js                     # Windows 侧带 CRLF，先转 LF
+  T=/srv/cline-hub/server/src/routes/sessions.js
+  sudo cp -a $T $T.bak-$(date +%Y%m%d-%H%M%S)     # 备份
+  sudo install -m 644 -o ubuntu -g ubuntu /tmp/x.js $T
+  rm -f /tmp/x.js
+  cd /srv/cline-hub/server
+  sudo docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com hub
+  sudo docker compose up -d hub
+  sleep 4; sudo docker compose logs --tail 10 hub
+  curl -s http://127.0.0.1:3100/api/v1/health'
+```
+
+回滚（`<ts>` 换成备份后缀，容器会重建）：
+
+```bash
+cd /srv/cline-hub/server
+sudo install -m 644 -o ubuntu -g ubuntu src/routes/sessions.js.bak-<ts> src/routes/sessions.js
+sudo docker compose up -d --build hub
+```
+
+2026-11-01 实测：`sessions.js.bak-20261101-130025` → 重建约 5 秒（`npm ci` 层命中缓存），
+容器 `Recreated → Started`，`/api/v1/health` 立即 200；期间 bridge 的 5s 轮询只经历一次
+短暂失败，`outbox` 无积压。
+
 ## 5. 迁移 + 起服务
 
 ```bash
@@ -362,5 +396,36 @@ GET /no-such-file            -> 404
 3. **不要在全局块写 `admin off`**：`systemctl reload` 走 admin API（`127.0.0.1:2019`），关掉只能 `restart`。
    另外别对 `/var/lib/caddy/*.log` 用普通用户跑 `sudo chown ... *.log`——glob 会在普通用户下展开失败（目录 750），
    命令看着成功其实什么都没改。
+
+## 13. 端到端一键自检（`deploy/windows/verify-hub.ps1`）
+
+改完 bridge / server / App 后，不用打开 App 也能确认整条链路：
+
+```powershell
+# 只读检查（bridge 是否在跑、Hub 健康、最近 hook 事件）
+powershell -NoProfile -ExecutionPolicy Bypass -File deploy\windows\verify-hub.ps1
+
+# 完整链路：发一条真命令，等它跑完，再去会话里找这句话
+powershell -NoProfile -ExecutionPolicy Bypass -File deploy\windows\verify-hub.ps1 `
+  -AppToken clh_xxxxxx -SessionId 1791688899478_78ppl -TimeoutSec 600
+```
+
+它按顺序做五件事，任一步失败退出码为 1：
+
+| # | 检查 | 失败说明什么 |
+|---|---|---|
+| 1 | `http://127.0.0.1:3210/health` 有响应 + 打印 `bridge/logs/bridge.log` 尾部 10 行 | bridge 没起，或起了两个抢端口（本机 `netstat` 看不到该端口，别用它判断） |
+| 2 | `GET /api/v1/health` | 入口前缀写错 / Caddy 没生效 / 容器挂了 |
+| 3 | `POST /api/v1/commands` 并每 3s 轮询到终态 | `pending` = bridge 没轮询；`delivered` 卡住 = spawn 失败；`running` 超时 = cline 挂住 |
+| 4 | `GET .../messages` 找 `-Prompt` 原文 | 消息没进 Cline 会话，或 bridge 的 transcript 扫描没跑 |
+| 5 | `GET /api/v1/hooks` 里找 `session_*` | 完成通知没生成（bridge 没观察到 `running → 终态`） |
+
+几个约定：
+
+- `-AppToken` 不给就只做只读检查（创建命令需要 `app` 角色；读用 `bridge/config.json` 里的 `deviceToken`）。
+- `-SessionId` 不给则走「新开会话」分支（bridge 执行 `cline -c <workspace>`）。
+- 脚本是 **纯 ASCII**：PowerShell 5.1 对无 BOM 脚本按 ANSI 解码，写中文会变乱码。
+- 超时默认 300s；真实 cline 回合可能要几分钟，`-TimeoutSec 600` 更稳妥。
+
 
 
