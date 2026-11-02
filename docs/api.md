@@ -191,7 +191,7 @@ GET /api/v1/sessions?limit=30&workspace=chat&status=completed&q=Flutter&cursor=<
       "prompt": "结论先说：……",
       "userPrompt": "这个阶段要不要上 Docker",
       "resultOk": true,
-      "resultPreview": "结论先说：**你现在这个阶段……",
+      "resultPreview": "结论先说：你现在这个阶段……",
       "commandCount": 26,
       "metrics": { "messages": 240, "thinkingChars": 0, "commandCount": 26 },
       "sortAt": "2026-10-31T01:02:11.000Z"
@@ -201,7 +201,15 @@ GET /api/v1/sessions?limit=30&workspace=chat&status=completed&q=Flutter&cursor=<
 }
 ```
 
-列表**不返回** `resultText` 全文，只有 `resultPreview`（前 400 字）+ `commandCount`，避免手机上拉几十 MB。
+列表**不返回** `resultText` 全文，只有 `resultPreview` + `commandCount`，避免手机上拉几十 MB。
+
+`resultPreview` 是**服务端洗过的纯文本**（`server/src/text.js`）：先剥 ANSI 控制序列，
+再剥 Markdown 记号（标题 / 代码围栏 / 粗体 / 链接 / 表格竖线），多行折成一行，
+最后按**码点**截到 400 字（截断时以 `…` 结尾，不会劈开 emoji）。
+清洗取的是原始 `result_text` 的前 2000 字——只看前 400 字的话，客户端拿到的可能全是代码围栏和标题记号。
+
+SSE 的 `session` 事件里也带 `resultPreview`，同一套清洗，上限 200 字。
+命令输出（`commands.resultText`）不做服务端清洗：那是终端回放，App 只在展示/复制时去 ANSI。
 
 ## 会话详情
 

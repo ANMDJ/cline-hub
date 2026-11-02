@@ -75,7 +75,7 @@ class SessionTile extends StatelessWidget {
               if (item.resultPreview != null) ...[
                 const SizedBox(height: 6),
                 Text(
-                  item.resultPreview!.replaceAll(RegExp(r'\s+'), ' ').trim(),
+                  inlinePreview(item.resultPreview!),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(

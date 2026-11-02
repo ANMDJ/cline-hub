@@ -10,6 +10,7 @@ import {
   toJsonArray,
   toJsonObject
 } from '../util.js'
+import { PREVIEW_SOURCE_CHARS, plainPreview } from '../text.js'
 
 const UPSERT_SESSION = `
   insert into sessions (
@@ -64,7 +65,7 @@ const LIST_COLUMNS = `
   provider, model, started_at, ended_at, updated_at, prompt, user_prompt,
   project, project_root, project_kind,
   result_ok, result_error, result_truncated, metrics, collected_at,
-  left(coalesce(result_text, ''), 400) as result_preview,
+  left(coalesce(result_text, ''), ${PREVIEW_SOURCE_CHARS}) as result_preview_raw,
   jsonb_array_length(commands) as command_count,
   ${SORT_AT} as sort_at
 `
@@ -91,7 +92,7 @@ function toListItem(row) {
     resultOk: row.result_ok,
     resultError: row.result_error,
     resultTruncated: row.result_truncated,
-    resultPreview: row.result_preview,
+    resultPreview: plainPreview(row.result_preview_raw),
     commandCount: row.command_count,
     metrics: row.metrics,
     collectedAt: row.collected_at,
@@ -177,7 +178,7 @@ export function createSessionRoutes({ db, logger, sse }) {
           status: session.status ?? null,
           workspace: session.workspace ?? null,
           endedAt: session.endedAt ?? null,
-          resultPreview: String(session.resultText ?? '').slice(0, 200)
+          resultPreview: plainPreview(session.resultText, 200)
         })
 
         return { ok: true, sessionId, inserted: result?.inserted === true }
@@ -397,7 +398,7 @@ export function createSessionRoutes({ db, logger, sse }) {
       async handler({ params }) {
         const row = await db.one(
           `select *,
-                  left(coalesce(result_text, ''), 400) as result_preview,
+                  left(coalesce(result_text, ''), ${PREVIEW_SOURCE_CHARS}) as result_preview_raw,
                   jsonb_array_length(commands) as command_count,
                   ${SORT_AT} as sort_at
            from sessions

@@ -3,8 +3,8 @@
 /// 为什么不引 `package_info_plus`：这个客户端刻意只保留 http / shared_preferences
 /// 两个依赖，版本号一年也就改几次，手工同步比多一个插件更划算。
 /// 发版脚本 `scripts/release-apk.mjs` 会读 `pubspec.yaml` 并校验这里是否一致。
-const String kAppVersion = '1.1.0';
-const int kAppBuild = 2;
+const String kAppVersion = '1.1.1';
+const int kAppBuild = 3;
 
 class ChangelogEntry {
   const ChangelogEntry(this.version, this.date, this.items);
@@ -15,6 +15,10 @@ class ChangelogEntry {
 }
 
 const List<ChangelogEntry> kChangelog = <ChangelogEntry>[
+  ChangelogEntry('1.1.1', '2026-11-02', <String>[
+    '修复：会话列表预览显示成 Markdown 源码（## / 代码围栏 / 表格竖线）',
+    '修复：命令输出带终端颜色码，卡片和详情看起来像乱码；现在展示与复制都是纯文本',
+  ]),
   ChangelogEntry('1.1.0', '2026-11-02', <String>[
     '修复：手机发 ACT 却按 PLAN 执行（bridge 用 CLINE_GLOBAL_SETTINGS_PATH 钉死模式）',
     '修复：PLAN / ACT 选中态配色看不清',

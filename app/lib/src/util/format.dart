@@ -49,3 +49,22 @@ String formatSpan(DateTime? start, DateTime? end) {
   if (diff.isNegative) return '—';
   return '${formatClock(start)} → ${formatClock(stop)}';
 }
+
+/// 终端控制序列：SGR 颜色、光标移动、OSC 标题等。
+///
+/// 命令输出是 `cline` 的原始 stdout，实测一句话里的每个词都被 `\u001b[2m`
+/// 包着（单条 2 万字里 3500+ 个），手机直接显示就是「乱码」。库里保留原始
+/// 字节（以后可能做富渲染），只在展示和复制时过滤。
+final RegExp _ansiPattern = RegExp(
+  r'\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)'
+  r'|\u001b\[[0-9;?]*[ -/]*[@-~]'
+  r'|\u001b\[[0-9;?]*'
+  r'|\u001b[@-Z\\-_]'
+  r'|[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]',
+);
+
+String stripAnsi(String text) => text.replaceAll(_ansiPattern, '');
+
+/// 列表卡片里的一句话：去 ANSI 控制序列后折叠空白（含换行）。
+String inlinePreview(String text) =>
+    stripAnsi(text).replaceAll(RegExp(r'\s+'), ' ').trim();

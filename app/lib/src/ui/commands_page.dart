@@ -124,7 +124,7 @@ class _CommandTile extends StatelessWidget {
               if (item.resultText != null) ...[
                 const SizedBox(height: 6),
                 Text(
-                  item.resultText!.replaceAll(RegExp(r'\s+'), ' ').trim(),
+                  inlinePreview(item.resultText!),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -169,6 +169,10 @@ void _showCommandDetail(BuildContext context, CommandItem item, HubStore store) 
     ),
     builder: (sheetContext) {
       final color = statusColor(item.status);
+      // 命令输出是终端回放：带 ANSI 颜色码，手机上显示/复制前先过滤（库里保留原字节）。
+      final output = item.resultText == null
+          ? null
+          : stripAnsi(item.resultText!);
       return DraggableScrollableSheet(
         expand: false,
         initialChildSize: 0.62,
@@ -270,7 +274,7 @@ void _showCommandDetail(BuildContext context, CommandItem item, HubStore store) 
                 ],
               ),
             ],
-            if (item.resultText != null) ...[
+            if (output != null && output.trim().isNotEmpty) ...[
               const SizedBox(height: 16),
               Row(
                 children: [
@@ -280,7 +284,7 @@ void _showCommandDetail(BuildContext context, CommandItem item, HubStore store) 
                       style: TextStyle(fontSize: 12, color: kMuted),
                     ),
                   ),
-                  CopyButton(text: item.resultText!, label: '复制输出'),
+                  CopyButton(text: output, label: '复制输出'),
                 ],
               ),
               const SizedBox(height: 6),
@@ -292,7 +296,7 @@ void _showCommandDetail(BuildContext context, CommandItem item, HubStore store) 
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: kLine),
                 ),
-                child: SelectableText(item.resultText!, style: kMono),
+                child: SelectableText(output, style: kMono),
               ),
             ],
             if (item.errorText != null) ...[

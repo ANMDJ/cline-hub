@@ -13,7 +13,8 @@
     "dev": "node --watch src/index.js",
     "migrate": "node src/migrate.js",
     "create-device": "node scripts/create-device.mjs",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "test": "node --test"
   },
   "dependencies": {
     "pg": "^8.13.1"

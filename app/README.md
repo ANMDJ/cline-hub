@@ -173,6 +173,7 @@ SSE 四种事件都用上了：`session`（去抖 900ms 后刷新列表）、`ho
 | 复制整段对话 | 详情页 AppBar 的 `copy_all` | 按 `seq` 拼「用户/助手」，命令附 `$ cmd` |
 | 截断提示 | 气泡 / 命令条 | `truncated=true` 时明确写「原文更长」，不假装完整 |
 | 选择题 | `_QuestionBubble` | `ask_question` 的选项渲染成按钮；点选 = 带上下文**新开一条命令**（无头 CLI 不能中途注入） |
+| 纯文本展示 | `util/format.dart` 的 `stripAnsi` / `inlinePreview` | 命令输出是终端回放，几乎每个词都被 `\u001b[2m` 包着；展示与复制前过滤（库里保留原字节）。会话列表预览由服务端 `plainPreview` 洗好 |
 | 版本与更新 | `ui/settings_page.dart` | 版本号来自 `data/app_version.dart`；「检查更新」读 `GET /api/v1/app/latest` |
 
 ### 发版流程
@@ -183,8 +184,11 @@ SSE 四种事件都用上了：`session`（去抖 900ms 后刷新列表）、`ho
 3. `node scripts/release-apk.mjs --notes "a;b" --base-url https://hub.littlewish.top:8443/app`
    → `dist/cline-console-<version>.apk` + `dist/latest.json`。
 4. 按脚本打印的 `scp`/`ssh` 命令上传：APK 进 `/var/www/cline-hub/app/`，
-   清单进 `/opt/cline-hub/releases/latest.json`（Hub 用 `HUB_APP_RELEASE_FILE` 读）。
+   清单进 `/srv/cline-hub/releases/latest.json`（docker-compose 只读挂载到容器里的
+   `/app/releases`，Hub 每次请求现读，**不用重启**）。
 
-> 本机 2026-11-02 缺 Android SDK + JDK 17，`flutter build apk` 跑不了；
-> 脚本与 UI 已就绪，补齐工具链即可出包（`flutter doctor` 全绿为准）。
+> 本机工具链：SDK `%LOCALAPPDATA%\Android\Sdk`、JDK 17 `<JDK 17 路径>`、
+> `GRADLE_USER_HOME=%USERPROFILE%\.gradle`。打包前必须设 `JAVA_HOME`（默认 PATH 上是 zulu-8，
+> Gradle 9 直接拒绝）：`$env:JAVA_HOME='<JDK 17 路径>'`。
+> `release` 用的是 debug 签名（模板默认），换机器重建会签名冲突、必须先卸载。
 

@@ -13,7 +13,7 @@
 | P2 | **Bug：PLAN/ACT 选中态配色看不清**（`modeSegmentStyle()` 统一背景/边框/文字） | ✅ 代码完成，待真机核对比度 |
 | P3 | **Bug：会话内容展示不全**（方案 B：上限 2000→20000 + `truncated` + 版本 2 触发有限回填 + 折叠 + 全文页） | ✅ 代码完成，**待部署**（migration 004） |
 | P4 | **Bug：会话内容没有复制**（气泡复制 / 整段复制 / 全文页复制） | ✅ 代码完成 |
-| P5 | 列表预览纯文本化（去 Markdown/ANSI，治「列表乱码」） | ⏳ 未开始 |
+| P5 | 列表预览纯文本化（去 Markdown/ANSI，治「列表乱码」） | ✅ **已上线**（Hub 重建 + 线上预览实测变纯文本；App 1.1.1 已发布） |
 | P6 | bridge 用 `cline --json` 取结构化结果（会话 ID / 最终文本） | ⏳ 未开始 |
 | P7 | 命令并发池 + 卡死命令回收 | ⏳ 未开始 |
 | P8 | 详情页 Markdown 渲染（`flutter_markdown_plus`） | ⏳ 未开始 |
@@ -29,6 +29,14 @@
 5. ✅ APK 已发布：`/var/www/cline-hub/app/cline-console-1.1.0.apk`，`https://hub.littlewish.top:8443/app/...` 返回 **200 / application/vnd.android.package-archive / 53109532 字节**
 6. ✅ Caddy 增加 `handle_path /app/*` 静态出口，`caddy validate` 通过后 `reload`
 
+### 1.1.1 发布记录（2026-11-02 11:15）
+
+1. ✅ Hub 镜像重建并重启：`server/src/text.js` 新增、`sessions.js` 改用它（容器 `cline-hub` 已 Up，`/api/v1/health` 200）
+2. ✅ 线上实测：`GET /api/v1/sessions` 的 `resultPreview` 已无 `##` / 代码围栏（例如 `1793582122106_0c056` 从「## 对，「有私钥」——」变成「对，「有私钥」——」）
+3. ✅ APK `1.1.1+3` 打包（53,109,532 B，sha256 `4abd0df3…c416`），已放 `/var/www/cline-hub/app/`，HEAD 200 / `application/vnd.android.package-archive`
+4. ✅ 清单 `/srv/cline-hub/releases/latest.json` 已更新，`GET /api/v1/app/latest` 返回 1.1.1 / build 3 / 两条 notes
+5. ⏳ 手机：当时 `adb devices` 没有设备，未覆盖安装；App 里「设置 → 检查更新」可直接下载安装
+
 **已知边界**：回填只覆盖最近 60 个会话（`TRANSCRIPT_BACKFILL_LIMIT`）。
 更早的会话（例如 `1791744249853_in12x`，含 33,547 字的长回复）仍是被截断的历史版本；
 单独补法：`cd bridge && node scripts/resend-session.mjs <sessionId>`（已用它补过这个会话，
@@ -36,7 +44,7 @@
 
 规则：**P3 方案已定为 B** —— 提升限额后，只回填最近 60 个会话（`TRANSCRIPT_BACKFILL_LIMIT`），每 tick 2 个，按字节切批。
 
-## 1. 基线快照（2026-11-02 09:15 实测）
+## 1. 基线快照（2026-11-02 09:15 实测，11:15 更新发布项）
 
 | 项 | 实测 |
 |---|---|
@@ -48,6 +56,7 @@
 | Flutter / Dart | `3.47.5` / `13.4` |
 | Android 工具链 | SDK `%LOCALAPPDATA%\Android\Sdk`（platforms 33–37 / build-tools 30–37）；JDK 17 与 21 在 `<JDK 目录>\`；`GRADLE_USER_HOME=%USERPROFILE%\.gradle` 已缓存 gradle-9.3.1。**`JAVA_HOME` 为空**，默认 PATH 上是 zulu-8，打包前必须设成 JDK 17 |
 | 已跟踪会话 | 89 个（80 个有 `messages.json`），14,755 条已上报消息 |
+| App 发布版本 | `1.1.1+3`（`GET /api/v1/app/latest` 实测；APK 53,109,532 B，sha256 `4abd0df3…c416`） |
 
 ## 2. 里程碑与最近提交
 
@@ -98,12 +107,17 @@ Windows bridge ──轮询/上报──> https://hub.littlewish.top:8443
    `release` 用的是 debug 签名（模板默认），换机器重建会签名冲突、必须先卸载。
 7. **会话消息在源头被截断**：`extract.js` 的 `clip()`（`maxTextChars`）与 `maxResultChars`，不是 UI 折叠问题。
 8. **`TRANSCRIPT_VERSION` 提升只影响被扫描到的会话**：静止老会话不会自动重发，需重开回填队列（§0 P3）。
+9. **发布清单在 `/srv/cline-hub/releases/latest.json`**（docker-compose 只读挂到容器 `/app/releases`），
+   不是脚本旧版提示的 `/opt/cline-hub/...`；Hub 每次请求现读，**不用重启**（`systemctl restart cline-hub` 也没有这个 unit）。
+10. **`Start-Process -ArgumentList` 不给带空格的参数加引号**：用数组传 `--notes "a b"` 时
+    node 只收到第一个词（本次 `latest.json` 的 notes 就被截成「修复：会话列表预览显示成」）。
+    直接 `& node ...` 调用，或自己把参数连同引号拼成一个字符串。
 
 ## 6. 自检命令
 
 ```powershell
 cd bridge; node --test; node scripts/check-workspace-whitelist.mjs
-cd server; npm run migrate; node scripts/check-preview.mjs
+cd server; npm test; npm run migrate
 cd app;    flutter pub get; flutter analyze; flutter test
 node site/check-site.mjs
 powershell -NoProfile -File deploy/windows/verify-hub.ps1
@@ -128,3 +142,5 @@ powershell -NoProfile -File deploy/windows/verify-hub.ps1
 | 2026-11-02 | P9：`ask_question` → `kind=question` + `options jsonb`（migration 005）；App 渲染成按钮，点选变新命令 |
 | 2026-11-02 | P10：版本 1.0.0+1 → 1.1.0+2；设置页「版本与更新」+ 更新日志 + 检查更新；`GET /api/v1/app/latest`；`app/scripts/release-apk.mjs` |
 | 2026-11-02 | P3/P9/P10 **已上线**：迁移 004/005 应用、Hub 镜像重建并重启、Caddy 增加 `/app/*` 静态出口、APK 发布（HTTP 200 / 53,109,532 B）、手机装 1.1.0(2)；bridge 重置水位后按 20000 字重发 |
+| 2026-11-02 | P5：新增 `server/src/text.js`（`stripAnsi` / `stripMarkdown` / `plainPreview`）；列表与详情先取 `result_text` 前 2000 字、服务端洗成 400 字纯文本（SSE 200 字）；`server/test/text.test.mjs` + `npm test`；App 新增 `stripAnsi` / `inlinePreview`，命令卡片与命令详情按纯文本展示/复制 |
+| 2026-11-02 | P5 **已上线**：Hub 镜像重建 + 重启，线上 `resultPreview` 实测无 Markdown/ANSI；App `1.1.1+3` 打包并发布（APK + `/srv/cline-hub/releases/latest.json`），`/api/v1/app/latest` 返回 1.1.1；`release-apk.mjs` 的清单路径与重启提示改正 |
