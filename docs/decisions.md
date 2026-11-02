@@ -917,3 +917,35 @@ error 事件判 failed、`json=false` 退回原始输出）。`cd bridge; node -
 **验证**：`app/test/markdown_test.dart` 4 项（标题不再显示 `##` / 默认不解析 /
 表格窄屏不 overflow / 折叠后展开页仍是 Markdown）。
 
+## 43. 读接口按设备隔离：device 看自己，app 看全部（2026-11-02）
+
+**背景**：P3 的「多设备」还没做，但写接口早就用 `resolveDeviceId()` 限制 device 只能写自己；
+读接口（`GET /sessions`、`/sessions/:id`、`/sessions/:id/messages`、`GET /commands`、
+`GET /commands/:id`、`GET /hooks`）一直没加 `device_id` 条件。单设备时看不出问题，
+接入第二台 Windows 后，任何一台的 device token 都能读到别人的会话正文和命令输出。
+SSE 更直接：`broadcast()` 发给所有连接。
+
+**决策**：
+
+- `src/util.js` 新增 `readDeviceScope(client, requested)`，与写接口的 `resolveDeviceId()` 并列：
+  - `device`：只能读自己；传别人的 `deviceId` 直接 `403 device_mismatch`
+    （不静默改写，接错 token 时客户端能立刻发现）；
+  - `app` / `admin`：不传 = 全部设备（手机端要跨设备看），传了 = 只看那一台。
+- 六个读接口统一用它拼 `device_id = $n`；`GET /commands/:id` 另外对 device 做归属检查
+  （别人的命令返回 403，与 PATCH 的语义一致）。
+- SSE 用 `sseMayReceive(client, data)` 过滤：device 连接只收 `deviceId` 与之一致的事件；
+  事件负载里没有 `deviceId` 时不发给 device（fail closed，宁可少推也不串）。
+- `app` / `admin` 的 SSE 行为不变（全量）；bridge 不订阅 SSE，所以采集侧完全不受影响。
+
+**代价与边界**：
+
+- device 订阅 SSE 时会漏掉「没有 deviceId 的事件」；当前所有广播（session / messages /
+  hook / command / command.update）都带 deviceId，后续新增事件必须带上。
+- `GET /commands/:id` 对 device 返回 403 而不是 404：会泄露「这个 id 存在」，但这是
+  内部单用户系统，可读的错误码更利于排障。
+- 真正按设备分区推送（每台设备只连自己的流）要等多设备接入一起做；这次只保证「不串数据」。
+
+**验证**：`server/test/scoping.test.mjs` 12 项（列表 / 详情 / 消息 / 命令 / hook 的 SQL
+参数、跨设备 403、`sseMayReceive`、SSE 广播过滤、HTTP 层 403/200），
+`cd server; node --test` 30 项全绿。
+

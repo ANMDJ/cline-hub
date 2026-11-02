@@ -56,6 +56,28 @@ export function resolveDeviceId(client, source) {
   return client.id
 }
 
+/**
+ * 读接口的设备范围（多设备隔离，ADR-43）。
+ *
+ * 写接口用 `resolveDeviceId()`（device 必须写自己），读接口的规则不同：
+ *   * `device`：只能读自己的行；显式传别人的 `deviceId` 直接 403，
+ *     和写接口的 `device_mismatch` 语义保持一致（不静默忽略，客户端能尽早发现接错 token）；
+ *   * `app` / `admin`：不传 = 读全部；传了 = 只看那台设备。
+ *
+ * 返回值直接用作 SQL 的可选过滤值（null = 不加条件）。
+ */
+export function readDeviceScope(client, requested) {
+  const value = typeof requested === 'string' ? requested.trim() : ''
+  if (!client) throw new HttpError(401, 'missing or invalid token', 'unauthorized')
+  if (client.role === 'device') {
+    if (value && value !== client.id) {
+      throw new HttpError(403, `token belongs to ${client.id}, not ${value}`, 'device_mismatch')
+    }
+    return client.id
+  }
+  return value || null
+}
+
 export function toJsonArray(value) {
   if (Array.isArray(value)) return value
   return []

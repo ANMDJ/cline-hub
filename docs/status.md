@@ -22,9 +22,11 @@
 | 10 | P2 | PLAN/ACT 选中态真机核对对比度（需要手机，用户侧） | ⏳ 代码完成，待真机核对 |
 | 11 | P16 | 停 bridge 前先停任务：`POST /admin/stop` + `commandWorker.shutdown()`（先回写 running，再杀进程树）+ `npm run stop` / `npm run restart` + `docs/interruptions.md` | ✅ 已上线（bridge 12:27 起为新版本；未在本会话里自杀验证） |
 | 12 | P17 | App 自动更新可直接「打开下载页」：原生 `ACTION_VIEW`（`link_launcher.dart` + `MainActivity`），复制链接保留 | ✅ 已发布 `1.1.4+6`（与 P8 一起发版） |
+| 13 | P19 | **读接口按设备隔离**：`device` token 只能读自己的会话 / 消息 / 命令 / hook（跨设备 403），SSE 按设备过滤；`app` / `admin` 不传即全量 | ✅ 已上线（2026-11-02 13:28 镜像重建；线上 device 跨设备读返回 `403 device_mismatch`） |
 
 已完成并上线的：P0 / P1 / P3 / P4 / P5 / P6 / P7 / P8 / P9 / P10 / P11–P18
 （P3、P9 已部署；P5、P10、P15、P17、P8 已发布到 App；P7/P14 待 bridge 重启生效）。
+**P19（读接口按设备隔离）已上线**（2026-11-02 13:28 镜像重建，迁移无变化）。
 
 ### Step 1 + Step 2 落地记录（2026-11-02）
 
@@ -182,12 +184,32 @@
   supervisor，见 `docs/interruptions.md`）；手机需要装 `1.1.4+6`（`adb devices` 为空，
   走 App 内「检查更新」）。
 
-## 1. 基线快照（2026-11-02 09:15 实测；13:06 更新发布项）
+### P19 落地记录（2026-11-02）
 
+- **背景**：现在只有一台 Windows bridge，读接口没做设备过滤也没人察觉；一旦接入第二台，
+  `device` token 就能读到别的设备的会话、消息、命令和 hook，SSE 也是全量广播。
+  「多设备推送」之前先把「串设备」堵住。
+- **Hub**：`src/util.js` 新增 `readDeviceScope()`（device 强制自己、跨设备 403
+  `device_mismatch`；app/admin 不传即全部），接入 `GET /sessions`、`/sessions/:id`、
+  `/sessions/:id/messages`、`GET /commands`、`/commands/:id`、`GET /hooks`；
+  `GET /commands/:id` 对 device 读别人的命令返回 403。
+  `src/http.js` 新增 `sseMayReceive()`，`broadcast()` 跳过不属于该设备的事件
+  （负载没有 `deviceId` 时不发给 device，宁可少推）。
+- **兼容性**：bridge 拉 `/commands?deviceId=<自己>`、`/commands/:id`、`/commands/pending`
+  全部照旧；App 是 `app` 角色、不带 `deviceId`，仍是全量。单设备下行为零变化。
+- **验证**：`cd server; node --test` 30 项全绿（新增 `test/scoping.test.mjs` 12 项：
+  会话列表 / 详情 / 消息、命令列表 / 详情、hook、`sseMayReceive`、SSE 广播过滤、
+  HTTP 层跨设备 403）。
+- **上线（13:28）**：覆盖 5 个源码文件后 `docker compose build` + `up -d`（备份后缀
+  `bak-20261102-132824`），health 200；线上实测 app 读 `/sessions`、`/commands`、`/hooks`
+  均 200，device 跨设备读三处均为 `403 device_mismatch`，bridge 上报与领取请求继续 200。
+
+## 1. 基线快照（2026-11-02 09:15 实测；13:06 更新发布项）
 | 项 | 实测 |
 |---|---|
 | 分支 / HEAD | `master`（P7 / P14 / P8 之后；当前哈希看 `git log -1`） |
 | Hub | `{"ok":true,...,"db":{"ok":true,"latencyMs":0},"sseClients":1}` |
+| 读接口隔离 | 已上线：`device` 跨设备读 → `403 device_mismatch`（2026-11-02 13:29 实测） |
 | bridge | `{"ok":true,"service":"cline-bridge"}`（手动启动，未开机自启） |
 | 线上入口 | `https://hub.littlewish.top:8443` |
 | Cline CLI | `3.0.74`（已是最新，`--json` 可用，**没有 `--act`**） |
@@ -228,8 +250,8 @@ Windows bridge ──轮询/上报──> https://hub.littlewish.top:8443
 ## 4. 待办（按优先级）
 
 **P0**：备案通过后切回 443 并轮换 token；证书 2027-01-29 前必须改 DNS-01。
-**P1**：P11 → P12 → P13 → P6 → P18 → P7 → P14 → P8 都已完成（P7/P14 待 bridge 重启生效）；
-下一步候选：真机核对 P2、Web 预览降级（P2 段）、多设备推送。
+**P1**：P11 → P12 → P13 → P6 → P18 → P7 → P14 → P8 → P19 都已完成（P7/P14 待 bridge 重启生效；
+P19 已上线）；下一步候选：真机核对 P2、Web 预览降级（P2 段）、多设备推送（P3 剩余部分）。
 **P7 用法**：想并行就把 `bridge/config.json` 的 `commands.concurrency` 设成 2+（上限 8），
 同一个 workspace 仍强制串行（ADR-41）。
 **P2**：App 无 SSE 的 Web 预览降级体验。
@@ -317,4 +339,5 @@ powershell -NoProfile -File deploy/windows/verify-hub.ps1
 | 2026-11-02 | **P8 Markdown**：新增 `flutter_markdown_plus`；`MessageText` / `TextViewerPage` 加 `markdown` 开关（只对会话正文 / 问题 / 结果生效，命令输出保持原文）；折叠态仍纯文本，展开页渲染；`test/markdown_test.dart` 4 项；ADR-42 |
 | 2026-11-02 | **Hub 上线**：镜像重建 + 迁移 007/008 应用；线上实测取消已结束命令返回 409、`cancelling` 事务内回滚验证通过；**踩坑**：第一次取消返回 500（`commands_status_check` 不允许 `cancelling`），补 008 解决；另把当前会话命令误置 `cancelling`，5 秒内改库回滚（详见 `docs/interruptions.md`） |
 | 2026-11-02 | **1.1.4+6 已发布**：APK 55,207,088 B / sha256 `60fb0102…2304` → `/var/www/cline-hub/app/cline-console-1.1.4.apk`（HEAD 200）、清单 `/srv/cline-hub/releases/latest.json`，`GET /api/v1/app/latest` 返回 1.1.4 / build 6 / 四条 notes；`release-apk.mjs` 新增 `--skip-build`（构建超时后可只补清单）；`adb devices` 为空，手机走 App 内「检查更新」 |
+| 2026-11-02 | **P19 读接口按设备隔离**：`readDeviceScope()`（device 只能读自己，跨设备 `403 device_mismatch`；app/admin 不传即全部）接入 sessions / messages / commands / hooks；`sseMayReceive()` 让 SSE 按设备过滤；`server/test/scoping.test.mjs` 12 项（server 30 项全绿）；ADR-43；新增根目录 `CHANGELOG.md`；13:28 镜像重建上线（备份 `bak-20261102-132824`），线上 device 跨设备读 `403 device_mismatch` 实测通过 |
 

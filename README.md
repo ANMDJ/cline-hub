@@ -304,6 +304,7 @@ sh.Run "node ""C:\Users\alice\.cline\data\workspaces\chat\cline-hub\bridge\src\i
 | `commands.allowModes` | 模板默认 `["plan"]`，本机 `["plan","act"]` | `act`/`yolo` 不在白名单时一律 `failed`；要开 act 必须**同时**改这里 |
 | `workspaceWhitelist` | 两个绝对路径 | **执行侧也校验**（原来只用于采集），手机传 `workspace=C:\Windows\System32` 会被拒 |
 | 开机自启 | 已停用 | 启动文件夹里是 `ClineBridge.vbs.disabled`，恢复方法见下节 |
+| 读接口隔离 | `device` token 只能读自己的数据 | 会话 / 消息 / 命令 / hook / SSE 全按设备过滤，多设备不会串（ADR-43） |
 
 明文 HTTP 期间（备案没下来之前）的额外要求：
 
@@ -364,6 +365,8 @@ sh.Run "node ""C:\Users\alice\.cline\data\workspaces\chat\cline-hub\bridge\src\i
 
 - 新会话先读 [`AGENTS.md`](AGENTS.md)：30 秒看懂 + 开工三条命令 + 硬约束。
 - 现状与待办看 [`docs/status.md`](docs/status.md) §0；文档索引见 [`docs/README.md`](docs/README.md)。
+- 版本更新日志见 [`CHANGELOG.md`](CHANGELOG.md)（按版本；按日期的开发记录在
+  [`docs/status.md`](docs/status.md) §8）。
 
 ## 约定
 

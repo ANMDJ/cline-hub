@@ -3,6 +3,7 @@ import {
   isoOrNull,
   limitFrom,
   resolveDeviceId,
+  readDeviceScope,
   toJsonObject
 } from '../util.js'
 
@@ -60,10 +61,10 @@ export function createHookRoutes({ db, logger, sse }) {
       method: 'GET',
       pattern: '/api/v1/hooks',
       auth: 'any',
-      async handler({ url }) {
+      async handler({ url, client }) {
         const limit = limitFrom(url, 50, 200)
         const beforeId = Number(url.searchParams.get('beforeId') ?? '')
-        const deviceId = optionalString(url.searchParams.get('deviceId'), 'deviceId', 100)
+        const deviceId = readDeviceScope(client, url.searchParams.get('deviceId'))
 
         const where = []
         const values = []

@@ -1,7 +1,13 @@
 import crypto from 'node:crypto'
 
 import { HttpError } from '../http.js'
-import { requireString, optionalString, limitFrom, isoOrNull } from '../util.js'
+import {
+  requireString,
+  optionalString,
+  limitFrom,
+  isoOrNull,
+  readDeviceScope
+} from '../util.js'
 
 const MODES = new Set(['plan', 'act', 'yolo'])
 const REPORTABLE = new Set(['running', 'done', 'failed', 'cancelled'])
@@ -96,10 +102,11 @@ export function createCommandRoutes({ db, logger, sse }) {
       method: 'GET',
       pattern: '/api/v1/commands',
       auth: 'any',
-      async handler({ url }) {
+      async handler({ url, client }) {
         const limit = limitFrom(url, 50, 200)
         const status = optionalString(url.searchParams.get('status'), 'status', 20)
-        const deviceId = optionalString(url.searchParams.get('deviceId'), 'deviceId', 100)
+        // device token 只能看自己的命令；app / admin 不传 deviceId 就是全部（ADR-43）。
+        const deviceId = readDeviceScope(client, url.searchParams.get('deviceId'))
 
         const where = []
         const values = []
@@ -166,9 +173,12 @@ export function createCommandRoutes({ db, logger, sse }) {
       method: 'GET',
       pattern: '/api/v1/commands/:id',
       auth: 'any',
-      async handler({ params }) {
+      async handler({ params, client }) {
         const row = await db.one('select * from commands where id = $1', [params.id])
         if (!row) throw new HttpError(404, 'command not found', 'not_found')
+        if (client.role === 'device' && row.device_id !== client.id) {
+          throw new HttpError(403, 'command belongs to another device', 'forbidden')
+        }
         return { ok: true, command: toCommand(row) }
       }
     },

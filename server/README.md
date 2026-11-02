@@ -53,6 +53,14 @@ curl http://127.0.0.1:3100/api/v1/health
   手机端取消执行中的命令会先进入 `cancelling`（bridge 停完进程再回写 `cancelled`）；
   领取用 `for update skip locked`，多实例也不会重复取。
 
+## 读接口的设备范围
+
+`src/util.js` 的 `readDeviceScope()` 统一处理：`device` token 只能读自己的行（`deviceId`
+不匹配直接 `403 device_mismatch`），`app` / `admin` 不传即全部、传了即筛选。
+
+`src/http.js` 的 `sseMayReceive()` 用同一规则过滤广播：`device` 连接只收 `deviceId`
+与之一致的事件，负载里没有 `deviceId` 的事件不发（宁可少推，也不串设备）。ADR-43。
+
 ## Docker
 
 ```bash

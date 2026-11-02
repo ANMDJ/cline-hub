@@ -20,6 +20,8 @@ SSE 例外：`GET /api/v1/events?token=<token>`（EventSource 不能设置请求
 
 - token 只在创建时明文返回一次，库里存 `sha256`。
 - 同一个 token 只能写自己 `deviceId` 的数据，手填别人的 `deviceId` 返回 `403 device_mismatch`。
+- **读接口按设备隔离**（ADR-43）：`device` token 只能读自己的行，传别人的 `deviceId` 直接
+  `403 device_mismatch`；`app` / `admin` 不传 = 全部设备，传了 = 只看那一台。SSE 同理。
 
 ## 错误格式
 
@@ -60,9 +62,23 @@ SSE 例外：`GET /api/v1/events?token=<token>`（EventSource 不能设置请求
 | PATCH | `/api/v1/commands/:id` | device | 回报 `running` / `done` / `failed` / `cancelled` |
 | GET | `/api/v1/events` | any | SSE 实时事件 |
 
-`GET /api/v1/sessions` 的过滤参数：`limit`、`before`、`status`、`workspace`、`project`、`q`。
+`GET /api/v1/sessions` 的过滤参数：`limit`、`cursor`、`status`、`workspace`、`project`、
+`deviceId`、`q`。
 `project` 精确匹配 bridge 上报的项目名；散会话（`projectKind=loose`）的 `project` 是 `null`，
 按 `project` 过滤取不到它们。
+`cursor` 取上一页响应里的 `nextCursor`（格式 `<sortAt ISO>|<sessionId>`）。
+
+### 读接口的设备范围（ADR-43）
+
+| 调用方 | 不传 `deviceId` | 传 `deviceId` |
+|---|---|---|
+| `device` | 只看自己 | 必须是自己，否则 `403 device_mismatch` |
+| `app` / `admin` | 全部设备 | 只看指定设备 |
+
+适用于 `GET /sessions`、`GET /sessions/:sessionId`、`GET /sessions/:sessionId/messages`、
+`GET /commands`、`GET /commands/:id`、`GET /hooks`、`GET /events`（SSE）。
+`device` token 读别人的命令详情返回 `403 forbidden`；命令**领取**（`/commands/pending`）
+一直是「只领自己的」，不受影响。
 
 ## 会话上报（bridge 用）
 

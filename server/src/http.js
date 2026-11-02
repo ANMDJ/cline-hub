@@ -207,6 +207,17 @@ export function createApp({ routes, auth, logger, corsOrigin, maxBodyBytes, rate
 }
 
 /**
+ * SSE 不是「广播给所有人」：`device` token 只该收到自己的事件（ADR-43）。
+ *
+ * 事件负载里没有 `deviceId` 时对 device 一律不发 —— 宁可少推，也别串设备。
+ * `app` / `admin` 保持全量（手机端要跨设备看）。
+ */
+export function sseMayReceive(client, data) {
+  if (client?.role !== 'device') return true
+  return Boolean(data && typeof data === 'object' && data.deviceId === client.id)
+}
+
+/**
  * Server-Sent Events channel. The phone can keep one of these open instead of
  * polling; the bridge keeps using the plain outbox, so SSE is optional.
  */
@@ -244,6 +255,7 @@ export function createSseChannel({ heartbeatMs, logger }) {
       const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
       let sent = 0
       for (const entry of clients) {
+        if (!sseMayReceive(entry.client, data)) continue
         try {
           entry.res.write(frame)
           sent += 1

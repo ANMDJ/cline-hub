@@ -7,6 +7,7 @@ import {
   boolOrFalse,
   limitFrom,
   resolveDeviceId,
+  readDeviceScope,
   toJsonArray,
   toJsonObject
 } from '../util.js'
@@ -270,7 +271,7 @@ export function createSessionRoutes({ db, logger, sse }) {
       method: 'GET',
       pattern: '/api/v1/sessions/:sessionId/messages',
       auth: 'any',
-      async handler({ params, url }) {
+      async handler({ params, url, client }) {
         // 不能写成 Number(searchParams.get('after') ?? '')：空串转数字是 0，
         // 会把 seq=0 的那条（用户原话）永久过滤掉。
         const afterRaw = url.searchParams.get('after')
@@ -290,7 +291,7 @@ export function createSessionRoutes({ db, logger, sse }) {
           values.push(before)
           where.push(`seq < $${values.length}`)
         }
-        const deviceId = optionalString(url.searchParams.get('deviceId'), 'deviceId', 100)
+        const deviceId = readDeviceScope(client, url.searchParams.get('deviceId'))
         if (deviceId) {
           values.push(deviceId)
           where.push(`device_id = $${values.length}`)
@@ -334,12 +335,12 @@ export function createSessionRoutes({ db, logger, sse }) {
       method: 'GET',
       pattern: '/api/v1/sessions',
       auth: 'any',
-      async handler({ url }) {
+      async handler({ url, client }) {
         const limit = limitFrom(url, 50, 200)
         const cursor = parseCursor(url.searchParams.get('cursor'))
         const workspace = optionalString(url.searchParams.get('workspace'), 'workspace', 300)
         const status = optionalString(url.searchParams.get('status'), 'status', 50)
-        const deviceId = optionalString(url.searchParams.get('deviceId'), 'deviceId', 100)
+        const deviceId = readDeviceScope(client, url.searchParams.get('deviceId'))
         const search = optionalString(url.searchParams.get('q'), 'q', 200)
         const project = optionalString(url.searchParams.get('project'), 'project', 200)
 
@@ -395,17 +396,25 @@ export function createSessionRoutes({ db, logger, sse }) {
       method: 'GET',
       pattern: '/api/v1/sessions/:sessionId',
       auth: 'any',
-      async handler({ params }) {
+      async handler({ params, url, client }) {
+        // 多设备时同一个 sessionId 可能在不同设备上重名：详情也必须带设备范围。
+        const deviceId = readDeviceScope(client, url.searchParams.get('deviceId'))
+        const values = [params.sessionId]
+        let scope = ''
+        if (deviceId) {
+          values.push(deviceId)
+          scope = `and device_id = $${values.length}`
+        }
         const row = await db.one(
           `select *,
                   left(coalesce(result_text, ''), ${PREVIEW_SOURCE_CHARS}) as result_preview_raw,
                   jsonb_array_length(commands) as command_count,
                   ${SORT_AT} as sort_at
            from sessions
-           where session_id = $1
+           where session_id = $1 ${scope}
            order by updated_row_at desc
            limit 1`,
-          [params.sessionId]
+          values
         )
         if (!row) throw new HttpError(404, 'session not found', 'not_found')
         return { ok: true, session: toSessionDetail(row) }
