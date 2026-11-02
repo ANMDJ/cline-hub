@@ -76,6 +76,7 @@ cd bridge; npm run restart -- --reason "换配置"   # 停 + detached 重启（�
 cd bridge; npm run restart:idle -- --reason "升级 bridge" # 等执行中的命令跑完再重启（在命令里发起重启时用这个）
 cd bridge; npm run reconcile -- --dry-run # 哪些 running 命令已经没有进程（不改状态）
 cd bridge; npm run check:whitelist      # 校验 workspaceWhitelist 配置
+cd bridge; npm run resend -- --missing-project --dry-run # 手工重发：补旧会话的快照/消息（本地还有源数据才行）
 
 # server（Hub）
 cd server; npm install; npm run migrate
@@ -83,7 +84,7 @@ cd server; npm run create-device -- --id phone --role app --name Pixel
 cd server; npm run smoke                # 端到端冒烟
 
 # app（Flutter）
-cd app; flutter pub get; flutter test   # 48 个用例
+cd app; flutter pub get; flutter test   # 67 项通过（5 项真机用例跳过）
 cd app; flutter run -d chrome           # 桌面预览（Web 没有 SSE，降级为轮询）
 cd app; flutter build apk --release     # → build/app/outputs/flutter-apk/
 
@@ -161,8 +162,10 @@ Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
 | [`CHANGELOG.md`](CHANGELOG.md) | 版本更新日志（按版本；按日期的开发过程在 `status.md` §8） | 想知道「哪个版本改了什么」 |
 | [`README.md`](README.md) | 项目总览、里程碑、安全基线、快速开始 | 需要全貌 |
 | [`docs/api.md`](docs/api.md) | Hub v1 接口契约（鉴权 / 错误码 / 请求响应） | 改接口、写客户端 |
+| [`docs/self-host.md`](docs/self-host.md) | 从零自托管：服务器 → 电脑 → 手机的完整闭环 | 第一次部署、教别人部署 |
+| [`docs/new-device.md`](docs/new-device.md) | 接入第二台 Windows（device token / bridge / 多机边界） | 加电脑、排查设备不上线 |
 | [`docs/bridge-notes.md`](docs/bridge-notes.md) | 本机实测事实：Cline 数据位置、messages.json 结构、安全排查 | 改采集 / 怀疑环境 |
-| [`docs/decisions.md`](docs/decisions.md) | 43 条 ADR：「为什么这么做」 | 想推翻某个设计之前 |
+| [`docs/decisions.md`](docs/decisions.md) | 47 条 ADR：「为什么这么做」 | 想推翻某个设计之前 |
 | [`docs/interruptions.md`](docs/interruptions.md) | 主动中断记录：为什么杀 bridge / 杀了谁 / 怎么恢复 | 开工前、要重启 bridge 时 |
 | [`docs/server-prep.md`](docs/server-prep.md) | 服务器从零准备（Docker / Postgres / Caddy / ntfy） | 换机、重建 |
 | [`deploy/README.md`](deploy/README.md) | 部署 runbook、回滚、常见故障 | 上服务器 |

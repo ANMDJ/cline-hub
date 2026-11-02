@@ -949,3 +949,152 @@ SSE 更直接：`broadcast()` 发给所有连接。
 参数、跨设备 403、`sseMayReceive`、SSE 广播过滤、HTTP 层 403/200），
 `cd server; node --test` 30 项全绿。
 
+## 44. 路径归一化：同一个目录只有一种写法（2026-11-02）
+
+**背景**：手机「工作区」页把同一个项目显示成两组：`...\chat\cline-hub` 32 条里的
+31 条一组 + 1 条一组。查下来是 `workspace_root` 有两个来源——cline CLI 写
+`sessions.db` 时用正斜杠（`C:/Users/.../cline-hub`），bridge 白名单与命令参数是人手填的
+反斜杠（`C:\Users\...\cline-hub`）。项目识别（ADR-22）上线前采集的旧会话没有
+`project` / `projectRoot` / `projectKind` 三列，App 只能退回「按绝对路径分组」，
+而分组键只做了 `toLowerCase()`：分隔符不同的两个字符串就成了两个组。
+
+**决策**：
+
+- Hub：`src/util.js` 新增 `normalizeFsPath()`，只抹平「同一个目录的不同写法」：
+  正/反斜杠、重复分隔符、尾部斜杠；**不动大小写**（Hub 也收 Linux 路径，
+  `/Home` 和 `/home` 是两回事），UNC 的两个前导反斜杠保留，`C:\` 这种盘符根
+  不退化成 `C:`（`C:` 的语义是「盘符当前目录」）。
+- 写入侧先归一化：`POST /sessions`（`workspaceRoot` / `projectRoot`）、
+  `POST /commands`（`workspace`）、`POST /hooks`（payload 里的 workspace）。
+  这样不管 bridge / 客户端怎么传，库里只有一种写法。
+- 读取侧再归一化一次（`toListItem()` / `toCommand()` / hook 列表）：
+  历史行不回填也能立刻合并——为了改一个显示问题去批量改生产库不划算。
+- App：`HubStore._pathKey()` 把路径折成 `c:/a/b` 形式的比较键，用于分组键与
+  `knownWorkspaces` 候选去重；界面展示仍是服务端原样（`C:\a\b`）。
+  `_groupKey` 的旧数据兜底分支（按绝对路径分组）也走这个键。
+
+**代价与边界**：
+
+- 大小写不统一：`C:\Users` 与 `c:\users` 在 Windows 是同一个目录，但库里仍存两串；
+  App 的比较键会转小写，所以分组能合并（与改动前行为一致）。
+- 只处理 Windows 风格路径（`X:\` / UNC）；POSIX 路径原样返回，避免把 `\` 当成
+  可互换分隔符后误伤 Linux 上合法的反斜杠文件名。
+- 旧会话的 `project` / `projectRoot` / `projectKind` 仍是空的：分组已合并，
+  但组头只能显示目录名（`chat`）。要显示项目名需让 bridge 重新上报一次：
+  在 `bridge/data/state.json` 里删掉这些 sessionId 的 `sentSessions` 指纹、
+  置 `needsBackfill: true`，再 `npm run restart:idle`（会重扫最近 100 条，
+  指纹未变的自动跳过）。**有 in-flight 命令时不要重启。**
+
+**验证**：`server/test/paths.test.mjs` 6 项（归一化规则 + POST 入库参数 +
+列表读取归一化）；`cd server; node --test` 36 项全绿。
+`app/test/hub_store_test.dart` 新增 1 项（正/反斜杠两种写法并成一组、候选只剩一个）；
+`cd app; flutter test` 58 项通过（5 项真机用例跳过）。
+
+## 45. 手工重发：复用 bridge 的上报构造器，只推点名的会话（2026-11-02）
+
+**背景**：ADR-44 之后，Hub 上的路径写法已经统一，但项目识别（ADR-22）上线前采集的
+旧会话 `project` / `projectRoot` / `projectKind` 三列仍是空，App 只能退回按绝对路径
+分组，组头显示的是目录名（`chat`）而不是项目名（`cline-hub`）。当时的补法是
+「删 `state.json` 里这些 sessionId 的 `sentSessions` 指纹 + `needsBackfill` 再重启」，
+问题是重启会掐断执行中的命令（ADR-36），而且会把最近 100 条全推一遍。
+
+**决策**：
+
+- 把「会话上报体怎么拼」从 `index.js` 抽成 `bridge/src/record.js`
+  （`workspaceName` / `sessionState` / `effectiveStatus` / `toRecord` / `fingerprintOf`）。
+  正常采集和重发脚本共用同一份，避免两条路径的字段集合漂移——重发一次反而把
+  `project*` 写回空白，比不重发更糟。
+- 新增 `bridge/scripts/resend.mjs`（`npm run resend`），只推**你点名的那几条**：
+  `--session <id>` / `--missing-project` / `--recent <n>`，`--dry-run` 先看要发什么、
+  `--no-messages` 只补快照。走的是和 bridge 完全一样的接口与鉴权，服务端按
+  `sessionId` / `message_id` upsert，重复跑不会产生重复气泡。
+- `--missing-project` 的判据是「`project` 与 `projectKind` 都为空」，**不是只看
+  `project`**：散会话（`projectKind=loose`）的 `project` 本来就是空，按 `project`
+  筛会把二十多条正常散会话也重推一遍。
+- `--device` / `--token` / `--data-dir` 让同一台机器可以按另一台设备的身份补历史
+  （多设备时不用去改 `bridge/config.json`）。
+
+**代价与边界**：
+
+- 重发用的是**本机** `sessions.db` + `messages.json`：Cline 已经清掉的会话（实测有
+  6 条 11-01 的旧会话）本地没有源数据，脚本只能报「跳过」，补不了。
+- `resultText` 按 `commands.cline` 那一套 `maxResultChars`（默认 4000）截断后上报，
+  和正常采集一致；如果库里有更长的历史文本，重发会把它变短（与 bridge 平时的
+  upsert 行为相同，不是脚本引入的）。
+- 重发不碰 `state.json`：下一次正常扫描仍按原水位线走，不会因为重发而重复上报。
+
+**验证**：`cd bridge; node --test` 53 项全绿（新增 `test/record.test.mjs` 5 项：
+`workspaceName` / `toRecord` 的项目字段与 `prompt` 兜底 / `sessionState` 僵尸判定 /
+`fingerprintOf`）；线上 `npm run resend -- --missing-project --dry-run` 能把 6 条旧会话
+点名出来，但确认本地 `sessions.db` 已无这些行。
+
+## 46. 命令耗时每秒刷新 + 设备过滤放 App 侧（2026-11-02）
+
+**背景**：① 命令详情里「耗时 2m10s」在跑的时候一直是同一个数字——`CommandItem.duration`
+虽然对 `running` 取 `DateTime.now()`，但它是 getter，列表只在数据变化（SSE 事件 /
+轮询）时重建，空闲时几分钟不动。② 命令卡片只有设备名，看不出这条命令在哪个项目里跑。
+③ 多设备后所有设备的会话 / 命令 / 动态混在一起，没法只看某一台。
+
+**决策**：
+
+- `app/lib/src/ui/widgets.dart` 新增 `ElapsedText`：`running && end == null` 时起一个
+  1 秒 `Timer.periodic` 重建自己，翻成终态（`didUpdateWidget`）立刻停表；没有开始时间
+  时显示 `—`。`MetaLine` 加一个 `trailing` 槽位专门放它——左侧文字过长先省略，
+  耗时永远可见。
+- 命令卡片的元信息改成「项目目录 · 设备 · 相对时间 · 耗时」，项目目录取路径末段
+  （`workspaceLabel()`，两个分隔符都认、尾部斜杠不算一段、空值给「未指定目录」）；
+  完整路径仍在详情页「指令」下面单独一行。
+- 设备过滤（`HubStore.deviceFilter` + `visibleSessions` / `visibleCommands` /
+  `visibleHooks`）放在 **App 侧**：服务端一次只给 50–60 条，为了筛设备再打一次请求
+  还要和分页游标配合，不划算；`sessions` / `commands` / `hooks` 仍是全量，上拉分页与
+  通知继续用全量。`DeviceFilterBar` 只在已知设备 ≥ 2 时渲染，单设备下界面完全不变。
+
+**代价与边界**：
+
+- 过滤只作用于**已加载**的数据：切到某台设备后，列表底部「到底了」说的是这一页加载完了，
+  不是这台设备真的没有更多。
+- `ElapsedText` 的秒表只在 Widget 存活时走：页面滚出屏幕（被回收）期间不刷新，
+  回来会立刻按当前时间重算，不会累计错。
+- 设备名仍来自「设置里的 deviceId + 已加载数据里出现过的 deviceId」，没有单独的
+  `GET /devices`：Hub 侧的 `GET /api/v1/clients` 是 admin 专属，App 的 app token 拿不到。
+
+**验证**：`cd app; flutter analyze` 无告警；`flutter test` 64 项通过（新增
+`workspaceLabel` 2 项、设备过滤 1 项、`ElapsedText` 3 项）。
+
+## 47. 新增 `GET /api/v1/devices`：设备列表给 App 读（2026-11-02）
+
+**背景**：ADR-46 的设备过滤只能从「已加载的会话 / 命令 / 动态」里猜设备 id：
+
+- 新接入、还没产生任何数据的电脑不会出现在 chip 里，用户以为没接上；
+- 设备只有 id，没有名字（`clients.name` 存了但 App 拿不到）；
+- 看不到在线状态、会话数、待执行 / 执行中命令，排障要回服务器敲 SQL。
+
+Hub 原有 `GET /api/v1/clients` 是 **admin 专属**，手机上的 app token 调不动，也不能把 admin
+token 发到客户端。所以新增一个只读、按角色收敛的接口。
+
+**决策**：
+
+- `server/src/routes/clients.js` 新增 `GET /api/v1/devices`，`auth: 'any'`：
+  - 只返回 `role='device'`（电脑 / bridge）；`app` client 不算设备，避免 chip 里出现手机自己；
+  - `device` token 只返回自己（沿用 ADR-43 的读隔离）；`app` / `admin` 返回全部；
+  - 字段：`id` / `name` / `createdAt` / `lastSeenAt` / `sessionCount` / `commandCount` /
+    `pendingCommands`（`pending+delivered`）/ `runningCommands`（`running+cancelling`）/
+    `lastSessionAt` / `lastCommandAt`。计数用相关子查询，client 数量很少，不值得加缓存。
+- App：`DeviceItem` 模型 + `HubApi.devices()`；`HubStore.devices` 进 `refreshAll()`，
+  `knownDevices` 改成「设置 → Hub 设备列表 → 已加载数据」三层合并，老 Hub 没有该接口时
+  仍能退回原来的猜法；`deviceLabel()` 用 `clients.name` 显示 chip。
+- 设置页新增「已接入设备」卡片：在线（2 分钟内有 `lastSeenAt`）/ 离线、会话数、
+  待执行 / 执行中、最近上报；可直接「设为默认」。
+
+**代价与边界**：
+
+- 在线判定是**启发式**：`last_seen_at` 由任意带 token 的请求触发（60 秒节流），
+  bridge 每 5 秒轮询一次，所以 2 分钟窗口足够；但网络抖动会让它短暂显示离线。
+- `lastSeenAt` 不区分「bridge 在跑」和「只是有人拿 device token 调了接口」；
+  真正确认执行端活着仍要看 `npm run health`。
+- 接口只读，不提供改名 / 删除；这些仍是 admin 的 `POST/DELETE /clients`。
+- 仍然**没有**「用户 → 设备」授权：app token 能看全部设备（单租户），见 `docs/self-host.md` §7。
+
+**验证**：`cd server; node --test` 39 项全绿（新增 `test/devices.test.mjs` 3 项：
+app 看全部 / device 只看自己 / 无 token 401）；`cd app; flutter analyze` 无告警、
+`flutter test` 67 项通过（新增 `DeviceItem` 2 项、设备列表合并 1 项）。

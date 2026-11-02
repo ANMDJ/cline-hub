@@ -153,4 +153,18 @@
 - **遗留**：手机需要装 App `1.1.4+6`（`adb devices` 为空，用 App 内「检查更新」）；
   装完后可在命令详情里点「取消这条命令」做一次真机验证。
 
+### 2026-11-02 14:19 Hub 容器强制重建（不是 bridge，没有命令被中断）
+
+- **为什么**：用户要求「重新部署 hub」。核对后代码其实已是最新（14:07 那次上线），
+  为了真正走一遍部署路径，做了一次 `--force-recreate`。
+- **怎么做的**：服务器 `/srv/cline-hub/server` 下 `docker compose build`（全缓存）→
+  `docker compose run --rm hub node src/migrate.js`（`migrations up to date {"total":8}`）→
+  `docker compose up -d --force-recreate hub`。
+- **受影响**：Hub 进程停约 2 秒（`uptimeSec` 归零），手机 SSE 断开后自动重连
+  （重建后 `GET /api/v1/health` 的 `sseClients=1`）；执行中的 `cmd_1e6f4a46c417`
+  （本会话）**不受影响**，bridge 下一 tick 恢复轮询，日志无报错，没有命令被回写 `failed`。
+- **恢复**：`docker compose ps` → `Up`；`GET /api/v1/health` → `{"ok":true,"db":{"ok":true,"latencyMs":1}}`；
+  线上 `node server/scripts/smoke.mjs` → **22/22**。
+- **遗留**：无。
+
 

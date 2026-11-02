@@ -120,6 +120,19 @@ chmod 600 .env
 
 镜像里是 `COPY src ./src`，**改源码必须 rebuild**：只跑 `docker compose up -d` 不会生效。
 
+> **反过来的坑（2026-11-02 实测）**：源码没变时 `build` 全部命中缓存，产出的镜像 ID 与旧的一致，
+> `docker compose up -d` 会判定「无需重建」而**原样保留运行中的容器**（`CREATED` 不变）。
+> 想强制走一遍启动路径（换 env、验证 entrypoint、单纯重启）用：
+> ```bash
+> sudo docker compose up -d --force-recreate hub   # 停约 2 秒；SSE 客户端会自动重连
+> ```
+> 部署完可用「容器内 vs 宿主机」哈希核对镜像里到底是不是新代码：
+> ```bash
+> sudo docker compose exec -T hub sha256sum src/*.js src/routes/*.js | sort > /tmp/inc.sha
+> sha256sum src/*.js src/routes/*.js | sort > /tmp/host.sha
+> diff /tmp/inc.sha /tmp/host.sha && echo IDENTICAL
+> ```
+
 ```bash
 cd <仓库>
 scp -i <下载目录>/kids.pem \

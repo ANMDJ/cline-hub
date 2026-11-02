@@ -23,10 +23,20 @@
 | 11 | P16 | 停 bridge 前先停任务：`POST /admin/stop` + `commandWorker.shutdown()`（先回写 running，再杀进程树）+ `npm run stop` / `npm run restart` + `docs/interruptions.md` | ✅ 已上线（bridge 12:27 起为新版本；未在本会话里自杀验证） |
 | 12 | P17 | App 自动更新可直接「打开下载页」：原生 `ACTION_VIEW`（`link_launcher.dart` + `MainActivity`），复制链接保留 | ✅ 已发布 `1.1.4+6`（与 P8 一起发版） |
 | 13 | P19 | **读接口按设备隔离**：`device` token 只能读自己的会话 / 消息 / 命令 / hook（跨设备 403），SSE 按设备过滤；`app` / `admin` 不传即全量 | ✅ 已上线（2026-11-02 13:28 镜像重建；线上 device 跨设备读返回 `403 device_mismatch`） |
+| 14 | P20 | **路径归一化上线**：`normalizeFsPath()`（写入 + 读取）重建镜像 | ✅ 已上线（2026-11-02 13:50，备份后缀 `20261102-135023`；线上 106 条会话已无正斜杠 `workspaceRoot`） |
+| 15 | P21 | **bridge 手工重发**：`npm run resend`（`--missing-project` / `--session` / `--recent` / `--dry-run` / `--no-messages` / `--device` + `--token`），上报体与正常采集共用 `src/record.js` | ✅ 已可用（bridge 测试 53 项）；6 条旧会话本地已被 Cline 清掉，补不了 |
+| 16 | P22 | **命令卡片显示项目目录 + 耗时每秒刷新**：`workspaceLabel()` + `ElapsedText`（MetaLine 新增 `trailing` 槽位） | ✅ 代码 + 测试完成（App 未发版） |
+| 17 | P23 | **多设备过滤**：会话 / 命令 / 动态页在 ≥2 台设备时出现设备 chip（`HubStore.deviceFilter` + `visible*`） | ✅ 已发布 `1.1.5+7` |
+| 18 | P24 | **设备列表接口**：`GET /api/v1/devices`（app 看全部、device 只看自己；在线时间 / 会话数 / 待执行 / 执行中）+ App 设置页「已接入设备」卡片、chip 用设备名 | ✅ Hub 已上线（2026-11-02 14:07）；App `1.1.5+7` |
+| 19 | P25 | **接入文档**：`docs/new-device.md`（第二台电脑）、`docs/self-host.md`（从零自托管 / 多设备 / 多人边界）、`bridge/README.md` | ✅ 已写入仓库 |
+| 20 | P26 | **App 1.1.5+7 发版**：设备列表 + 设备名 chip + 命令卡片项目目录 / 实时耗时 | ✅ APK 55,239,940 B / sha256 `53a64cd1…d5ac`，已上线 |
 
-已完成并上线的：P0 / P1 / P3 / P4 / P5 / P6 / P7 / P8 / P9 / P10 / P11–P18
-（P3、P9 已部署；P5、P10、P15、P17、P8 已发布到 App；P7/P14 待 bridge 重启生效）。
+已完成并上线的：P0 / P1 / P3–P26
+（P3、P9 已部署；P5、P10、P15、P17、P8、P22–P26 已发布到 App；P7/P14 已在 12:51 重启后生效）。
 **P19（读接口按设备隔离）已上线**（2026-11-02 13:28 镜像重建，迁移无变化）。
+**P20（路径归一化）已上线**（2026-11-02 13:50 镜像重建，备份后缀 `20261102-135023`）。
+**P21–P26 已上线/已发版**：重发脚本 / 命令卡片项目目录 + 动态耗时 / 多设备过滤 / 设备列表接口 /
+接入文档；App `1.1.5+7`（`flutter test` 67 项通过，5 项真机用例跳过）。
 
 ### Step 1 + Step 2 落地记录（2026-11-02）
 
@@ -147,7 +157,7 @@
 
 **已知边界**：回填只覆盖最近 60 个会话（`TRANSCRIPT_BACKFILL_LIMIT`）。
 更早的会话（例如 `1791744249853_in12x`，含 33,547 字的长回复）仍是被截断的历史版本；
-单独补法：`cd bridge && node scripts/resend-session.mjs <sessionId>`（已用它补过这个会话，
+单独补法：`cd bridge && node scripts/resend.mjs --session <sessionId>`（已用它补过这个会话，
 重发后最大单条 20,015 字、`truncated=true`）。
 
 规则：**P3 方案已定为 B** —— 提升限额后，只回填最近 60 个会话（`TRANSCRIPT_BACKFILL_LIMIT`），每 tick 2 个，按字节切批。
@@ -204,19 +214,63 @@
   `bak-20261102-132824`），health 200；线上实测 app 读 `/sessions`、`/commands`、`/hooks`
   均 200，device 跨设备读三处均为 `403 device_mismatch`，bridge 上报与领取请求继续 200。
 
-## 1. 基线快照（2026-11-02 09:15 实测；13:06 更新发布项）
+### 工作目录去重落地记录（2026-11-02）
+
+- **现象**：工作区页 `cline-hub` 出现两组。线上实测 105 条会话里：
+  `...\chat\kids_points_app` 48 条、`...\chat\cline-hub` 31 条、散会话 16 条、
+  `...\chat` 5 条、`.../chat/cline-hub`（正斜杠）1 条、`C:\Users\alice` 4 条。
+- **原因**：① 项目识别上线前的 6 条旧会话 `project*` 三列为空，App 退回按绝对路径分组；
+  ② 其中 `1793525352475_06fzv` 的 `workspace_root` 是 cline CLI 写的正斜杠，
+  App 的分组键只 `toLowerCase()`，没归一化分隔符 → 与反斜杠那组不相等（ADR-44）。
+- **Hub**：`src/util.js` 新增 `normalizeFsPath()`；`POST /sessions` / `POST /commands` /
+  `POST /hooks` 写入前归一化，`toListItem()` / `toCommand()` / hook 列表读取时再归一化，
+  历史行不回填也能合并。
+- **App**：`HubStore._pathKey()`（分隔符 / 重复斜杠 / 尾斜杠 / 大小写）用于 `sessionGroups`
+  的分组键与 `knownWorkspaces` 去重；展示值不变。
+- **验证**：`cd server; node --test` 36 项全绿（新增 `test/paths.test.mjs` 6 项）；
+  `cd app; flutter test` 58 项通过（新增分组归并用例）。
+- **待办**：Hub 需重新部署后线上才生效；那 6 条旧会话的 `project*` 仍是空，
+  要显示项目名得让 bridge 重发一次（步骤见 ADR-44；当前有 in-flight 命令，未重启）。
+
+### P20–P23 落地记录（2026-11-02）
+
+- **P20 上线**：只覆盖 `server/src/util.js` + `routes/{sessions,commands,hooks}.js`，
+  备份后缀 `20261102-135023`，`docker compose build` + `up -d` 后 health 200。
+  线上实测 106 条会话：`workspaceRoot` 含正斜杠的 0 条（部署前有 1 条
+  `.../chat/cline-hub`）。
+- **P21 重发**：`bridge/src/record.js`（从 `index.js` 抽出 `workspaceName` /
+  `sessionState` / `effectiveStatus` / `toRecord` / `fingerprintOf`）+
+  `bridge/scripts/resend.mjs`（`npm run resend`，替代只发消息的 `resend-session.mjs`）。
+  用法：`--missing-project` / `--session <id>` / `--recent <n>` / `--dry-run` /
+  `--no-messages` / `--device` + `--token` / `--data-dir`。
+- **实测结论（重要）**：Hub 上 `project` + `projectKind` 都为空的旧会话是 **6 条**，
+  但本机 `sessions.db` 里已经**没有**这些行（Cline 清过；97 条本地 vs 106 条线上），
+  `messages.json` 目录也不在了 → 重发脚本只能报「跳过」。
+  这 6 条的 `project*` 只能靠一次性改库回填，或等它们自然沉到列表底部；**别指望重发**。
+  另外 20 条 `project` 为空的会话是 `projectKind=loose`（`...\chat`、家目录），
+  本来就没有项目名，不是缺数据。
+- **P22/P23 App**：`workspaceLabel()`（路径末段）、`ElapsedText`（执行中每秒重算）、
+  `MetaLine.trailing`、`DeviceFilterBar` + `HubStore.deviceFilter` / `visible*`。
+  命令卡片元信息 = 「项目目录 · 设备 · 相对时间 · 耗时」，完整路径仍在详情页。
+- **验证**：`cd bridge; node --test` 53 项（新增 `test/record.test.mjs` 5 项）、
+  `cd server; node --test` 36 项、`cd app; flutter analyze` 无告警、
+  `flutter test` 64 项通过（新增 `workspaceLabel` 2 项 + 设备过滤 1 项 + `ElapsedText` 3 项）。
+
+## 1. 基线快照（2026-11-02 09:15 实测；14:08 更新发布项）
 | 项 | 实测 |
 |---|---|
 | 分支 / HEAD | `master`（P7 / P14 / P8 之后；当前哈希看 `git log -1`） |
-| Hub | `{"ok":true,...,"db":{"ok":true,"latencyMs":0},"sseClients":1}` |
+| Hub | `{"ok":true,...,"db":{"ok":true,"latencyMs":1},"sseClients":1}`（2026-11-02 14:19 重部署后实测） |
+| Hub 部署 | 2026-11-02 14:19 强制重建（`up -d --force-recreate hub`；`migrations up to date {"total":8}`；镜像内 `src` 与仓库逐文件 sha256 一致），前一次是 14:07 的 `GET /api/v1/devices` 上线 |
+| 设备列表 | 已上线：app / device token `GET /api/v1/devices` 均返回 1 台（`localone` / LocalOne-Windows / 109 会话 / 53 命令） |
 | 读接口隔离 | 已上线：`device` 跨设备读 → `403 device_mismatch`（2026-11-02 13:29 实测） |
 | bridge | `{"ok":true,"service":"cline-bridge"}`（手动启动，未开机自启） |
 | 线上入口 | `https://hub.littlewish.top:8443` |
 | Cline CLI | `3.0.74`（已是最新，`--json` 可用，**没有 `--act`**） |
 | Flutter / Dart | `3.47.5` / `13.4` |
 | Android 工具链 | SDK `%LOCALAPPDATA%\Android\Sdk`（platforms 33–37 / build-tools 30–37）；JDK 17 与 21 在 `<JDK 目录>\`；`GRADLE_USER_HOME=%USERPROFILE%\.gradle` 已缓存 gradle-9.3.1。**`JAVA_HOME` 为空**，默认 PATH 上是 zulu-8，打包前必须设成 JDK 17 |
-| 已跟踪会话 | 89 个（80 个有 `messages.json`），14,755 条已上报消息 |
-| App 发布版本 | `1.1.4+6`（`GET /api/v1/app/latest` 实测；APK 55,207,088 B，sha256 `60fb0102…2304`） |
+| 已跟踪会话 | 109 个（`GET /api/v1/devices` 的 `sessionCount`，2026-11-02 14:19） |
+| App 发布版本 | `1.1.5+7`（`GET /api/v1/app/latest` 实测；APK 55,239,940 B，sha256 `53a64cd1…d5ac`） |
 
 ## 2. 里程碑与最近提交
 
@@ -255,7 +309,11 @@ P19 已上线）；下一步候选：真机核对 P2、Web 预览降级（P2 段
 **P7 用法**：想并行就把 `bridge/config.json` 的 `commands.concurrency` 设成 2+（上限 8），
 同一个 workspace 仍强制串行（ADR-41）。
 **P2**：App 无 SSE 的 Web 预览降级体验。
-**P3**：多设备推送、审计视图细化。
+**P3**：多设备。① 读/推按设备隔离（P19/ADR-43）已完成；② App 侧设备过滤（P23）已完成，
+只在 ≥2 台设备时出现；③ 新增第二台设备的 runbook（`docs/new-device.md`）与
+`GET /api/v1/devices`（ADR-47）已完成；④ 还缺：审计视图细化、按用户隔离（当前 app token 看全部，
+见 `docs/self-host.md` §7）。
+**P21**：重发脚本只对**本机还有源数据**的会话有效；旧会话被 Cline 清掉后就补不了（见 §5.15）。
 
 ## 5. 已知坑（别重复踩）
 
@@ -289,6 +347,13 @@ P19 已上线）；下一步候选：真机核对 P2、Web 预览降级（P2 段
     回写 `done` 的 PATCH 在之后才发，`shutdown()` 可能把正在收尾的命令判成 in-flight
     并改成 `failed`。在命令里发起重启时加上 `--grace 15000`
     （`cd bridge; npm run restart:idle -- --reason "..." --grace 15000`）。
+15. **重发补不了「本地已删」的会话**：`npm run resend` 读的是本机 `sessions.db` +
+    `messages.json`，Cline 清理过的会话（实测 6 条 11-01 的旧会话，97 条本地 vs 106 条线上）
+    只能报「跳过」。要补只能一次性改库回填 `project*`，别再指望重发。
+    `--missing-project` 的判据是 `project` 与 `projectKind` **都为空**：散会话
+    （`projectKind=loose`）的 `project` 本来就是空，按 `project` 筛会多推二十多条。
+16. **命令列表只有最近 50 条**（`GET /commands?limit=50`），设备过滤也只筛这 50 条：
+    「切到某台设备后看不到命令」可能只是它不在最近 50 条里，不一定是 bridge 没跑。
 
 ## 6. 自检命令
 
@@ -340,4 +405,12 @@ powershell -NoProfile -File deploy/windows/verify-hub.ps1
 | 2026-11-02 | **Hub 上线**：镜像重建 + 迁移 007/008 应用；线上实测取消已结束命令返回 409、`cancelling` 事务内回滚验证通过；**踩坑**：第一次取消返回 500（`commands_status_check` 不允许 `cancelling`），补 008 解决；另把当前会话命令误置 `cancelling`，5 秒内改库回滚（详见 `docs/interruptions.md`） |
 | 2026-11-02 | **1.1.4+6 已发布**：APK 55,207,088 B / sha256 `60fb0102…2304` → `/var/www/cline-hub/app/cline-console-1.1.4.apk`（HEAD 200）、清单 `/srv/cline-hub/releases/latest.json`，`GET /api/v1/app/latest` 返回 1.1.4 / build 6 / 四条 notes；`release-apk.mjs` 新增 `--skip-build`（构建超时后可只补清单）；`adb devices` 为空，手机走 App 内「检查更新」 |
 | 2026-11-02 | **P19 读接口按设备隔离**：`readDeviceScope()`（device 只能读自己，跨设备 `403 device_mismatch`；app/admin 不传即全部）接入 sessions / messages / commands / hooks；`sseMayReceive()` 让 SSE 按设备过滤；`server/test/scoping.test.mjs` 12 项（server 30 项全绿）；ADR-43；新增根目录 `CHANGELOG.md`；13:28 镜像重建上线（备份 `bak-20261102-132824`），线上 device 跨设备读 `403 device_mismatch` 实测通过 |
+| 2026-11-02 | **工作目录去重**：`normalizeFsPath()`（正/反斜杠、重复/尾斜杠；不动大小写、保留 UNC 与盘符根）接入 `POST /sessions` / `POST /commands` / `POST /hooks` 与 `toListItem` / `toCommand` / hook 读取；App `HubStore._pathKey()` 用于分组键与 `knownWorkspaces` 去重；`server/test/paths.test.mjs` 6 项（server 36 项全绿）、`flutter test` 58 项通过；ADR-44。**未部署**：Hub 要重建镜像才生效；6 条旧会话 `project*` 仍空（需 bridge 重发） |
+| 2026-11-02 | **P20 上线**：只覆盖 `server/src/util.js` + `routes/{sessions,commands,hooks}.js`（备份后缀 `20261102-135023`），`docker compose build` + `up -d`；线上 106 条会话里 `workspaceRoot` 含正斜杠的 0 条（部署前 1 条） |
+| 2026-11-02 | **P21 重发**：`bridge/src/record.js`（`workspaceName` / `sessionState` / `effectiveStatus` / `toRecord` / `fingerprintOf` 从 `index.js` 抽出）+ `scripts/resend.mjs`（`npm run resend`，删掉只发消息的 `resend-session.mjs`）；`--missing-project` 判据是 `project` + `projectKind` 都为空；5 项 `record.test.mjs`（bridge 53 项全绿）；ADR-45。**实测**：6 条旧会话本地已被 Cline 清掉（97 vs 106），脚本只能跳过 |
+| 2026-11-02 | **P22/P23 App**：命令卡片元信息改「项目目录 · 设备 · 相对时间 · 耗时」（`workspaceLabel()`）+ `ElapsedText` 每秒重算；`MetaLine.trailing`；`DeviceFilterBar` + `HubStore.deviceFilter` / `visibleSessions|Commands|Hooks`（≥2 台设备才出现）；`flutter analyze` 无告警、`flutter test` 64 项通过；ADR-46。**未发版** |
+| 2026-11-02 | **P24 设备列表接口**：`GET /api/v1/devices`（auth any；device 只看自己、app/admin 看全部电脑端；`lastSeenAt` / `sessionCount` / `commandCount` / `pendingCommands` / `runningCommands` / `lastSessionAt` / `lastCommandAt`）；App `DeviceItem` + `HubApi.devices()` + `HubStore.devices`（进 `refreshAll`）/ `deviceLabel()`；设置页「已接入设备」卡片（在线状态 + 计数 + 设为默认）；`server/test/devices.test.mjs` 3 项（server 39 项全绿）、App 新增 3 项（`flutter test` 67 项）；ADR-47；**Hub 已上线**（14:07 镜像重建，旧文件备份 `clients.js.bak-20261102-1407*`），线上 app token 实测返回 `localone` |
+| 2026-11-02 | **P25 接入文档**：`docs/new-device.md`（第二台 Windows：建设备 / config 字段 / 起 bridge / 手机确认 / 多机边界 / 排障）、`docs/self-host.md`（从零自托管：Hub + Postgres + Caddy、两类 token、bridge、APK、验收清单、多人边界、升级备份、安全基线）、`bridge/README.md`（配置 / 脚本 / 目录 / 验证）；`docs/README.md`、`AGENTS.md`、`README.md` 加入口 |
+| 2026-11-02 | **P26 App 1.1.5+7 发版**：APK 55,239,940 B / sha256 `53a64cd1…d5ac` → `/var/www/cline-hub/app/cline-console-1.1.5.apk`（HEAD 200 / `application/vnd.android.package-archive`）；`/srv/cline-hub/releases/latest.json` 已更新，`GET /api/v1/app/latest` 返回 1.1.5 / build 7 / 三条 notes；`adb devices` 为空，手机走 App 内「检查更新」 |
+| 2026-11-02 | **Hub 重部署核对（14:18–14:19）**：先逐文件核对 —— 宿主机 `/srv/cline-hub/server/src`、容器内 `src` 与本地工作区 16 个 `*.js` 的 sha256 全部一致（`http.js` / `auth.js` 仅行尾 CRLF 差异），`scripts/*.mjs` 也一致；`docker compose build` 全命中缓存（同一镜像 ID，`up -d` 判定无需重建）；`migrate` 输出 `migrations up to date {"total":8}`；用 `up -d --force-recreate hub` 真正重启容器（`Up 5s`、health `uptimeSec=5`、`sseClients` 自动回到 1）；线上 `node server/scripts/smoke.mjs` **22/22 通过**（含两条新增 `/devices` 检查与 SSE 命令事件）；109 条会话里 `workspaceRoot` 含正斜杠 **0 条**（4 组：49/35/21/4）；smoke 留下的 `cmd_b9fa6fb6e797`（无 workspace）被 bridge 判 `failed: no usable workspace`，没有真起 cline |
 

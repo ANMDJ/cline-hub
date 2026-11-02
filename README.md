@@ -5,7 +5,7 @@
 
 ## 组成
 
-> 仓库根目录：`C:\Users\alice\.cline\data\workspaces\chat\cline-hub`（与 `kids_points_app` 同级）
+> 仓库根目录：`<你 clone 下来的目录>`（下文用 `<仓库>` 代替）
 
 | 模块 | 位置 | 说明 |
 |---|---|---|
@@ -14,6 +14,17 @@
 | Hub | `server/` | Ubuntu 上的接收端：REST + SSE + Postgres（本机已联调通过） |
 | Site | `site/` | 开源落地页（纯静态，Caddy `file_server` 直出，无构建） |
 | App | `app/` | Flutter Android 客户端（Web 仅预览）：会话 / 命令 / 动态 + SSE |
+
+## 从零跑起来（开源版）
+
+| 你的情况 | 照着做 |
+|---|---|
+| 第一次拿到仓库，要从空服务器跑通「手机 + 电脑」 | [`docs/self-host.md`](docs/self-host.md)（30 分钟，含验收清单） |
+| 已经有 Hub，想加第二台 / 第三台电脑 | [`docs/new-device.md`](docs/new-device.md)（15 分钟） |
+| 只在本机联调，不配域名 | 本文下面的「快速开始（本机）」 |
+
+> Hub 是**单租户**的：一个 app token 能看所有设备、能给所有设备下命令。
+> 给朋友用请各自部署一套，不要把 app token 发给外人（详见 `docs/self-host.md` §7）。
 
 ## 数据流
 
@@ -113,8 +124,12 @@ flutter build apk --release
 | Tab | 内容 |
 |---|---|
 | 会话 | 搜索 + 游标无限翻页；详情有结果全文、执行过的命令、耗时 |
-| 命令 | 下发 `plan/act/yolo`、盯 `pending→delivered→running→done`、直接读输出；执行中可「取消命令」（`cancelling → cancelled`） |
+| 命令 | 下发 `plan/act/yolo`、盯 `pending→delivered→running→done`、直接读输出；卡片显示「项目目录 · 设备 · 耗时」（执行中每秒刷新）；执行中可「取消命令」（`cancelling → cancelled`） |
 | 动态 | hook 事件流（任务开始/结束/中断），比会话采集更快到手机 |
+
+出现第二台设备时，三个 Tab 顶部都会多一排设备 chip（「全部设备」+ 每台设备，显示设备名），
+只看某一台；只有一台设备时不显示。设置页「已接入设备」还能看到每台电脑的在线状态、
+会话数、待执行 / 执行中命令，并直接设为默认下发目标（`GET /api/v1/devices`，ADR-47）。
 
 实现上的取舍写在 `app/README.md` 与 `docs/decisions.md` ADR-14。
 两个必须知道的坑：**下发命令必须是 app 角色**（device token 会 403）；
@@ -134,11 +149,12 @@ flutter build apk --release
 ## 快速开始（本机）
 
 ```powershell
-# 1. 配置推送（已生成默认值）
-notepad $env:USERPROFILE\.cline\notify.config.json
+# 1. 起 bridge（可选：先配 hook 通知）
+cd <仓库>\bridge
+copy config.example.json config.json
+notepad config.json                # hubUrl / deviceId / deviceToken
 
 # 2. 起 bridge
-cd C:\Users\alice\.cline\data\workspaces\chat\cline-hub\bridge
 node src/index.js
 
 # 3. 自检
@@ -148,7 +164,7 @@ curl http://127.0.0.1:3210/health
 ### Hub 本机联调
 
 ```powershell
-cd C:\Users\alice\.cline\data\workspaces\chat\cline-hub\server
+cd <仓库>\server
 copy .env.example .env      # 填 HUB_DATABASE_URL / HUB_ADMIN_TOKEN
 npm install
 npm run migrate
@@ -160,8 +176,9 @@ Start-Process -WindowStyle Hidden node -ArgumentList 'src/index.js' -WorkingDire
 curl http://127.0.0.1:3100/api/v1/health
 ```
 
-把打印出的 token 分别写进 `bridge/config.json`（`hubUrl` / `deviceId` / `deviceToken`）和 App 设置页。
-接口约定见 [`docs/api.md`](docs/api.md)，上线步骤见 [`deploy/README.md`](deploy/README.md)。
+把打印出的 token 分别写进 `<仓库>\bridge\config.json`（`hubUrl` / `deviceId` / `deviceToken`）
+和 App 设置页。接口约定见 [`docs/api.md`](docs/api.md)；从零部署整套（含手机公网访问）见
+[`docs/self-host.md`](docs/self-host.md)，上线步骤与踩坑见 [`deploy/README.md`](deploy/README.md)。
 
 ## 远程命令（bridge 执行器）
 
@@ -288,6 +305,24 @@ sh.Run "node ""C:\Users\alice\.cline\data\workspaces\chat\cline-hub\bridge\src\i
 > 想换成计划任务得用**管理员** PowerShell：
 > `schtasks /create /tn ClineBridge /sc onlogon /rl limited /f /tr "node C:\Users\alice\.cline\data\workspaces\chat\cline-hub\bridge\src\index.js"`
 > （普通权限会 `ERROR: Access is denied.`）
+
+### 手工重发（补旧会话 / 补项目名 / 补全文）
+
+采集规则升级后，**静止的老会话不会自己重发**（水位线以下没人碰）。不用重启 bridge，
+点名推一遍就行——走的是和正常上报完全相同的接口与字段：
+
+```powershell
+cd bridge
+npm run resend -- --missing-project --dry-run   # 先看 Hub 上哪些会话 project* 是空的
+npm run resend -- --missing-project             # 重发这些会话（快照 + 消息）
+npm run resend -- --session 1793544082344_zpisz # 只推这一条
+npm run resend -- --recent 20 --no-messages     # 最近 20 条只补快照（终稿 / 用量 / project*）
+```
+
+- 服务端按 `sessionId` / `message_id` upsert，重复跑不会产生重复气泡。
+- 只能重发**本机 `sessions.db` 还有记录**的会话；Cline 清理过的会报「跳过」。
+- `--device <id>` + `--token <token>`：以另一台设备的身份补历史（多设备时用），
+  `--data-dir <dir>` 指向另一份 Cline 数据目录。
 
 ## 安全基线（2026-11-01 事故复盘后）
 

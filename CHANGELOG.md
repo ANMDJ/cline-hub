@@ -27,12 +27,31 @@
 - 会话消息上限 2000 → 20000 字（迁移 004）、`ask_question` 选项（迁移 005）、
   列表预览在服务端洗成纯文本平面。
 - App 自更新：`GET /api/v1/app/latest` 清单 + Caddy 静态 APK 出口。
+- **设备列表 `GET /api/v1/devices`（ADR-47）**：只返回电脑端（bridge），带 `lastSeenAt` /
+  会话数 / 待执行 / 执行中 / 最近会话时间；`device` token 只看自己，`app` / `admin` 看全部。
+  App 用它渲染「已接入设备」卡片与带名字的设备 chip。
+- **接入文档**：`docs/self-host.md`（从零自托管：服务器 → 电脑 → 手机闭环）、
+  `docs/new-device.md`（第二台电脑）、`bridge/README.md`。
+- **手工重发**：`cd bridge; npm run resend -- --missing-project`（或 `--session <id>` / `--recent <n>`），
+  把会话快照 + 消息流重推一遍；服务端按 id upsert，不会产生重复气泡。支持 `--device` / `--token`
+  以另一台设备的身份补历史，`--dry-run` 只列出要发什么。
 
 ### 修复
 
+- 工作区页同一个项目显示成两组（`C:\...\cline-hub` 与 `C:/...\cline-hub`）：Hub 写入 / 读取
+  统一路径写法，App 分组键按「分隔符无关」比较；`knownWorkspaces` 候选也去重（ADR-44）。
 - 手机发 `act` 却按 `plan` 执行：bridge 用 `CLINE_GLOBAL_SETTINGS_PATH` 钉死模式。
 - 反代缓冲导致 SSE 事件延迟：Caddy 加 `flush_interval -1`。
 - 命令卡「执行中」：bridge 重启后的启动对账 + 每 60 秒 `reconcile()`。
+
+## App 1.1.5 · 2026-11-02
+
+- 新增：设置页「已接入设备」列表——每台电脑的在线状态、会话数、待执行 / 执行中命令，
+  可直接设为默认设备（读 `GET /api/v1/devices`）。
+- 新增：多设备筛选 chip 显示设备名（不再只有 id）；新接入、还没产生数据的电脑也会立刻出现。
+- 修复：命令列表只显示设备名、看不到项目目录——卡片元信息改成「项目目录 · 设备 · 时间 · 耗时」，
+  详情页同样带项目目录，完整路径仍在指令下面单独一行。
+- 修复：执行中的命令「耗时」一直是同一个数字——现在每秒重算，命令结束自动停表。
 
 ## App 1.1.4 · 2026-11-02
 

@@ -7,11 +7,13 @@
 | 你的处境 | 读这篇 | 大约耗时 |
 |---|---|---|
 | 刚打开仓库，不知道要干什么 | [`status.md`](status.md) §0「现在要做什么」 | 2 分钟 |
+| 想把整套东西从零部署起来（手机 + 电脑闭环） | [`self-host.md`](self-host.md) | 30 分钟 |
+| 要给现有 Hub 加第二台 / 第三台电脑 | [`new-device.md`](new-device.md) | 15 分钟 |
 | 想知道现在线上是什么状态 | [`status.md`](status.md) §1 基线快照 | 1 分钟 |
 | 想知道某个版本改了什么 | [`../CHANGELOG.md`](../CHANGELOG.md) | 2 分钟 |
 | 要改 Hub 接口 / 写客户端 | [`api.md`](api.md) | 10 分钟 |
 | 要改 bridge 的采集或执行 | [`bridge-notes.md`](bridge-notes.md) + `../bridge/README.md` | 15 分钟 |
-| 想推翻某个设计 | [`decisions.md`](decisions.md)（43 条 ADR，只追加） | 按条查 |
+| 想推翻某个设计 | [`decisions.md`](decisions.md)（47 条 ADR，只追加） | 按条查 |
 | 要重启 / 停掉 bridge | [`interruptions.md`](interruptions.md)（先停任务、再杀进程） | 3 分钟 |
 | 换服务器 / 从零重建 | [`server-prep.md`](server-prep.md) + `../deploy/README.md` | 30 分钟 |
 | 改手机端 UI | `../app/README.md` | 10 分钟 |
@@ -33,6 +35,8 @@
 | [`status.md`](status.md) | 现状、待办、坑、自检、变更日志 |
 | [`../CHANGELOG.md`](../CHANGELOG.md) | 版本更新日志（按版本，面向变更本身） |
 | [`api.md`](api.md) | Hub v1 契约（鉴权 / 错误码 / 请求响应） |
+| [`self-host.md`](self-host.md) | 从零自托管：服务器 / 手机 / 多台电脑的完整闭环 |
+| [`new-device.md`](new-device.md) | 接入第二台 Windows（bridge + device token） |
 | [`bridge-notes.md`](bridge-notes.md) | Windows 端实测：数据位置、`messages.json` 结构、安全排查 |
 | [`decisions.md`](decisions.md) | ADR：为什么这么做 |
 | [`interruptions.md`](interruptions.md) | 主动中断记录：为什么杀 bridge / 影响了谁 / 怎么恢复 |
