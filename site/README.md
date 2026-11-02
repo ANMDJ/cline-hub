@@ -71,10 +71,11 @@ sudo cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.bak-$(date +%s)
 sudo cp /tmp/Caddyfile.new /etc/caddy/Caddyfile && sudo systemctl reload caddy
 ```
 
-## 发布前要改的一处
+## 仓库地址（已填好）
 
-1. `index.html` 里 4 个 `data-todo="repo"` 的链接：把 `https://github.com/` 换成真实仓库地址
-   （没换也不会跳错，点击会提示「地址还没填」）。
+`index.html` 里 3 处外链（顶栏 GitHub、CTA「看源码」、页脚 GitHub）已指向
+`https://github.com/ANMDJ/cline-hub`；`app.js` 里 `[data-todo="repo"]` 的「地址还没填」提示保留，
+fork 后若改回 `https://github.com/` 占位，点击仍会提示而不是跳错地方。
 
 许可证已经定了：仓库根目录的 `LICENSE` 是 MIT，页脚文案与 `server/` / `bridge/` 的
 `package.json` 都已对齐，换协议时这几处要一起改。

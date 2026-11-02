@@ -101,8 +101,8 @@ ssh ubuntu@82.157.153.22 'sudo tar -xzf /tmp/site.tgz -C /var/www/cline-hub \
 ```
 
 自检：`node site/check-site.mjs`（标签配对 / CSS 括号 / 引用文件 / 锚点 id）。
-发布前把 `site/index.html` 里 4 个 `data-todo="repo"` 的 `<a href="https://github.com/">` 换成真实仓库地址
-（仓库现在在 `https://github.com/ANMDJ/cline-hub`，**还是私有**；转公开后再替换，否则站点上点开是 404）。
+仓库地址已填好：`site/index.html` 里 3 处外链指向 `https://github.com/ANMDJ/cline-hub`（公开仓库，MIT）。
+fork 后换自己的仓库时，记得 `site/app.js` 里 `[data-todo="repo"]` 的提示逻辑只兜占位的情况。
 运行手册见 `site/README.md` 与 `deploy/README.md` §12。
 
 

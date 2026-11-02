@@ -71,6 +71,8 @@
   }
 
   /* ── 3. 仓库链接占位提示 ─────────────────────────────── */
+  /* 仓库地址已填好（index.html 三处外链直指 ANMDJ/cline-hub）；这段只兜住
+     fork 之后又把地址改回 data-todo 占位的情况，点击时提示而不是跳到 github.com 首页。 */
   var todoLinks = document.querySelectorAll('[data-todo="repo"]')
   todoLinks.forEach(function (a) {
     a.title = '仓库地址待填写：把 data-todo 链接换成真实地址即可'
