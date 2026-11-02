@@ -3,8 +3,8 @@
 /// 为什么不引 `package_info_plus`：这个客户端刻意只保留 http / shared_preferences
 /// 两个依赖，版本号一年也就改几次，手工同步比多一个插件更划算。
 /// 发版脚本 `scripts/release-apk.mjs` 会读 `pubspec.yaml` 并校验这里是否一致。
-const String kAppVersion = '1.1.4';
-const int kAppBuild = 6;
+const String kAppVersion = '1.1.5';
+const int kAppBuild = 7;
 
 class ChangelogEntry {
   const ChangelogEntry(this.version, this.date, this.items);
@@ -15,6 +15,11 @@ class ChangelogEntry {
 }
 
 const List<ChangelogEntry> kChangelog = <ChangelogEntry>[
+  ChangelogEntry('1.1.5', '2026-11-02', <String>[
+    '新增：设置页「已接入设备」列表——每台电脑的在线状态、会话数、待执行 / 执行中命令，可直接设为默认设备',
+    '新增：多设备筛选 chip 显示设备名（不再只有 id），新接入、还没产生数据的电脑也会立刻出现',
+    '优化：命令卡片同时显示项目目录、相对时间与实时耗时，执行中每秒刷新',
+  ]),
   ChangelogEntry('1.1.4', '2026-11-02', <String>[
     '新增：命令详情可以「取消命令」——排队中的立即取消，执行中的由 bridge 停掉进程',
     '新增：会话正文与结果按 Markdown 渲染（标题 / 列表 / 代码块 / 表格），命令输出仍保持终端原文',

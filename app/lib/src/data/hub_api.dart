@@ -74,6 +74,10 @@ abstract class HubApi {
     String? deviceId,
   });
 
+  /// Hub 上所有电脑端（bridge）的概览：名字、在线时间、会话 / 命令计数。
+  /// device token 只会拿到自己，app/admin 拿全部（见 docs/api.md）。
+  Future<List<DeviceItem>> devices();
+
   Future<CommandItem> sendCommand({
     required String deviceId,
     required String prompt,
@@ -260,6 +264,12 @@ class HttpHubApi implements HubApi {
       },
     );
     return _items(json).map(CommandItem.fromJson).toList(growable: false);
+  }
+
+  @override
+  Future<List<DeviceItem>> devices() async {
+    final json = await _request('GET', '/api/v1/devices');
+    return _items(json).map(DeviceItem.fromJson).toList(growable: false);
   }
 
   @override

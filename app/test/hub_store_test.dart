@@ -168,6 +168,44 @@ void main() {
     store.dispose();
   });
 
+  test('同一个目录的正/反斜杠写法在分组与候选里都只算一个', () async {
+    final settings = await makeSettings();
+    final fake = FakeHubApi(
+      sessionItems: <SessionItem>[
+        SessionItem(
+          deviceId: 'localone',
+          sessionId: 's1',
+          workspace: 'cline-hub',
+          workspaceRoot:
+              r'C:\Users\alice\.cline\data\workspaces\chat\cline-hub',
+          project: 'cline-hub',
+          projectRoot: r'C:\Users\alice\.cline\data\workspaces\chat\cline-hub',
+          projectKind: 'project',
+          status: 'completed',
+          sortAt: DateTime(2026, 11, 2, 9),
+        ),
+        // 旧数据：项目识别上线前采集，project 三列全空，路径是 cline CLI 写的正斜杠
+        SessionItem(
+          deviceId: 'localone',
+          sessionId: 's2',
+          workspace: 'cline-hub',
+          workspaceRoot: 'C:/Users/alice/.cline/data/workspaces/chat/cline-hub',
+          status: 'completed',
+          sortAt: DateTime(2026, 11, 1, 9),
+        ),
+      ],
+    );
+    final store = HubStore(settings: settings, apiFactory: (_) => fake);
+    await store.start();
+    await store.refreshWorkspaceOverview(force: true);
+
+    expect(store.sessionGroups, hasLength(1), reason: '同一个项目只应有一组');
+    expect(store.sessionGroups.single.items, hasLength(2));
+    expect(store.sessionGroups.single.label, 'cline-hub');
+    expect(store.knownWorkspaces, hasLength(1), reason: '候选里不该出现两个写法');
+    store.dispose();
+  });
+
   test('没有设备时可读的错误，而不是空指针', () async {
     final settings = await makeSettings(deviceId: '');
     final fake = FakeHubApi();
@@ -215,7 +253,8 @@ void main() {
 
   test('knownWorkspaces 只收绝对路径，按出现次数降序去重', () async {
     final settings = await makeSettings();
-    const chatRoot = r'C:\Users\alice\.cline\data\workspaces\chat\kids_points_app';
+    const chatRoot =
+        r'C:\Users\alice\.cline\data\workspaces\chat\kids_points_app';
     final fake = FakeHubApi(
       sessionItems: [
         SessionItem(
@@ -254,13 +293,7 @@ void main() {
           workspace: 'other', // 相对名，丢掉
         ),
       ],
-      hookItems: [
-        HookItem(
-          id: 1,
-          event: 'agent_end',
-          workspace: chatRoot,
-        ),
-      ],
+      hookItems: [HookItem(id: 1, event: 'agent_end', workspace: chatRoot)],
     );
     final store = HubStore(settings: settings, apiFactory: (_) => fake);
     await store.start();
@@ -332,8 +365,94 @@ void main() {
     expect(groups.map((group) => group.label), ['b', 'a', '未标注工作区']);
     expect(groups.first.items.map((item) => item.sessionId), ['s1', 's3']);
     expect(groups.first.path, r'C:\work\b');
-    expect(groups.first.key, r'c:\work\b');
+    expect(groups.first.key, 'c:/work/b');
     expect(groups.first.items, hasLength(2));
+    store.dispose();
+  });
+
+  test('设备过滤只影响可见列表，原始全量不变', () async {
+    final settings = await makeSettings(deviceId: 'localone');
+    final fake = FakeHubApi(
+      sessionItems: [
+        SessionItem(
+          deviceId: 'localone',
+          sessionId: 's1',
+          workspace: 'cline-hub',
+          sortAt: DateTime(2026, 11, 2, 9),
+        ),
+        SessionItem(
+          deviceId: 'laptop',
+          sessionId: 's2',
+          workspace: 'kids_points_app',
+          sortAt: DateTime(2026, 11, 2, 8),
+        ),
+        SessionItem(
+          deviceId: 'localone',
+          sessionId: 's3',
+          workspace: 'cline-hub',
+          sortAt: DateTime(2026, 11, 2, 7),
+        ),
+      ],
+      commandItems: const [
+        CommandItem(
+          id: 'cmd_1',
+          deviceId: 'localone',
+          prompt: 'dir',
+          mode: 'plan',
+          status: 'done',
+        ),
+        CommandItem(
+          id: 'cmd_2',
+          deviceId: 'laptop',
+          prompt: 'npm test',
+          mode: 'act',
+          status: 'running',
+        ),
+      ],
+      hookItems: const [
+        HookItem(id: 1, deviceId: 'localone', event: 'session_done'),
+        HookItem(id: 2, deviceId: 'laptop', event: 'session_done'),
+      ],
+    );
+    final store = HubStore(settings: settings, apiFactory: (_) => fake);
+    await store.start();
+
+    expect(store.knownDevices, ['laptop', 'localone']); // 设置里那台也一直在
+    expect(store.visibleSessions, hasLength(3)); // 默认不过滤
+
+    store.setDeviceFilter('laptop');
+    expect(store.visibleSessions.map((item) => item.sessionId), ['s2']);
+    expect(store.visibleCommands.map((item) => item.id), ['cmd_2']);
+    expect(store.visibleHooks.map((item) => item.id), [2]);
+    // 全量列表不受影响：上拉分页 / 通知还要用它
+    expect(store.sessions, hasLength(3));
+    expect(store.commands, hasLength(2));
+
+    store.setDeviceFilter(null);
+    expect(store.visibleSessions, hasLength(3));
+    expect(store.deviceFilter, isNull);
+    store.dispose();
+  });
+
+  test('设备列表：没有数据的新设备也会出现在 chip 里，显示名优先用 name', () async {
+    final settings = await makeSettings();
+    final fake = FakeHubApi(
+      deviceItems: const [
+        DeviceItem(id: 'localone', name: 'LocalOne-Windows'),
+        DeviceItem(id: 'laptop', name: '办公本'),
+      ],
+    );
+    final store = HubStore(settings: settings, apiFactory: (_) => fake);
+
+    await store.start();
+
+    expect(store.devices, hasLength(2));
+    expect(store.loadingDevices, isFalse);
+    expect(store.knownDevices, ['laptop', 'localone']);
+    expect(store.deviceLabel('laptop'), '办公本');
+    expect(store.deviceLabel('localone'), 'LocalOne-Windows');
+    // 老 Hub / 已删除设备：退回 id，不要让 chip 变成空白
+    expect(store.deviceLabel('unknown'), 'unknown');
     store.dispose();
   });
 }

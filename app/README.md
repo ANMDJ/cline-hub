@@ -137,6 +137,9 @@ flutter build apk --release     # → build/app/outputs/flutter-apk/app-release.
 SSE 四种事件都用上了：`session`（去抖 900ms 后刷新列表）、`hook`（插到动态顶部，按 id 去重）、
 `command` / `command.update`（按 id 就地替换命令状态）。
 
+工作区页的分组键会抹平路径写法差异（`C:\a` / `C:/a` / 重复或尾部斜杠 / 大小写），
+同一个目录只显示一组；`HubStore._pathKey()` 只用于比较，展示值仍是服务端原样（ADR-44）。
+
 ## 系统通知（1.1.2 起）
 
 | 触发 | 来源 | 说明 |
@@ -165,12 +168,18 @@ SSE 四种事件都用上了：`session`（去抖 900ms 后刷新列表）、`ho
   避免复活在旧数据上。
 - **token 明文存 SharedPreferences**：自建单人使用，换手机不用重新授权。
   真要多人，就得换成登录态 + 服务端会话，那是另一个项目。
-- **`usesCleartextTraffic="true"`**：因为现在入口是 `http://IP/_h/<前缀>`（域名在等备案）。
-  备案通过、切到 HTTPS 后应当把这个开关删掉。
+- **`usesCleartextTraffic="true"`**：方便局域网 / 自托管用户直接用 `http://<IP>:3100` 起步；
+  公网入口当前是 `https://hub.littlewish.top:8443`。只用 HTTPS 的话可以删掉这个开关。
 - **命令是「下发」不是「终端」**：bridge 的 `commands.runner` 决定怎么执行 —— `cline`（仓库里的取值）
   会把这句话交给 Cline CLI，在目标 workspace 里**新建一个会话**（`cline -c <workspace> -p "..."`）；
   续会话（`--id`）要求 TTY，无头 bridge 用不了，所以 App 的「继续对话」实际是新开会话；
   只有 `shell` 才是「prompt 当脚本跑」。App 侧不用感知这个差别，`mode` 一直是 `plan` / `act`。
+- **耗时靠自己走表**：`CommandItem.duration` 是 getter，但列表只在数据变化时重建，SSE 空闲时
+  秒数会停住。`ElapsedText` 在「执行中」时挂一个 1 秒 `Timer.periodic`，翻成终态立刻停。
+- **设备过滤在本地做**：`HubStore.visible*` 在已加载的 50–60 条上筛，不重新请求（分页游标会乱）。
+  `DeviceFilterBar` 只在已知设备 ≥ 2 时渲染，单设备下界面与以前完全一样。
+  设备候选来自 `GET /api/v1/devices`（ADR-47），并合并「设置里的 deviceId / 已加载数据」兜底；
+  chip 显示 `clients.name`，设置页「已接入设备」卡片展示在线状态与计数。
 
 
 ## Hub 侧注意
@@ -196,6 +205,7 @@ SSE 四种事件都用上了：`session`（去抖 900ms 后刷新列表）、`ho
 | Markdown 渲染 | `ui/widgets.dart` 的 `markdownSheetOf` / `MessageText` | 1.1.4 起会话正文 / 问题 / 结果按 Markdown 渲染（`flutter_markdown_plus`）；**命令输出不解析**（终端原文）。长文本折叠态仍是纯文本预览，展开页才渲染 |
 | 取消命令 | `ui/commands_page.dart` 的 `_CancelCommandButton` | 只有 `pending/delivered/running/cancelling` 显示；二次确认后 `POST /commands/:id/cancel`；排队中立即 `cancelled`，执行中先 `cancelling`，终态由 SSE 推回 |
 | 版本与更新 | `ui/settings_page.dart` | 版本号来自 `data/app_version.dart`；「检查更新」读 `GET /api/v1/app/latest`。有新版本时给两个入口：**「打开下载页」**（`data/link_launcher.dart` → 原生 `ACTION_VIEW`，直接用系统浏览器打开 APK 地址）与「复制链接」；打不开浏览器时自动退回复制 |
+| 已接入设备 | `ui/settings_page.dart` | 读 `GET /api/v1/devices`：在线（2 分钟内有 `lastSeenAt`）/ 离线、会话数、待执行 / 执行中、最近上报；「设为默认」直接改默认下发设备 |
 
 ### 发版流程
 

@@ -10,6 +10,7 @@ class FakeHubApi implements HubApi {
     this.commandItems = const <CommandItem>[],
     this.hookItems = const <HookItem>[],
     this.messageItems = const <SessionMessage>[],
+    this.deviceItems = const <DeviceItem>[],
     this.nextCursor,
     this.detail,
   });
@@ -18,6 +19,7 @@ class FakeHubApi implements HubApi {
   List<CommandItem> commandItems;
   List<HookItem> hookItems;
   List<SessionMessage> messageItems;
+  List<DeviceItem> deviceItems;
   String? nextCursor;
   SessionDetail? detail;
 
@@ -101,6 +103,9 @@ class FakeHubApi implements HubApi {
     String? status,
     String? deviceId,
   }) async => commandItems;
+
+  @override
+  Future<List<DeviceItem>> devices() async => deviceItems;
 
   @override
   Future<CommandItem> sendCommand({

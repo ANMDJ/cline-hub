@@ -19,7 +19,18 @@ class ActivityPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (store.hooks.isEmpty) {
+    return Column(
+      children: [
+        // 多设备时才出现（只有一台时不占空间）。
+        DeviceFilterBar(store: store),
+        Expanded(child: _buildList()),
+      ],
+    );
+  }
+
+  Widget _buildList() {
+    final items = store.visibleHooks;
+    if (items.isEmpty) {
       if (store.loadingHooks) {
         return const Center(child: CircularProgressIndicator(strokeWidth: 2));
       }
@@ -27,6 +38,17 @@ class ActivityPage extends StatelessWidget {
         return ErrorView(
           message: store.hooksError!,
           onRetry: store.refreshHooks,
+        );
+      }
+      if (store.hooks.isNotEmpty) {
+        return EmptyState(
+          icon: Icons.filter_alt_off_outlined,
+          title: '设备 ${store.deviceFilter} 还没有事件',
+          description: '切回「全部设备」能看到其它机器上的事件。',
+          action: OutlinedButton(
+            onPressed: () => store.setDeviceFilter(null),
+            child: const Text('查看全部设备'),
+          ),
         );
       }
       return const EmptyState(
@@ -43,11 +65,11 @@ class ActivityPage extends StatelessWidget {
       child: ListView.separated(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(14, 8, 14, 96),
-        itemCount: store.hooks.length + 1,
+        itemCount: items.length + 1,
         separatorBuilder: (_, _) => const SizedBox(height: 10),
         itemBuilder: (context, index) {
-          if (index == store.hooks.length) return _buildFooter(context);
-          return _HookTile(item: store.hooks[index], store: store);
+          if (index == items.length) return _buildFooter(context);
+          return _HookTile(item: items[index], store: store);
         },
       ),
     );
@@ -111,7 +133,11 @@ class _HookTile extends StatelessWidget {
       );
     }
     if (lower.contains('start') || lower.contains('begin')) {
-      return const _EventStyle('开始执行', kInfo, Icons.play_circle_outline_rounded);
+      return const _EventStyle(
+        '开始执行',
+        kInfo,
+        Icons.play_circle_outline_rounded,
+      );
     }
     return _EventStyle(event, kInfo, Icons.notifications_none_rounded);
   }
@@ -123,7 +149,10 @@ class _HookTile extends StatelessWidget {
       MaterialPageRoute<void>(
         builder: (_) => SessionDetailPage(
           store: store,
-          item: SessionItem(deviceId: item.deviceId ?? '', sessionId: sessionId),
+          item: SessionItem(
+            deviceId: item.deviceId ?? '',
+            sessionId: sessionId,
+          ),
         ),
       ),
     );

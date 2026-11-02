@@ -34,4 +34,24 @@ void main() {
       );
     });
   });
+
+  group('workspaceLabel', () {
+    test('正斜杠 / 反斜杠 / 尾斜杠都取到同一段', () {
+      expect(
+        workspaceLabel(r'C:\Users\alice\projects\kids_points_app'),
+        'kids_points_app',
+      );
+      expect(
+        workspaceLabel('C:/Users/alice/projects/kids_points_app/'),
+        'kids_points_app',
+      );
+      expect(workspaceLabel('  D:\\work\\cline-hub//  '), 'cline-hub');
+    });
+
+    test('空值与空串给占位符', () {
+      expect(workspaceLabel(null), '未指定目录');
+      expect(workspaceLabel('   '), '未指定目录');
+      expect(workspaceLabel('', fallback: '-'), '-');
+    });
+  });
 }

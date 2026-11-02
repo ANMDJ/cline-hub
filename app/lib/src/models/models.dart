@@ -457,6 +457,68 @@ class SessionMessage {
   String get key => messageId.isNotEmpty ? messageId : '$seq-$role-$kind';
 }
 
+/// 一台接入 Hub 的电脑（bridge）。
+///
+/// `GET /api/v1/devices` 只返回 `role=device` 的 client；手机自己的 app client
+/// 不在里面，所以这个列表可以直接拿来当「下发目标 / 筛选chip」的候选。
+class DeviceItem {
+  const DeviceItem({
+    required this.id,
+    this.name,
+    this.createdAt,
+    this.lastSeenAt,
+    this.sessionCount = 0,
+    this.commandCount = 0,
+    this.pendingCommands = 0,
+    this.runningCommands = 0,
+    this.lastSessionAt,
+    this.lastCommandAt,
+  });
+
+  factory DeviceItem.fromJson(Map<String, dynamic> json) => DeviceItem(
+    id: _str(json['id']) ?? '',
+    name: _str(json['name']),
+    createdAt: _dt(json['createdAt']),
+    lastSeenAt: _dt(json['lastSeenAt']),
+    sessionCount: _int(json['sessionCount']) ?? 0,
+    commandCount: _int(json['commandCount']) ?? 0,
+    pendingCommands: _int(json['pendingCommands']) ?? 0,
+    runningCommands: _int(json['runningCommands']) ?? 0,
+    lastSessionAt: _dt(json['lastSessionAt']),
+    lastCommandAt: _dt(json['lastCommandAt']),
+  );
+
+  final String id;
+  final String? name;
+  final DateTime? createdAt;
+
+  /// bridge 每次请求都会 touch，只是 60 秒节流一次；用它判断「在线」足够。
+  final DateTime? lastSeenAt;
+
+  final int sessionCount;
+  final int commandCount;
+  final int pendingCommands;
+  final int runningCommands;
+  final DateTime? lastSessionAt;
+  final DateTime? lastCommandAt;
+
+  /// 展示名：没起名字（name == id）时直接用 id。
+  String get label {
+    final value = (name ?? '').trim();
+    return value.isEmpty || value == id ? id : value;
+  }
+
+  /// 2 分钟内有上报就算在线——bridge 默认 5 秒轮询一次命令。
+  bool isOnlineAt(DateTime now, {Duration window = const Duration(minutes: 2)}) {
+    final seen = lastSeenAt;
+    if (seen == null) return false;
+    final diff = now.difference(seen);
+    return !diff.isNegative && diff <= window;
+  }
+
+  bool get isOnline => isOnlineAt(DateTime.now());
+}
+
 class HealthInfo {
   const HealthInfo({
     required this.ok,

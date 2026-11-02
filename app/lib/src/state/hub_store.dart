@@ -74,6 +74,12 @@ class HubStore extends ChangeNotifier {
   /// 工作区页整批拉取的条数（= 服务端 `limitFrom(url, 50, 200)` 的上限）。
   static const int workspaceOverviewLimit = 200;
 
+  // ----------------------------------------------------------------- devices
+  /// Hub 上所有电脑端（bridge）。用来渲染设备列表卡片与筛选 chip 的显示名。
+  List<DeviceItem> devices = <DeviceItem>[];
+  bool loadingDevices = false;
+  String? devicesError;
+
   // ---------------------------------------------------------------- commands
   List<CommandItem> commands = <CommandItem>[];
   bool loadingCommands = false;
@@ -121,15 +127,25 @@ class HubStore extends ChangeNotifier {
     'session_cancelled',
   };
 
-  /// 已知设备 id：优先设置里的，其次从已有数据里猜。
+  /// 已知设备 id：优先设置里的，其次 Hub 的设备列表，最后从已有数据里兜底猜
+  /// （老版本 Hub 没有 `/api/v1/devices` 时，chip 仍然能用）。
   List<String> get knownDevices {
     final ids = <String>{
       if (settings.deviceId.isNotEmpty) settings.deviceId,
+      ...devices.map((item) => item.id),
       ...commands.map((item) => item.deviceId),
       ...sessions.map((item) => item.deviceId),
       ...hooks.map((item) => item.deviceId ?? ''),
     }..removeWhere((id) => id.isEmpty);
     return ids.toList()..sort();
+  }
+
+  /// 设备 chip 的显示名：能查到就显示 `name`，否则退回 id。
+  String deviceLabel(String deviceId) {
+    for (final item in devices) {
+      if (item.id == deviceId) return item.label;
+    }
+    return deviceId;
   }
 
   String get activeDeviceId {
@@ -138,6 +154,43 @@ class HubStore extends ChangeNotifier {
     return known.isEmpty ? '' : known.first;
   }
 
+  /// 设备过滤（`null` = 全部设备）。只影响列表展示，不改请求参数。
+  String? _deviceFilter;
+
+  String? get deviceFilter => _deviceFilter;
+
+  void setDeviceFilter(String? deviceId) {
+    final next = (deviceId ?? '').trim().isEmpty ? null : deviceId!.trim();
+    if (next == _deviceFilter) return;
+    _deviceFilter = next;
+    notifyListeners();
+  }
+
+  bool _onDevice(String deviceId) =>
+      _deviceFilter == null || deviceId == _deviceFilter;
+
+  /// 当前设备过滤下的会话 / 命令 / 动态。
+  ///
+  /// 过滤放在本地是有意的：服务端一次只给 50–60 条，多打一次请求换不来什么，
+  /// 反而要和分页游标配合。`sessions` / `commands` / `hooks` 仍是全量。
+  List<SessionItem> get visibleSessions => _deviceFilter == null
+      ? sessions
+      : sessions
+            .where((item) => _onDevice(item.deviceId))
+            .toList(growable: false);
+
+  List<CommandItem> get visibleCommands => _deviceFilter == null
+      ? commands
+      : commands
+            .where((item) => _onDevice(item.deviceId))
+            .toList(growable: false);
+
+  List<HookItem> get visibleHooks => _deviceFilter == null
+      ? hooks
+      : hooks
+            .where((item) => _onDevice(item.deviceId ?? ''))
+            .toList(growable: false);
+
   /// 下发面板「工作目录」的候选：会话 / 命令 / 动态里出现过的**绝对路径**。
   ///
   /// 只收绝对路径是因为 bridge 的 `resolveWorkspace()` 用 `fs.existsSync()`
@@ -145,11 +198,16 @@ class HubStore extends ChangeNotifier {
   /// 必然落空，会静默退回 `commands.defaultWorkspace`，界面上给了反而误导。
   /// 按出现次数降序、去重，最多 6 条 —— 手机屏幕放不下更多。
   List<String> get knownWorkspaces {
+    // 同一个目录的两种写法（`C:\a` / `C:/a`）只留一个 chip：按归一化后的键计数，
+    // 展示值保留第一次见到的写法（服务端入库时已统一成反斜杠）。
     final counts = <String, int>{};
+    final labels = <String, String>{};
     void bump(String? raw) {
       final value = (raw ?? '').trim();
       if (!_looksAbsolute(value)) return;
-      counts[value] = (counts[value] ?? 0) + 1;
+      final key = _pathKey(value);
+      labels.putIfAbsent(key, () => value);
+      counts[key] = (counts[key] ?? 0) + 1;
     }
 
     for (final item in sessions) {
@@ -168,15 +226,32 @@ class HubStore extends ChangeNotifier {
             ? a.key.compareTo(b.key)
             : b.value.compareTo(a.value),
       );
-    return <String>[for (final entry in ranked.take(6)) entry.key];
+    return <String>[
+      for (final entry in ranked.take(6)) labels[entry.key] ?? entry.key,
+    ];
   }
 
   static final RegExp _windowsPath = RegExp(r'^[a-zA-Z]:[\\/]');
   static bool _looksAbsolute(String value) =>
       value.startsWith('/') || _windowsPath.hasMatch(value);
 
+  /// 路径比较键：`C:\a\b`、`C:/a/b`、`C:\a\b\` 都归一成 `c:/a/b`。
+  ///
+  /// 只用于「是不是同一个目录」的判断（分组 / 去重），不改界面上的展示值。
+  /// cline CLI 写 `sessions.db` 用正斜杠、bridge 白名单是人手填的反斜杠，
+  /// 不归一化时同一个项目会显示成两组（2026-11-02 实测 `...\cline-hub` 31 条
+  /// 与 `.../cline-hub` 1 条并排）。
+  static String _pathKey(String value) {
+    final slashed = value.trim().replaceAll('\\', '/');
+    final collapsed = slashed.replaceAll(RegExp(r'/+'), '/');
+    final trimmed = collapsed.length > 1 && collapsed.endsWith('/')
+        ? collapsed.substring(0, collapsed.length - 1)
+        : collapsed;
+    return trimmed.toLowerCase();
+  }
+
   /// 会话按工作目录分组：组顺序跟每组第一条会话走（列表本身按时间倒序），
-  /// 组内保持原顺序。同一个目录的不同写法（大小写差异）会并成一组。
+  /// 组内保持原顺序。同一个目录的不同写法（大小写 / 分隔符 / 尾斜杠）会并成一组。
   List<SessionGroup> get sessionGroups {
     // 工作区页优先用整批数据；还没拉到（或拉失败）时退回主列表已加载的部分。
     final source = workspaceSessions.isNotEmpty ? workspaceSessions : sessions;
@@ -211,13 +286,16 @@ class HubStore extends ChangeNotifier {
     final root = (item.projectRoot ?? '').trim();
     if (kind.isNotEmpty || project.isNotEmpty) {
       if (kind == 'loose' || project.isEmpty) return '__loose__';
-      return (root.isNotEmpty ? root : 'project:$project').toLowerCase();
+      return root.isNotEmpty
+          ? _pathKey(root)
+          : 'project:${project.toLowerCase()}';
     }
-    // 旧数据（还没回填 project）：保持原来的按绝对路径分组
+    // 旧数据（还没回填 project）：保持按绝对路径分组，但同样走路径键，
+    // 否则 `C:\...\cline-hub` 与 `C:/...\cline-hub` 会并排显示两组。
     final path = _absoluteWorkspace(item);
-    if (path != null) return path.toLowerCase();
+    if (path != null) return _pathKey(path);
     final name = (item.workspace ?? '').trim();
-    return name.isEmpty ? '' : 'name:$name';
+    return name.isEmpty ? '' : 'name:${name.toLowerCase()}';
   }
 
   static String _groupLabel(SessionItem item) {
@@ -339,6 +417,26 @@ class HubStore extends ChangeNotifier {
     query = next;
     _sessionCursor = null;
     await refreshSessions();
+  }
+
+  // -------------------------------------------------------------- devices API
+  Future<void> refreshDevices() async {
+    if (_disposed || loadingDevices) return;
+    loadingDevices = true;
+    devicesError = null;
+    notifyListeners();
+    try {
+      devices = List<DeviceItem>.of(await api.devices());
+    } on ApiException catch (error) {
+      devicesError = error.friendly;
+    } catch (error) {
+      devicesError = '$error';
+    } finally {
+      if (!_disposed) {
+        loadingDevices = false;
+        notifyListeners();
+      }
+    }
   }
 
   // ------------------------------------------------------------- commands API
@@ -683,6 +781,7 @@ class HubStore extends ChangeNotifier {
 
   Future<void> refreshAll() async {
     await Future.wait<void>(<Future<void>>[
+      refreshDevices(),
       refreshSessions(),
       refreshCommands(),
       refreshHooks(),

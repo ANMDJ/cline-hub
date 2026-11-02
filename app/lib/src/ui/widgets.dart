@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 
 import '../models/models.dart';
 import '../state/hub_store.dart';
+import '../util/format.dart';
 import 'theme.dart';
 
 /// 小色点：会话是否成功、命令在什么阶段，一眼看出来。
@@ -122,10 +125,13 @@ class SectionCard extends StatelessWidget {
 
 /// 会话 / 命令卡片里的「项目 · 时间 · 模型」这类次要信息行。
 class MetaLine extends StatelessWidget {
-  const MetaLine({super.key, required this.parts, this.icon});
+  const MetaLine({super.key, required this.parts, this.icon, this.trailing});
 
   final List<String?> parts;
   final IconData? icon;
+
+  /// 行尾固定显示的内容（例如每秒刷新的耗时）：左侧文字先省略，它始终可见。
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -144,10 +150,156 @@ class MetaLine extends StatelessWidget {
             text,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 11.5, color: kMuted),
+            style: _metaStyle,
           ),
         ),
+        if (trailing != null) ...[
+          const Text(' · ', style: _metaStyle),
+          trailing!,
+        ],
       ],
+    );
+  }
+}
+
+const TextStyle _metaStyle = TextStyle(fontSize: 11.5, color: kMuted);
+
+/// 「耗时 1m23s」：命令还在跑时每秒重算一次。
+///
+/// `CommandItem.duration` 已经是 getter（执行中取 `DateTime.now()`），但列表只在
+/// 数据变化时重建 —— SSE 空闲时可能几分钟没有新事件，手机上的秒数就停住不动了。
+class ElapsedText extends StatefulWidget {
+  const ElapsedText({
+    super.key,
+    required this.start,
+    this.end,
+    this.running = false,
+    this.prefix = '',
+    this.fallback = '—',
+    this.style = _metaStyle,
+  });
+
+  final DateTime? start;
+
+  /// 终态时间；`null` + [running] = 还在跑，每秒刷新。
+  final DateTime? end;
+
+  /// 是否按「执行中」处理：为真时才起定时器。
+  final bool running;
+
+  final String prefix;
+
+  /// 没有开始时间（或已结束但没有结束时间）时显示的占位符。
+  final String fallback;
+
+  final TextStyle style;
+
+  @override
+  State<ElapsedText> createState() => _ElapsedTextState();
+}
+
+class _ElapsedTextState extends State<ElapsedText> {
+  Timer? _timer;
+
+  bool get _ticking =>
+      widget.running && widget.start != null && widget.end == null;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncTimer();
+  }
+
+  @override
+  void didUpdateWidget(covariant ElapsedText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 命令从「执行中」翻成终态时要停掉定时器，否则空转一秒一次。
+    _syncTimer();
+  }
+
+  void _syncTimer() {
+    if (_ticking) {
+      _timer ??= Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() {});
+      });
+    } else {
+      _timer?.cancel();
+      _timer = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final start = widget.start;
+    if (start == null) return Text(widget.fallback, style: widget.style);
+    final end = widget.end ?? (_ticking ? DateTime.now() : null);
+    if (end == null) return Text(widget.fallback, style: widget.style);
+    final span = end.difference(start);
+    final duration = span.isNegative ? Duration.zero : span;
+    return Text(
+      '${widget.prefix}${formatDuration(duration)}',
+      style: widget.style,
+    );
+  }
+}
+
+/// 多设备时的设备过滤器：只有一台设备（或还没拉到数据）时不占空间。
+///
+/// 过滤放在 App 侧：服务端已经按设备返回全量，命令只有最近 50 条、
+/// 会话一页 60 条，本地筛一下比多发一次请求简单。
+class DeviceFilterBar extends StatelessWidget {
+  const DeviceFilterBar({super.key, required this.store});
+
+  final HubStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final devices = store.knownDevices;
+    if (devices.length < 2) return const SizedBox.shrink();
+    final selected = store.deviceFilter;
+    return SizedBox(
+      height: 42,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(14, 4, 14, 4),
+        children: [
+          _chip(
+            context,
+            label: '全部设备',
+            value: null,
+            selected: selected == null,
+          ),
+          for (final device in devices) ...[
+            const SizedBox(width: 6),
+            _chip(
+              context,
+              label: store.deviceLabel(device),
+              value: device,
+              selected: selected == device,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _chip(
+    BuildContext context, {
+    required String label,
+    required String? value,
+    required bool selected,
+  }) {
+    return ChoiceChip(
+      label: Text(label, style: const TextStyle(fontSize: 11.5)),
+      selected: selected,
+      visualDensity: VisualDensity.compact,
+      onSelected: (_) => store.setDeviceFilter(value),
     );
   }
 }
@@ -339,6 +491,7 @@ class LinkBadge extends StatelessWidget {
     );
   }
 }
+
 /// 长文本折叠阈值：字符数或行数任一超限就折叠。
 const int kCollapseChars = 900;
 const int kCollapseLines = 12;
@@ -446,7 +599,11 @@ class TextViewerPage extends StatelessWidget {
                 text,
                 style: mono
                     ? kMono.copyWith(fontSize: 12)
-                    : const TextStyle(fontSize: 13.5, height: 1.65, color: kText),
+                    : const TextStyle(
+                        fontSize: 13.5,
+                        height: 1.65,
+                        color: kText,
+                      ),
               ),
           ],
         ),
@@ -536,4 +693,3 @@ class MessageText extends StatelessWidget {
     );
   }
 }
-

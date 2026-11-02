@@ -24,7 +24,6 @@ class _SessionsPageState extends State<SessionsPage> {
   final TextEditingController _searchCtrl = TextEditingController();
   final ScrollController _scrollCtrl = ScrollController();
 
-
   @override
   void initState() {
     super.initState();
@@ -73,7 +72,10 @@ class _SessionsPageState extends State<SessionsPage> {
                 icon: const Icon(Icons.folder_copy_outlined, size: 16),
                 label: const Text('按工作区浏览', style: TextStyle(fontSize: 12.5)),
                 style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
                   minimumSize: Size.zero,
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
@@ -81,6 +83,9 @@ class _SessionsPageState extends State<SessionsPage> {
             ],
           ),
         ),
+
+        // 多设备时才出现（只有一台时不占空间）。
+        DeviceFilterBar(store: widget.store),
 
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 6, 14, 10),
@@ -149,7 +154,19 @@ class _SessionsPageState extends State<SessionsPage> {
     }
 
     // 扁平列表：服务端已按「最后一次对话时间」倒序，最上面永远是最新会话。
-    final items = store.sessions;
+    final items = store.visibleSessions;
+    if (items.isEmpty) {
+      // 有数据但被设备过滤挡掉了：给一个明确的出口，别让人以为数据丢了。
+      return EmptyState(
+        icon: Icons.filter_alt_off_outlined,
+        title: '设备 ${store.deviceFilter} 还没有会话',
+        description: '切回「全部设备」能看到其它机器上的会话。',
+        action: OutlinedButton(
+          onPressed: () => store.setDeviceFilter(null),
+          child: const Text('查看全部设备'),
+        ),
+      );
+    }
 
     return RefreshIndicator(
       onRefresh: store.refreshSessions,

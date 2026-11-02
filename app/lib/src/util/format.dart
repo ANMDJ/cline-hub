@@ -50,6 +50,21 @@ String formatSpan(DateTime? start, DateTime? end) {
   return '${formatClock(start)} → ${formatClock(stop)}';
 }
 
+/// 路径末段：`C:\Users\alice\projects\kids_points_app` → `kids_points_app`。
+///
+/// 命令卡片的元信息行只放得下一个词：「项目目录」比完整路径有用得多，
+/// 完整路径在详情页里还有一行。两个分隔符都要认（cline 写正斜杠，
+/// 人手填的是反斜杠），尾部斜杠不能算成一段。
+String workspaceLabel(String? path, {String fallback = '未指定目录'}) {
+  final raw = path?.trim() ?? '';
+  if (raw.isEmpty) return fallback;
+  final parts = raw
+      .split(RegExp(r'[\\/]+'))
+      .where((part) => part.isNotEmpty)
+      .toList(growable: false);
+  return parts.isEmpty ? fallback : parts.last;
+}
+
 /// 终端控制序列：SGR 颜色、光标移动、OSC 标题等。
 ///
 /// 命令输出是 `cline` 的原始 stdout，实测一句话里的每个词都被 `\u001b[2m`

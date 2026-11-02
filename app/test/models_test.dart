@@ -112,6 +112,48 @@ void main() {
     });
   });
 
+  group('DeviceItem', () {
+    test('解析设备列表并判断在线', () {
+      final item = DeviceItem.fromJson(<String, dynamic>{
+        'id': 'localone',
+        'name': 'LocalOne-Windows',
+        'lastSeenAt': '2026-11-02T05:00:00.000Z',
+        'sessionCount': 12,
+        'commandCount': 4,
+        'pendingCommands': 1,
+        'runningCommands': 2,
+        'lastSessionAt': '2026-11-02T04:59:00.000Z',
+      });
+
+      expect(item.id, 'localone');
+      expect(item.label, 'LocalOne-Windows');
+      expect(item.sessionCount, 12);
+      expect(item.pendingCommands, 1);
+      expect(item.runningCommands, 2);
+      expect(
+        item.isOnlineAt(DateTime.parse('2026-11-02T05:01:00.000Z')),
+        isTrue,
+      );
+      expect(
+        item.isOnlineAt(DateTime.parse('2026-11-02T05:10:00.000Z')),
+        isFalse,
+      );
+    });
+
+    test('name 与 id 相同时退回 id，空对象不炸', () {
+      final same = DeviceItem.fromJson(<String, dynamic>{
+        'id': 'laptop',
+        'name': 'laptop',
+      });
+      expect(same.label, 'laptop');
+
+      final empty = DeviceItem.fromJson(const <String, dynamic>{});
+      expect(empty.id, '');
+      expect(empty.label, '');
+      expect(empty.isOnline, isFalse);
+    });
+  });
+
   group('HubEvent', () {
     test('SSE 的 data 是 JSON 时拆成 map', () {
       final event = HubEvent.fromSse('hook', '{"id":7,"event":"agent_end"}');
