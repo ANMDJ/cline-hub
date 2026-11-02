@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 
 import '../models/models.dart';
 import '../state/hub_store.dart';
@@ -342,6 +343,42 @@ class LinkBadge extends StatelessWidget {
 const int kCollapseChars = 900;
 const int kCollapseLines = 12;
 
+/// 会话正文的 Markdown 样式（P8）。
+///
+/// 只覆盖「看得见」的几处：正文跟随传入的 [style]（保证气泡里的字号一致），
+/// 代码块用等宽 + 深色底，链接用信息色。其余交给 `MarkdownStyleSheet.fromTheme`。
+MarkdownStyleSheet markdownSheetOf(BuildContext context, TextStyle style) {
+  final base = MarkdownStyleSheet.fromTheme(Theme.of(context));
+  final size = style.fontSize ?? 13.5;
+  return base.copyWith(
+    p: style,
+    a: style.copyWith(color: kInfo, decoration: TextDecoration.underline),
+    em: style.copyWith(fontStyle: FontStyle.italic),
+    strong: style.copyWith(fontWeight: FontWeight.w700),
+    code: kMono.copyWith(fontSize: size - 1, color: kText),
+    codeblockPadding: const EdgeInsets.all(10),
+    codeblockDecoration: BoxDecoration(
+      color: kBg,
+      borderRadius: BorderRadius.circular(10),
+      border: Border.all(color: kLine),
+    ),
+    blockSpacing: 8,
+    listBullet: style,
+    blockquote: style.copyWith(color: kMuted),
+    blockquotePadding: const EdgeInsets.fromLTRB(10, 4, 8, 4),
+    blockquoteDecoration: const BoxDecoration(
+      color: kBgSoft,
+      border: Border(left: BorderSide(color: kLine, width: 3)),
+    ),
+    h1: style.copyWith(fontSize: size + 5, fontWeight: FontWeight.w700),
+    h2: style.copyWith(fontSize: size + 3, fontWeight: FontWeight.w700),
+    h3: style.copyWith(fontSize: size + 1, fontWeight: FontWeight.w600),
+    horizontalRuleDecoration: const BoxDecoration(
+      border: Border(top: BorderSide(color: kLine)),
+    ),
+  );
+}
+
 /// 二级页：完整文本 + 复制。
 ///
 /// 为什么不在气泡里原地展开：一条 3 万字的回复展开后会把整页布局顶开、
@@ -352,6 +389,7 @@ class TextViewerPage extends StatelessWidget {
     required this.title,
     required this.text,
     this.mono = false,
+    this.markdown = false,
     this.truncated = false,
   });
 
@@ -360,6 +398,10 @@ class TextViewerPage extends StatelessWidget {
 
   /// 命令过程用等宽字体，正文用普通字体。
   final bool mono;
+
+  /// 正文按 Markdown 渲染（会话消息 / 模型结果）。
+  /// 命令输出是终端回放，必须保持原样，不能把 `*` `#` 当格式记号。
+  final bool markdown;
 
   /// bridge 侧已截断：明确告诉用户「这不是全文」，而不是让 UI 假装完整。
   final bool truncated;
@@ -390,12 +432,22 @@ class TextViewerPage extends StatelessWidget {
               ),
               const SizedBox(height: 12),
             ],
-            SelectableText(
-              text,
-              style: mono
-                  ? kMono.copyWith(fontSize: 12)
-                  : const TextStyle(fontSize: 13.5, height: 1.65, color: kText),
-            ),
+            if (markdown)
+              MarkdownBody(
+                data: text,
+                selectable: true,
+                styleSheet: markdownSheetOf(
+                  context,
+                  const TextStyle(fontSize: 13.5, height: 1.65, color: kText),
+                ),
+              )
+            else
+              SelectableText(
+                text,
+                style: mono
+                    ? kMono.copyWith(fontSize: 12)
+                    : const TextStyle(fontSize: 13.5, height: 1.65, color: kText),
+              ),
           ],
         ),
       ),
@@ -411,6 +463,7 @@ class MessageText extends StatelessWidget {
     required this.style,
     this.title = '全文',
     this.truncated = false,
+    this.markdown = false,
   });
 
   final String text;
@@ -418,11 +471,21 @@ class MessageText extends StatelessWidget {
   final String title;
   final bool truncated;
 
+  /// 按 Markdown 渲染（会话正文 / 模型结果）。命令输出不要打开。
+  final bool markdown;
+
   @override
   Widget build(BuildContext context) {
     final lines = '\n'.allMatches(text).length + 1;
     final collapsible = text.length > kCollapseChars || lines > kCollapseLines;
-    if (!collapsible) return Text(text, style: style);
+    if (!collapsible) {
+      if (!markdown) return Text(text, style: style);
+      return MarkdownBody(
+        data: text,
+        selectable: true,
+        styleSheet: markdownSheetOf(context, style),
+      );
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -443,6 +506,7 @@ class MessageText extends StatelessWidget {
                   builder: (_) => TextViewerPage(
                     title: title,
                     text: text,
+                    markdown: markdown,
                     truncated: truncated,
                   ),
                 ),

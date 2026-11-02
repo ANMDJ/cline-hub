@@ -270,6 +270,7 @@ class CommandItem {
     this.deliveredAt,
     this.startedAt,
     this.finishedAt,
+    this.cancelRequestedAt,
   });
 
   factory CommandItem.fromJson(Map<String, dynamic> json) => CommandItem(
@@ -290,6 +291,7 @@ class CommandItem {
     deliveredAt: _dt(json['deliveredAt']),
     startedAt: _dt(json['startedAt']),
     finishedAt: _dt(json['finishedAt']),
+    cancelRequestedAt: _dt(json['cancelRequestedAt']),
   );
 
   final String id;
@@ -321,8 +323,19 @@ class CommandItem {
   final DateTime? startedAt;
   final DateTime? finishedAt;
 
+  /// 手机端请求取消的时间；`null` 表示没人取消过。
+  final DateTime? cancelRequestedAt;
+
+  /// 还在流程里：排队 / 已送达 / 执行中 / 正在取消。
+  /// `cancelling` 必须算「活着」：此时 bridge 还没杀完进程，取消按钮要显示「取消中」。
   bool get isActive =>
-      status == 'pending' || status == 'delivered' || status == 'running';
+      status == 'pending' ||
+      status == 'delivered' ||
+      status == 'running' ||
+      status == 'cancelling';
+
+  /// bridge 已经收到取消请求，正在停进程。
+  bool get isCancelling => status == 'cancelling';
 
   /// 本机排障用的 PowerShell：先核对启动时间，再决定要不要杀。
   ///

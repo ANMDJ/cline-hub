@@ -82,6 +82,12 @@ abstract class HubApi {
     String? sessionId,
   });
 
+  /// 取消一条还没结束的命令。
+  ///
+  /// 排队中的会直接变 `cancelled`；执行中的先变 `cancelling`，
+  /// 由 bridge 杀掉进程后再回写 `cancelled`（见 docs/api.md）。
+  Future<CommandItem> cancelCommand(String id);
+
   Future<List<HookItem>> hooks({int limit, int? beforeId, String? deviceId});
 
   /// 服务端事件流。Android 走 SSE；web 预览不支持流式响应，退化成心跳轮询。
@@ -274,6 +280,19 @@ class HttpHubApi implements HubApi {
         if (workspace != null && workspace.isNotEmpty) 'workspace': workspace,
         if (sessionId != null && sessionId.isNotEmpty) 'sessionId': sessionId,
       },
+    );
+    final raw = json['command'];
+    return CommandItem.fromJson(
+      raw is Map ? raw.cast<String, dynamic>() : <String, dynamic>{},
+    );
+  }
+
+  @override
+  Future<CommandItem> cancelCommand(String id) async {
+    final json = await _request(
+      'POST',
+      '/api/v1/commands/${Uri.encodeComponent(id)}/cancel',
+      body: const <String, Object?>{},
     );
     final raw = json['command'];
     return CommandItem.fromJson(

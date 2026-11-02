@@ -825,6 +825,7 @@ class _OverviewContent extends StatelessWidget {
             child: MessageText(
               text: resultText,
               title: '会话结果',
+              markdown: true,
               truncated: detail?.resultTruncated ?? false,
               style: const TextStyle(
                 fontSize: 12.5,
@@ -935,6 +936,7 @@ class _MessageBubble extends StatelessWidget {
             MessageText(
               text: message.text,
               title: isUser ? '我的提问' : '助手回复',
+              markdown: true,
               truncated: message.truncated,
               style: TextStyle(
                 fontSize: 13.5,
@@ -1030,6 +1032,7 @@ class _QuestionBubble extends StatelessWidget {
             MessageText(
               text: message.text,
               title: '问题',
+              markdown: true,
               style: const TextStyle(fontSize: 13.5, height: 1.6),
             ),
             const SizedBox(height: 8),

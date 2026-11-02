@@ -3,8 +3,8 @@
 /// 为什么不引 `package_info_plus`：这个客户端刻意只保留 http / shared_preferences
 /// 两个依赖，版本号一年也就改几次，手工同步比多一个插件更划算。
 /// 发版脚本 `scripts/release-apk.mjs` 会读 `pubspec.yaml` 并校验这里是否一致。
-const String kAppVersion = '1.1.3';
-const int kAppBuild = 5;
+const String kAppVersion = '1.1.4';
+const int kAppBuild = 6;
 
 class ChangelogEntry {
   const ChangelogEntry(this.version, this.date, this.items);
@@ -15,6 +15,12 @@ class ChangelogEntry {
 }
 
 const List<ChangelogEntry> kChangelog = <ChangelogEntry>[
+  ChangelogEntry('1.1.4', '2026-11-02', <String>[
+    '新增：命令详情可以「取消命令」——排队中的立即取消，执行中的由 bridge 停掉进程',
+    '新增：会话正文与结果按 Markdown 渲染（标题 / 列表 / 代码块 / 表格），命令输出仍保持终端原文',
+    '新增：Windows 端支持命令并发执行（不同工作目录并行，同一目录仍串行）',
+    '优化：命令状态多一档「取消中」，取消后不会又变回「已完成」',
+  ]),
   ChangelogEntry('1.1.3', '2026-11-02', <String>[
     '新增：有新版本时可以直接「打开下载页」，用系统浏览器下载 APK，不用再复制链接',
     '修复：命令一直显示「执行中」——bridge 主动重启前会先把执行中的命令标记为中断并说明原因',

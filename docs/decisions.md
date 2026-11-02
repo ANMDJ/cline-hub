@@ -830,3 +830,90 @@ error 事件判 failed、`json=false` 退回原始输出）。`cd bridge; node -
 `still busy {"commands":["cmd_c2e5d2d05eec"]}`，超时分支 `timeout, bridge left untouched`
 且 bridge pid 未变、锁文件自动清理。
 
+
+## 40. 取消命令：先 `cancelling`，bridge 按 commandId 杀，服务端防回翻（2026-11-02）
+
+**背景**：P14。手机上下发错一条命令（例如 ACT 指错目录）时，唯一的手段是去电脑上
+`npm run ps -- --kill`——用户碰不到电脑，命令就一直占着槽位。
+
+**决策**：
+
+- 状态机加一档 `cancelling`（迁移 007 加 `cancel_requested_at`，008 扩 `commands_status_check`）：
+  - `pending` / `delivered`：Hub 直接置 `cancelled`，bridge 根本没 spawn，不需要杀进程；
+  - `running`：置 `cancelling`，等 bridge 停完进程再回写 `cancelled`。
+- bridge 的取消轮询放在 `tick()` 的**槽位检查之前**（只在本机有 children 时发请求），
+  查询 `GET /api/v1/commands?deviceId=…&status=cancelling`，只匹配**自己** `children` 里
+  的 commandId 再 `killTree`。不按 pid / 进程名猜，也不碰上一个 bridge 留下的进程。
+- 领取到 spawn 之间还有窗口：`handle()` 开头花一次 `GET /api/v1/commands/:id`，
+  已是 `cancelled` / `cancelling` 就直接不跑。查不到（Hub 抖动）时照旧执行——
+  宁可多跑一条，也别把命令静默丢掉。
+- 服务端防回翻：命令已是 `cancelled` 时 PATCH 原样返回；`cancelling` 期间迟到的
+  `running`（补 pid / sessionId）保持 `cancelling`。否则会出现「点了取消，手机上却
+  显示已完成」。
+- bridge 重启后停在 `cancelling` 的命令由 `reconcile()` 收尾：进程没了回写 `cancelled`；
+  进程还在且 **pid + 启动时间**都核对通过，才 `taskkill /t /f`（与 `npm run ps -- --kill`
+  同一套规则，ADR-33）。
+- 已结束的命令取消返回 409，不做状态翻转。
+
+**代价与边界**：
+
+- 取消延迟 ≈ `pollIntervalMs`（5 秒）；不是实时中断。
+- 杀掉进程树后 cline 会话会翻成 `cancelled`，会话内容保留，但这一轮不会再有结论。
+- 排队中取消只改命令状态：bridge 本地队列里那条在预检时被丢弃，不会产生 `running`。
+
+**验证**：`bridge/test/command-cancel.test.js` 2 项端到端（真杀 PowerShell 进程树 /
+排队中不 spawn）、`server/test/commands.test.mjs` 5 项（409 / 防回翻 / cancelling 保持）；
+线上实测：取消已完成命令返回 409，`cancelling` 值在事务内写入再回滚通过。
+
+## 41. 命令并发池：默认 1，同一个 workspace 强制串行（2026-11-02）
+
+**背景**：P7。旧实现 `tick()` 里 `for (item of items) await handle(item)`，一次只能跑一条；
+手机连着发两条，第二条要等第一条跑完（可能半小时）。
+
+**决策**：
+
+- `commands.concurrency`（1–8，默认 **1**）控制槽位数；默认 1 保持旧行为，
+  想并行就显式配 2+。
+- `tick()` 只做「领取 → 入队」，`pump()` 负责派发：`slots` 记录**已派发但可能还没 spawn**
+  的命令（不能只看 `children`，否则同 workspace 的两条会同时通过检查）。
+- **同一个 workspace 永远串行**：键取 `path.resolve(workspace).toLowerCase()`。
+  两条 ACT 同时改一个仓库，冲突和「看不见对方改了哪一行」比慢更难查。
+- 槽位满时不领取：领了也只能在本地排队，还会把 Hub 上的 `pending` 改成 `delivered`，
+  手机上看不出区别。
+- 停机时队列里的命令同样回写 `failed`（原因「bridge 正在关闭」），不能留在 `delivered`。
+
+**代价与边界**：
+
+- 队列只在内存里：bridge 重启后未开始的命令不会被自动续跑（Hub 上已是 `delivered`），
+  需要重新下发；`shutdown()` 会尽量先把它们标成 `failed`。
+- 同 workspace 的串行判定按**解析后的绝对路径**，不同写法（`C:\a\b` 与 `c:/a/b`）会归一。
+- 并发数再大也不会超过 8：每条 cline 会话都吃 CPU，且日志会互相穿插。
+
+**验证**：`bridge/test/command-pool.test.js` 2 项（不同 workspace 同时 running /
+同 workspace 第二条 running 晚于第一条 done）。
+
+## 42. 会话正文用 `flutter_markdown_plus` 渲染，命令输出不解析（2026-11-02）
+
+**背景**：P8。模型回复里的标题、列表、表格、代码围栏在手机上是原始记号，读起来很累。
+
+**决策**：
+
+- 依赖 `flutter_markdown_plus`（`markdown` 的 Flutter 实现，维护活跃）；
+  只有**会话正文 / 问题 / 会话结果**打开 `markdown: true`。
+- 命令输出是终端回放（`SelectableText` + `kMono`），**不解析 Markdown**：
+  `*`、`#`、`|` 在日志里是字面量，按格式吃掉会改变内容。
+- 长消息（>900 字或 >12 行）折叠时仍是纯文本预览（`MarkdownBody` 不支持 `maxLines`），
+  点「展开全文」的二级页才渲染 Markdown——既省布局开销，也让「看全文」有明确入口。
+- 样式只覆盖必要项：正文跟随气泡字号、代码块等宽 + 深色底、链接信息色、
+  标题按正文字号递进；其余交给 `MarkdownStyleSheet.fromTheme`。
+
+**代价与边界**：
+
+- APK 从 53.6MB → 55.2MB（`1.1.2` → `1.1.4` 实测）。
+- 图片仍由 `MarkdownBody` 默认行为处理（网络图会被请求）；表格在窄屏不会横向滚动，
+  超宽表格会被压缩换行。
+- 渲染失败不应该影响阅读：`MarkdownBody` 解析异常会退化成纯文本段落，不会让整页崩掉。
+
+**验证**：`app/test/markdown_test.dart` 4 项（标题不再显示 `##` / 默认不解析 /
+表格窄屏不 overflow / 折叠后展开页仍是 Markdown）。
+

@@ -113,7 +113,7 @@ flutter build apk --release
 | Tab | 内容 |
 |---|---|
 | 会话 | 搜索 + 游标无限翻页；详情有结果全文、执行过的命令、耗时 |
-| 命令 | 下发 `plan/act/yolo`、盯 `pending→delivered→running→done`、直接读输出 |
+| 命令 | 下发 `plan/act/yolo`、盯 `pending→delivered→running→done`、直接读输出；执行中可「取消命令」（`cancelling → cancelled`） |
 | 动态 | hook 事件流（任务开始/结束/中断），比会话采集更快到手机 |
 
 实现上的取舍写在 `app/README.md` 与 `docs/decisions.md` ADR-14。
@@ -128,7 +128,7 @@ flutter build apk --release
 | M0 | Hook 脚本 + ntfy 通知 | ✅ 完成 |
 | M1 | bridge 采集器 + Hub 服务 + 部署 | ✅ 完成（smoke 20/20；域名被备案拦截后改走 IP 前缀入口，见上节） |
 | M2a | 远程命令通道（bridge 执行器） | ✅ 完成（App→Hub→bridge→PowerShell→回写，实测 6s 闭环） |
-| M2b | Flutter App（会话列表/命令执行） | ✅ 完成（三 Tab + SSE 实时 + 下发命令 + 系统通知；`flutter test` 48/48 通过，5 个真机用例默认跳过） |
+| M2b | Flutter App（会话列表/命令执行） | ✅ 完成（三 Tab + SSE 实时 + 下发/取消命令 + 系统通知 + Markdown；`flutter test` 56/56 通过，5 个真机用例默认跳过） |
 
 
 ## 快速开始（本机）
@@ -210,7 +210,8 @@ bridge 每 `pollIntervalMs` 轮询 `/api/v1/commands/pending`（服务端 `FOR U
 | `workspaceWhitelist` | **同时约束远程执行的工作目录**（空数组 = 不限制）。条目是绝对路径按前缀比，是纯名字按目录名精确比；不命中直接 `failed`。自检：`npm run check:whitelist` |
 | `defaultWorkspace` | 命令未带 `workspace`（或路径不存在）时的默认工作目录 |
 | `timeoutMs` | 超时强杀进程树（`taskkill /t /f`），回写 `timeout after ...` |
-| `batchSize` | 单轮最多取几条，串行执行 |
+| `batchSize` | 单轮最多领取几条；领回来先进本地队列，由 `concurrency` 决定同时跑几条 |
+| `concurrency` | 并发槽位（1–8，默认 1 = 一条一条跑）。**同一个 workspace 永远串行**，不管这里配多大（ADR-41） |
 
 ### 这条命令在电脑上是哪个进程？
 
@@ -232,6 +233,15 @@ npm run reconcile                      # 立刻回写 failed: orphaned（bridge 
 
 - **不要按进程名杀**（`node.exe` / `cline`）：会误伤。要停某一条就用 `--kill <commandId>`。
 - `pid` 必须和启动时间一起看：Windows 会复用 PID，只凭 pid 杀可能打到无关进程。
+
+### 手机端取消
+
+命令还没结束（`pending` / `delivered` / `running`）时，App 的命令详情里有「取消这条命令」：
+
+- 排队中：Hub 直接置 `cancelled`，bridge 预检发现后不会 spawn；
+- 执行中：Hub 先置 `cancelling`，bridge 每轮（约 5 秒）按 commandId 杀自己那条进程树，
+  再回写 `cancelled`。服务端会拒绝把已取消的命令翻回 `done`（ADR-40）。
+
 - **停 bridge 一律用 `npm run stop`**：它走本机 `POST /admin/stop`，先 PATCH 执行中的命令为
   `failed`（原因写「bridge 正在关闭（你给的理由）」），再杀进程树。`Stop-Process` / `taskkill`
   是硬杀，Node 收不到 `SIGTERM`，手机上的命令会卡在「执行中」（2026-11-02 踩过，卡了 19 分钟）。

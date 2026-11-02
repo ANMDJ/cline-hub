@@ -18,6 +18,7 @@ const double kRadius = 14;
 Color statusColor(String? status, {bool ok = false}) => switch (status) {
   'pending' => kWarn,
   'delivered' || 'running' => kInfo,
+  'cancelling' => kWarn,
   'done' || 'completed' => kAccent,
   'failed' || 'cancelled' || 'canceled' => kDanger,
   _ => ok ? kAccent : kMuted,
@@ -27,6 +28,7 @@ String statusLabel(String? status) => switch (status) {
   'pending' => '排队中',
   'delivered' => '已送达',
   'running' => '执行中',
+  'cancelling' => '取消中',
   'done' => '已完成',
   'completed' => '已完成',
   'failed' => '失败',

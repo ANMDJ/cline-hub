@@ -49,7 +49,8 @@ curl http://127.0.0.1:3100/api/v1/health
 - `clients`：`device`（Windows bridge）/ `app`（手机）。token 只存 `sha256`，`last_seen_at` 每分钟最多写一次。
 - `sessions`：主键 `(device_id, session_id)`，重复上报走 upsert；`result_text` 存全文，列表查询取前 2000 字原文、由 `src/text.js` 洗成 400 字纯文本预览。
 - `hooks`：`payload` 原样 `jsonb`，另抽 `title`/`body` 便于列表展示。
-- `commands`：`pending → delivered → running → done/failed/cancelled`；
+- `commands`：`pending → delivered → running → done/failed/cancelled`，
+  手机端取消执行中的命令会先进入 `cancelling`（bridge 停完进程再回写 `cancelled`）；
   领取用 `for update skip locked`，多实例也不会重复取。
 
 ## Docker

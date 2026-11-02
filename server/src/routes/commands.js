@@ -7,6 +7,12 @@ const MODES = new Set(['plan', 'act', 'yolo'])
 const REPORTABLE = new Set(['running', 'done', 'failed', 'cancelled'])
 
 /**
+ * 已经结束的状态。`cancelling` 不算：那是「执行中、但用户要求停」，
+ * 此时 bridge 还没杀完进程，允许它继续回写取消结果。
+ */
+const FINISHED = new Set(['done', 'failed', 'cancelled'])
+
+/**
  * `pid` 来自 bridge，必须是正整数。这里不信任客户端：
  * 传 `"123"` 这种字符串也接受（JSON 里数字更常见），非法值直接 400。
  */
@@ -39,7 +45,9 @@ function toCommand(row) {
     createdAt: row.created_at,
     deliveredAt: row.delivered_at,
     startedAt: row.started_at,
-    finishedAt: row.finished_at
+    finishedAt: row.finished_at,
+    /** 手机端点「取消」的时间；null 表示没人取消过。 */
+    cancelRequestedAt: row.cancel_requested_at ?? null
   }
 }
 
@@ -166,6 +174,58 @@ export function createCommandRoutes({ db, logger, sse }) {
     },
 
     {
+      /**
+       * 手机端取消一条命令（P14）。
+       *
+       * 分两种情况，客户端只看返回的 status：
+       *   * `pending` / `delivered` → 直接 `cancelled`（bridge 还没 spawn，不用杀进程）；
+       *   * `running` → `cancelling`，bridge 每 5 秒按 `status=cancelling` 拉一次，
+       *     按 commandId 精确杀进程树后再回写 `cancelled`（ADR-40）。
+       * 已经结束的命令返回 409：取消不是幂等状态翻转，别让 UI 把历史结果抹掉。
+       */
+      method: 'POST',
+      pattern: '/api/v1/commands/:id/cancel',
+      auth: 'app',
+      async handler({ params, client }) {
+        const existing = await db.one('select * from commands where id = $1', [params.id])
+        if (!existing) throw new HttpError(404, 'command not found', 'not_found')
+        if (FINISHED.has(existing.status)) {
+          throw new HttpError(409, `command already ${existing.status}`, 'already_finished')
+        }
+
+        const updated = await db.one(
+          `update commands set
+             status = case
+                        when status in ('pending', 'delivered') then 'cancelled'
+                        else 'cancelling'
+                      end,
+             cancel_requested_at = coalesce(cancel_requested_at, now()),
+             error_text = case
+                            when status in ('pending', 'delivered')
+                              then coalesce(error_text, '已取消：手机端在命令开始前取消。')
+                            else error_text
+                          end,
+             finished_at = case
+                             when status in ('pending', 'delivered') then now()
+                             else finished_at
+                           end
+           where id = $1
+           returning *`,
+          [params.id]
+        )
+
+        logger.info('command cancel requested', {
+          id: params.id,
+          from: existing.status,
+          to: updated.status,
+          requestedBy: client.id
+        })
+        sse.broadcast('command.update', toCommand(updated))
+        return { ok: true, command: toCommand(updated) }
+      }
+    },
+
+    {
       // the bridge reports progress / final result here
       method: 'PATCH',
       pattern: '/api/v1/commands/:id',
@@ -177,10 +237,30 @@ export function createCommandRoutes({ db, logger, sse }) {
           throw new HttpError(403, 'command belongs to another device', 'forbidden')
         }
 
+        /**
+         * 命令在开始执行前就被取消（status 已是 `cancelled`）：
+         * bridge 可能已经把 spawn 发出去了，紧接着会报 running / done。
+         * 这里一律原样返回，不让「已取消」被翻回「已完成」——
+         * 否则用户点了取消，手机上却看到一条成功的命令（ADR-40）。
+         */
+        if (existing.status === 'cancelled') {
+          logger.info('command update ignored: already cancelled', {
+            id: params.id,
+            reported: body.status ?? null
+          })
+          return { ok: true, command: toCommand(existing), ignored: true }
+        }
+
         const status = requireString(body.status, 'status', { max: 20 })
         if (!REPORTABLE.has(status)) {
           throw new HttpError(400, `status must be one of ${[...REPORTABLE].join(', ')}`, 'invalid_field')
         }
+        /**
+         * bridge 的 pid / sessionId 是「running」时补报的；如果用户已经取消
+         * （cancelling），这次补报不能把状态覆盖回 running，否则取消信号就丢了。
+         */
+        const effectiveStatus =
+          existing.status === 'cancelling' && status === 'running' ? 'cancelling' : status
         const resultText = optionalString(body.resultText, 'resultText', 20000)
         const errorText = optionalString(body.errorText, 'errorText', 4000)
         // bridge 新开会话后回写会话 ID；coalesce 保证只写一次，后续上报不会把它清掉。
@@ -204,10 +284,10 @@ export function createCommandRoutes({ db, logger, sse }) {
              finished_at = case when $2 in ('done', 'failed', 'cancelled') then now() else finished_at end
            where id = $1
            returning *`,
-          [params.id, status, resultText, errorText, sessionId, pid, pidStartedAt, runner]
+          [params.id, effectiveStatus, resultText, errorText, sessionId, pid, pidStartedAt, runner]
         )
 
-        logger.info('command updated', { id: params.id, status })
+        logger.info('command updated', { id: params.id, status: effectiveStatus })
         sse.broadcast('command.update', toCommand(updated))
         return { ok: true, command: toCommand(updated) }
       }

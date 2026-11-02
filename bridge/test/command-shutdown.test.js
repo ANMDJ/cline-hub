@@ -198,11 +198,12 @@ test('shutdown({ keepChildren: true }) 回写 failed 但保留子进程', {
 
   const worker = createCommandWorker({ cfg: makeCfg(hubUrl, workspace), logger: silentLogger })
   let ticking = null
+  let pid = null
   try {
     ticking = worker.tick()
     const spawned = await waitFor(() => patches.some((item) => item.status === 'running' && item.pid))
     assert.ok(spawned, '命令应该在 8 秒内 spawn 并回写 pid')
-    const pid = Number(patches.find((item) => item.status === 'running' && item.pid).pid)
+    pid = Number(patches.find((item) => item.status === 'running' && item.pid).pid)
 
     const result = await worker.shutdown({ reason: '测试保留会话', keepChildren: true })
 
@@ -217,13 +218,23 @@ test('shutdown({ keepChildren: true }) 回写 failed 但保留子进程', {
     await new Promise((resolve) => setTimeout(resolve, 300))
     assert.ok(inspectProcesses([pid]).has(pid), `keepChildren 时子进程 ${pid} 必须还在`)
   } finally {
-    // 先杀再等 tick 返回：keepChildren 下 handle() 一直等到子进程退出。
+    // 先杀再等这条命令收尾：keepChildren 下 handle() 一直等到子进程退出。
+    // tick() 现在是「领了就返回」，所以要显式等 pid 消失，不能只 await ticking。
     worker.stop()
     if (ticking) await ticking.catch(() => {})
+    if (pid) await waitFor(() => !inspectProcesses([pid]).has(pid), 8000)
     await new Promise((resolve) => server.close(resolve))
     try {
       fs.unlinkSync(entryFile)
     } catch {}
-    fs.rmSync(workspace, { recursive: true, force: true })
+    // Windows 上子进程的 cwd 句柄释放有延迟，删目录要重试几次。
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        fs.rmSync(workspace, { recursive: true, force: true })
+        break
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 200))
+      }
+    }
   }
 })

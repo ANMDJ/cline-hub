@@ -49,20 +49,33 @@ function assertVersionDartMatches(version, build) {
 const { version, build } = readPubspecVersion()
 assertVersionDartMatches(version, build)
 
-console.log(`→ 打包 ${version}+${build}`)
-// Windows 上 flutter 是 .bat，execFileSync 直接调不到；构建命令的参数全部来自
-// 上面校验过的 pubspec，没有外部输入，这里用 execSync 是安全的。
-const javaHome = process.env.JAVA_HOME ?? ''
-if (!/\b(17|21|22|23)\b/.test(javaHome)) {
-  console.warn(
-    `! JAVA_HOME=${javaHome || '(empty)'}：AGP 9 / Gradle 9 需要 JDK 17+，` +
-    '否则会在 Gradle 启动阶段失败。'
+/**
+ * `--skip-build`：直接用 `build/app/outputs/flutter-apk/app-release.apk` 重新出清单。
+ *
+ * 为什么要这个开关：`flutter build apk` 要 1~3 分钟，超过很多「单条命令 30 秒」
+ * 的限制（本次 1.1.4 构建就是这样被打断的，但 gradle 已经把 APK 产出了）。
+ * 单独补清单 / 重新生成 `latest.json` 时没必要再等一次全量构建。
+ */
+const skipBuild = process.argv.includes('--skip-build')
+
+if (skipBuild) {
+  console.log(`→ 复用现有 APK 生成清单 ${version}+${build}`)
+} else {
+  console.log(`→ 打包 ${version}+${build}`)
+  // Windows 上 flutter 是 .bat，execFileSync 直接调不到；构建命令的参数全部来自
+  // 上面校验过的 pubspec，没有外部输入，这里用 execSync 是安全的。
+  const javaHome = process.env.JAVA_HOME ?? ''
+  if (!/\b(17|21|22|23)\b/.test(javaHome)) {
+    console.warn(
+      `! JAVA_HOME=${javaHome || '(empty)'}：AGP 9 / Gradle 9 需要 JDK 17+，` +
+      '否则会在 Gradle 启动阶段失败。'
+    )
+  }
+  execSync(
+    `flutter build apk --release --build-name=${version} --build-number=${build}`,
+    { cwd: appRoot, stdio: 'inherit', shell: true }
   )
 }
-execSync(
-  `flutter build apk --release --build-name=${version} --build-number=${build}`,
-  { cwd: appRoot, stdio: 'inherit', shell: true }
-)
 
 const apk = path.join(appRoot, 'build', 'app', 'outputs', 'flutter-apk', 'app-release.apk')
 if (!fs.existsSync(apk)) throw new Error(`没有找到产物：${apk}`)

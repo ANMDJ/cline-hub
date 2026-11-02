@@ -138,6 +138,36 @@ void main() {
     store.dispose();
   });
 
+  test('cancelCommand 立刻把命令置成「取消中」并保留进程信息', () async {
+    final settings = await makeSettings();
+    final fake = FakeHubApi(
+      commandItems: const <CommandItem>[
+        CommandItem(
+          id: 'cmd_run',
+          deviceId: 'localone',
+          prompt: '跑一遍测试',
+          mode: 'act',
+          status: 'running',
+          pid: 4242,
+          runner: 'cline',
+        ),
+      ],
+    );
+    final store = HubStore(settings: settings, apiFactory: (_) => fake);
+    await store.start();
+    expect(store.activeCommandCount, 1);
+
+    final updated = await store.cancelCommand('cmd_run');
+
+    expect(fake.cancelledCommands, <String>['cmd_run']);
+    expect(updated.status, 'cancelling');
+    expect(updated.isCancelling, isTrue);
+    expect(updated.isActive, isTrue);
+    expect(updated.pid, 4242);
+    expect(store.commands.single.status, 'cancelling');
+    store.dispose();
+  });
+
   test('没有设备时可读的错误，而不是空指针', () async {
     final settings = await makeSettings(deviceId: '');
     final fake = FakeHubApi();

@@ -147,7 +147,8 @@ SSE 四种事件都用上了：`session`（去抖 900ms 后刷新列表）、`ho
 
 实现：`MainActivity` 注册 `top.littlewish.cline_console/notify`（`ensurePermission` / `show`），
 通道 `cline_hub_events`，小图标 `ic_stat_hub`；Dart 侧是 `data/notifier.dart` 的 `HubNotifier`。
-**没有引入第三个 pub 依赖**（见 ADR-35）：原生系统 API 足够，也少一个 Gradle desugaring 的失败点。
+通知本身**没有引入额外 pub 依赖**（见 ADR-35）：原生系统 API 足够，也少一个 Gradle desugaring 的失败点。
+（1.1.4 起确实多了第三个依赖 `flutter_markdown_plus`，但那是 P8 的 Markdown 渲染，与通知无关，见 ADR-42。）
 设置页「通知」卡片可分别关掉命令 / 会话通知，并手动请求 `POST_NOTIFICATIONS`（Android 13+）。
 
 边界：App 退到后台会断 SSE 省电，这期间收不到事件（可靠通道仍是 ntfy）；
@@ -192,6 +193,8 @@ SSE 四种事件都用上了：`session`（去抖 900ms 后刷新列表）、`ho
 | 截断提示 | 气泡 / 命令条 | `truncated=true` 时明确写「原文更长」，不假装完整 |
 | 选择题 | `_QuestionBubble` | `ask_question` 的选项渲染成按钮；点选 = 带上下文**新开一条命令**（无头 CLI 不能中途注入） |
 | 纯文本展示 | `util/format.dart` 的 `stripAnsi` / `inlinePreview` | 命令输出是终端回放，几乎每个词都被 `\u001b[2m` 包着；展示与复制前过滤（库里保留原字节）。会话列表预览由服务端 `plainPreview` 洗好 |
+| Markdown 渲染 | `ui/widgets.dart` 的 `markdownSheetOf` / `MessageText` | 1.1.4 起会话正文 / 问题 / 结果按 Markdown 渲染（`flutter_markdown_plus`）；**命令输出不解析**（终端原文）。长文本折叠态仍是纯文本预览，展开页才渲染 |
+| 取消命令 | `ui/commands_page.dart` 的 `_CancelCommandButton` | 只有 `pending/delivered/running/cancelling` 显示；二次确认后 `POST /commands/:id/cancel`；排队中立即 `cancelled`，执行中先 `cancelling`，终态由 SSE 推回 |
 | 版本与更新 | `ui/settings_page.dart` | 版本号来自 `data/app_version.dart`；「检查更新」读 `GET /api/v1/app/latest`。有新版本时给两个入口：**「打开下载页」**（`data/link_launcher.dart` → 原生 `ACTION_VIEW`，直接用系统浏览器打开 APK 地址）与「复制链接」；打不开浏览器时自动退回复制 |
 
 ### 发版流程
@@ -201,6 +204,9 @@ SSE 四种事件都用上了：`session`（去抖 900ms 后刷新列表）、`ho
 2. 更新 `kChangelog`（App 内「更新日志」直接读它）。
 3. `node scripts/release-apk.mjs --notes "a;b" --base-url https://hub.littlewish.top:8443/app`
    → `dist/cline-console-<version>.apk` + `dist/latest.json`。
+   > `flutter build apk` 要 1~3 分钟，超过单条命令 30 秒的限制时，APK 往往已经产出；
+   > 这时用 `--skip-build` 复用 `build/app/outputs/flutter-apk/app-release.apk`，
+   > 只重新生成清单，不用再等一次全量构建。
 4. 按脚本打印的 `scp`/`ssh` 命令上传：APK 进 `/var/www/cline-hub/app/`，
    清单进 `/srv/cline-hub/releases/latest.json`（docker-compose 只读挂载到容器里的
    `/app/releases`，Hub 每次请求现读，**不用重启**）。

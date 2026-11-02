@@ -56,6 +56,7 @@ SSE 例外：`GET /api/v1/events?token=<token>`（EventSource 不能设置请求
 | GET | `/api/v1/commands` | any | 命令列表 |
 | GET | `/api/v1/commands/pending` | device | 领取待执行命令（自动置为 `delivered`） |
 | GET | `/api/v1/commands/:id` | any | 命令详情 |
+| POST | `/api/v1/commands/:id/cancel` | app | 取消命令（排队中直接 `cancelled`，执行中先 `cancelling`） |
 | PATCH | `/api/v1/commands/:id` | device | 回报 `running` / `done` / `failed` / `cancelled` |
 | GET | `/api/v1/events` | any | SSE 实时事件 |
 
@@ -259,6 +260,21 @@ POST /api/v1/commands
 - 事务内 `for update skip locked` 取 `pending`，立即置 `delivered`，保证多进程不重复领取。
 - 空列表就是 `items: []`（正常情况，不要当错误）。
 
+### 取消（App）
+
+`POST /api/v1/commands/:id/cancel`（app）→ `{ ok, command }`
+
+- 状态机分两种，客户端只看返回的 `status`：
+  - `pending` / `delivered` → 直接 `cancelled`（bridge 还没 spawn，不用杀进程）；
+  - `running` → `cancelling`，bridge 下一轮轮询（约 5 秒）按 commandId 精确杀进程树，
+    再回写 `cancelled`，`errorText` 说明原因。
+- 已经结束（`done` / `failed` / `cancelled`）返回 **409 `already_finished`**：取消不覆盖历史结果。
+- 取消时间写进 `cancel_requested_at`，命令对象的 `cancelRequestedAt` 会返回。
+- bridge 侧的防回翻规则：命令已是 `cancelled` 时，后续 `running` / `done` 回报一律忽略；
+  `cancelling` 期间迟到的 `running`（补 pid / sessionId）不会把状态翻回 `running`。
+- bridge 重启时还停在 `cancelling` 的命令由启动对账收尾：进程没了就回写 `cancelled`；
+  进程还在（且 pid + 启动时间双校验通过）就精确杀掉再回写。
+
 ### 回报（bridge）
 
 ```json
@@ -275,6 +291,8 @@ PATCH /api/v1/commands/cmd_9f2c1a4b3d5e
 ```
 
 - 允许的状态：`running` / `done` / `failed` / `cancelled`。
+- `cancelled` 只由 bridge 在「手机端取消后杀掉进程」这条路径回写；如果命令在开始前
+  就被取消（HTTP 已是 `cancelled`），这次 PATCH 会被服务端原样忽略，不会翻回成功。
 - `running` 首次会写 `started_at`；终态写 `finished_at`。
 - `sessionId`：bridge 新开 cline 会话后回写（`coalesce` 只写一次，不会被后续上报清空），
   App 的命令详情据此直接跳进那条会话。

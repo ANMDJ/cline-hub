@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../data/hub_api.dart';
 import '../models/models.dart';
 import '../state/hub_store.dart';
 import '../util/format.dart';
@@ -348,11 +349,15 @@ void _showCommandDetail(BuildContext context, CommandItem item, HubStore store) 
             if (item.isActive) ...[
               const SizedBox(height: 16),
               Text(
-                item.status == 'pending'
-                    ? '排队中，等 bridge 来领取…'
-                    : 'bridge 已领取，正在执行…',
+                item.isCancelling
+                    ? '已请求取消，等 bridge 停掉执行进程…'
+                    : item.status == 'pending'
+                        ? '排队中，等 bridge 来领取…'
+                        : 'bridge 已领取，正在执行…',
                 style: const TextStyle(fontSize: 12, color: kWarn),
               ),
+              const SizedBox(height: 10),
+              _CancelCommandButton(item: item, store: store),
             ],
             if (sheetContext.mounted) const SizedBox(height: 8),
           ],
@@ -361,3 +366,98 @@ void _showCommandDetail(BuildContext context, CommandItem item, HubStore store) 
     },
   );
 }
+
+/// 取消按钮（P14）：只有「还没结束」的命令才会出现。
+///
+/// 取消是不可撤销的（bridge 会直接杀掉执行进程树），所以先二次确认；
+/// 点完立刻置灰并显示「已请求取消」，真正的终态由 SSE 推回来。
+class _CancelCommandButton extends StatefulWidget {
+  const _CancelCommandButton({required this.item, required this.store});
+
+  final CommandItem item;
+  final HubStore store;
+
+  @override
+  State<_CancelCommandButton> createState() => _CancelCommandButtonState();
+}
+
+class _CancelCommandButtonState extends State<_CancelCommandButton> {
+  bool _busy = false;
+  bool _requested = false;
+
+  bool get _cancelling => _requested || widget.item.isCancelling;
+
+  Future<void> _confirm() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: kPanel,
+        title: const Text('取消这条命令？'),
+        content: const Text(
+          'bridge 会停掉这条命令的执行进程。已经产生的输出会保留，但不会再继续。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('不取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('取消命令'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    setState(() => _busy = true);
+    try {
+      await widget.store.cancelCommand(widget.item.id);
+      if (!mounted) return;
+      setState(() => _requested = true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已请求取消')),
+      );
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('取消失败：${error.friendly}')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('取消失败：$error')),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final disabled = _busy || _cancelling;
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: disabled ? null : _confirm,
+        icon: const Icon(Icons.stop_circle_outlined, size: 16),
+        label: Text(
+          _busy
+              ? '正在取消…'
+              : _cancelling
+                  ? '已请求取消，等 bridge 停进程'
+                  : '取消这条命令',
+        ),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: kDanger,
+          disabledForegroundColor: kMuted,
+          side: BorderSide(
+            color: (disabled ? kLine : kDanger).withValues(alpha: 0.5),
+          ),
+          padding: const EdgeInsets.symmetric(vertical: 12),
+        ),
+      ),
+    );
+  }
+}
+

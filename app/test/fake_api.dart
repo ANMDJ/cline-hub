@@ -29,6 +29,7 @@ class FakeHubApi implements HubApi {
   int sessionsCalls = 0;
   int? lastSessionsLimit;
   final List<Map<String, Object?>> sentCommands = <Map<String, Object?>>[];
+  final List<String> cancelledCommands = <String>[];
   String? sessionQuery;
   bool closed = false;
 
@@ -129,12 +130,50 @@ class FakeHubApi implements HubApi {
   }
 
   @override
+  Future<CommandItem> cancelCommand(String id) async {
+    cancelledCommands.add(id);
+    final index = commandItems.indexWhere((item) => item.id == id);
+    final base = index >= 0
+        ? commandItems[index]
+        : CommandItem(
+            id: id,
+            deviceId: 'localone',
+            prompt: '(fake)',
+            mode: 'plan',
+            status: 'running',
+          );
+    final updated = CommandItem(
+      id: base.id,
+      deviceId: base.deviceId,
+      prompt: base.prompt,
+      mode: base.mode,
+      status: 'cancelling',
+      workspace: base.workspace,
+      sessionId: base.sessionId,
+      requestedBy: base.requestedBy,
+      runner: base.runner,
+      pid: base.pid,
+      pidStartedAt: base.pidStartedAt,
+      resultText: base.resultText,
+      errorText: base.errorText,
+      createdAt: base.createdAt,
+      deliveredAt: base.deliveredAt,
+      startedAt: base.startedAt,
+      finishedAt: base.finishedAt,
+      cancelRequestedAt: DateTime.now(),
+    );
+    commandItems = <CommandItem>[
+      for (final item in commandItems) if (item.id == id) updated else item,
+    ];
+    return updated;
+  }
+
+  @override
   Future<List<HookItem>> hooks({
     int limit = 50,
     int? beforeId,
     String? deviceId,
   }) async => hookItems;
-
   @override
   Stream<HubEvent> events() => _events.stream;
 

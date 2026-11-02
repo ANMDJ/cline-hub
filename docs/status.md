@@ -13,15 +13,15 @@
 | 1 | P11 | **Step 1：命令进程身份上 Hub**（migration 006 加 `pid` / `pid_started_at` / `runner`；bridge spawn 成功立刻回写；App 命令详情显示 pid + 复制排查命令） | ✅ 已上线（migration 006 + Hub；线上 `GET /commands` 已返回三字段） |
 | 2 | P12 | **Step 2：本机登记 + 精确归口**（`%TEMP%\cline-hub-cmd\running\<id>.json`；`npm run ps` 查/杀/清理；`stop()` 杀掉全部子进程，不再只有一个槽位） | ✅ 已上线（bridge 12:27 重启后生效） |
 | 3 | P13 | 卡死命令回收：`running` 但进程已不在 / pid+启动时间对不上 → 回写 `failed: orphaned`，**不盲杀** | ✅ 已上线（启动对账已跑，清掉 `cmd_c4a49f60fccf` 的残留登记；每 60s 一次） |
-| 4 | P6 | bridge 用 `cline --json` 取结构化结果（终稿 / 失败原因 / 用量；`taskId` 不是会话 ID） | ✅ 代码 + 37 项测试完成（ADR-38），待 bridge 重启生效 |
-| 5 | P18 | **重启不掐断当前命令**：`npm run restart:idle` 交给 detached supervisor，等执行中的命令跑完再重启（`--keep-session` 保不住会话：bridge 一死，子进程的 stdout 管道就断了） | ✅ 代码 + 7 项测试完成（ADR-39）；本机排队 / 超时不动 bridge 已验证 |
-| 6 | P7 | 命令并发池：`commands.concurrency` + 同 workspace 强制串行（依赖 P11–P13 / P6） | ⏳ 未开始 |
-| 7 | P14 | 手机取消命令：`POST /api/v1/commands/:id/cancel`，bridge 按 commandId 精确杀 | ⏳ 未开始 |
-| 8 | P8 | 详情页 Markdown 渲染（`flutter_markdown_plus`） | ⏳ 未开始 |
+| 4 | P6 | bridge 用 `cline --json` 取结构化结果（终稿 / 失败原因 / 用量；`taskId` 不是会话 ID） | ✅ 已生效（12:51 when-idle 重启后走 `--json`；ADR-38） |
+| 5 | P18 | **重启不掐断当前命令**：`npm run restart:idle` 交给 detached supervisor，等执行中的命令跑完再重启（`--keep-session` 保不住会话：bridge 一死，子进程的 stdout 管道就断了） | ✅ 已上线（12:51 用 `--grace 15000` 重启成功；ADR-39） |
+| 6 | P7 | 命令并发池：`commands.concurrency` + 同 workspace 强制串行（依赖 P11–P13 / P6） | ✅ 代码 + 测试完成（`concurrency` 默认 1；ADR-41），待 bridge 重启生效 |
+| 7 | P14 | 手机取消命令：`POST /api/v1/commands/:id/cancel`，bridge 按 commandId 精确杀 | ✅ Hub 已上线（迁移 007/008）；bridge / App 待重启/安装 |
+| 8 | P8 | 详情页 Markdown 渲染（`flutter_markdown_plus`） | ✅ 已发布 `1.1.4+6`（ADR-42） |
 | 9 | P15 | 手机端系统通知：命令完成/失败 + 会话终态（原生 MethodChannel，设置页可开关/授权） | ✅ 已发布 `1.1.2+4`（装到手机后生效） |
 | 10 | P2 | PLAN/ACT 选中态真机核对对比度（需要手机，用户侧） | ⏳ 代码完成，待真机核对 |
 | 11 | P16 | 停 bridge 前先停任务：`POST /admin/stop` + `commandWorker.shutdown()`（先回写 running，再杀进程树）+ `npm run stop` / `npm run restart` + `docs/interruptions.md` | ✅ 已上线（bridge 12:27 起为新版本；未在本会话里自杀验证） |
-| 12 | P17 | App 自动更新可直接「打开下载页」：原生 `ACTION_VIEW`（`link_launcher.dart` + `MainActivity`），复制链接保留 | ✅ 代码 + 测试完成（1.1.3+5），待打包发版 |
+| 12 | P17 | App 自动更新可直接「打开下载页」：原生 `ACTION_VIEW`（`link_launcher.dart` + `MainActivity`），复制链接保留 | ✅ 已发布 `1.1.4+6`（与 P8 一起发版） |
 
 已完成并上线的：P0 / P1 / P3 / P4 / P5 / P9 / P10（P3、P9 已部署，P5、P10 已发布 1.1.1）。
 
@@ -149,7 +149,39 @@
 
 规则：**P3 方案已定为 B** —— 提升限额后，只回填最近 60 个会话（`TRANSCRIPT_BACKFILL_LIMIT`），每 tick 2 个，按字节切批。
 
-## 1. 基线快照（2026-11-02 09:15 实测，12:06 更新发布项）
+### P7 + P14 + P8 落地记录（2026-11-02）
+
+- **P7 并发池**：`tick()` 改为「领取 → 入队」，新增 `pump()` 按 `commands.concurrency`
+  （1–8，默认 1）派发；`slots` 记录已派发未 spawn 的命令，同一个 workspace（解析后小写路径）
+  强制串行。槽位满时不再领取，避免把 Hub 上的 `pending` 白白改成 `delivered`。
+  `shutdown()` 一并把队列里的命令回写 `failed`。ADR-41。
+- **P14 取消**：迁移 `007_command_cancel.sql`（`cancel_requested_at` + 活跃状态部分索引）
+  与 `008_command_cancelling_status.sql`（**扩 001 的 check 约束**——第一次线上实测直接
+  500：`violates check constraint "commands_status_check"`，因为约束里没有 `cancelling`）。
+  Hub 新增 `POST /api/v1/commands/:id/cancel`（排队中 → `cancelled`；执行中 → `cancelling`；
+  已结束 → 409），PATCH 加了防回翻规则。bridge 每 tick 在槽位检查**之前**查一次
+  `status=cancelling`，只杀自己 `children` 里的 commandId；`handle()` 开头做一次预检，
+  排队中被取消的命令不会 spawn；`reconcile()` 负责收尾「取消后 bridge 重启」的残留。
+  App 命令详情新增「取消这条命令」（二次确认），状态多一档「取消中」。ADR-40。
+- **P8 Markdown**：新增依赖 `flutter_markdown_plus`；`MessageText` / `TextViewerPage`
+  加 `markdown` 开关，只对会话正文 / 问题 / 会话结果开启，命令输出仍是终端原文。
+  长文本折叠态保持纯文本预览，展开页才渲染（`MarkdownBody` 不支持 `maxLines`）。ADR-42。
+- **验证**：`cd bridge; node --test` **48 项全绿**（新增 `command-pool.test.js` 2 项、
+  `command-cancel.test.js` 2 项，都是真跑 PowerShell 进程的端到端）；`cd server; node --test`
+  **18 项全绿**（新增 5 项取消 / 防回翻）；`cd app; flutter analyze` 无问题、
+  `flutter test` **56 项通过（5 项真机用例跳过）**。
+- **上线**：Hub 镜像已重建，迁移 007 / 008 已应用；线上 `POST /cancel` 对已结束命令返回
+  **409**，`cancelling` 在事务内写入再回滚验证通过；APK `1.1.4+6`（55,207,088 B，
+  sha256 `60fb0102…2304`）已发布，`HEAD /app/cline-console-1.1.4.apk` 200，
+  `GET /api/v1/app/latest` 返回 1.1.4 / build 6。
+- **教训**：不要用「最近一条命令」去测取消接口——最新那条很可能就是**当前会话自己**
+  （本次真把 `cmd_4699c43ec58a` 置成了 `cancelling`，靠 5 秒内直接改库回滚才没被杀）。
+  测试请挑一条 `done` 的命令，或用事务 + `rollback`。
+- **待生效**：bridge 需要重启才加载并发池 / 取消轮询（本轮用 `restart:idle` 排了 detached
+  supervisor，见 `docs/interruptions.md`）；手机需要装 `1.1.4+6`（`adb devices` 为空，
+  走 App 内「检查更新」）。
+
+## 1. 基线快照（2026-11-02 09:15 实测；13:06 更新发布项）
 
 | 项 | 实测 |
 |---|---|
@@ -161,7 +193,7 @@
 | Flutter / Dart | `3.47.5` / `13.4` |
 | Android 工具链 | SDK `%LOCALAPPDATA%\Android\Sdk`（platforms 33–37 / build-tools 30–37）；JDK 17 与 21 在 `<JDK 目录>\`；`GRADLE_USER_HOME=%USERPROFILE%\.gradle` 已缓存 gradle-9.3.1。**`JAVA_HOME` 为空**，默认 PATH 上是 zulu-8，打包前必须设成 JDK 17 |
 | 已跟踪会话 | 89 个（80 个有 `messages.json`），14,755 条已上报消息 |
-| App 发布版本 | `1.1.2+4`（`GET /api/v1/app/latest` 实测；APK 53,585,288 B，sha256 `93c75ea8…88f0`） |
+| App 发布版本 | `1.1.4+6`（`GET /api/v1/app/latest` 实测；APK 55,207,088 B，sha256 `60fb0102…2304`） |
 
 ## 2. 里程碑与最近提交
 
@@ -195,8 +227,10 @@ Windows bridge ──轮询/上报──> https://hub.littlewish.top:8443
 ## 4. 待办（按优先级）
 
 **P0**：备案通过后切回 443 并轮换 token；证书 2027-01-29 前必须改 DNS-01。
-**P1**：按 §0 的顺序做 P11 → P12 → P13 → P6 → P7 → P14 → P8。
-并发设计仍按保守假设：同 workspace 的 `act` 必须串行（`commands.concurrency` 这个键**还没实现**）。
+**P1**：P11 → P12 → P13 → P6 → P18 → P7 → P14 → P8 都已完成（P7/P14 待 bridge 重启生效）；
+下一步候选：真机核对 P2、Web 预览降级（P2 段）、多设备推送。
+**P7 用法**：想并行就把 `bridge/config.json` 的 `commands.concurrency` 设成 2+（上限 8），
+同一个 workspace 仍强制串行（ADR-41）。
 **P2**：App 无 SSE 的 Web 预览降级体验。
 **P3**：多设备推送、审计视图细化。
 
@@ -228,6 +262,10 @@ Windows bridge ──轮询/上报──> https://hub.littlewish.top:8443
     `Stop-Process` 是硬杀，Node 收不到 `SIGTERM`，`shutdown()` 不执行（ADR-36）。
 13. **系统通知只在 App 进程活着时可靠**：退到后台会断 SSE 省电，这期间靠 ntfy；
     回前台会补拉并补发「后台期间结束的命令」。别把它当推送（真要后台推送得上 FCM / 常驻连接）。
+14. **`restart:idle` 的默认 3 秒缓冲偏紧**：登记文件在 cline 子进程 `close` 时就删，
+    回写 `done` 的 PATCH 在之后才发，`shutdown()` 可能把正在收尾的命令判成 in-flight
+    并改成 `failed`。在命令里发起重启时加上 `--grace 15000`
+    （`cd bridge; npm run restart:idle -- --reason "..." --grace 15000`）。
 
 ## 6. 自检命令
 
@@ -271,3 +309,11 @@ powershell -NoProfile -File deploy/windows/verify-hub.ps1
 | 2026-11-02 | **P11/P12/P13/P16 已上线**：Hub 迁移 006 已应用（线上 `GET /commands` 返回 `pid/pidStartedAt/runner`）；bridge 12:27 重启后加载本机登记、启动对账与 `/admin/stop`（重启记录见 `docs/interruptions.md`） |
 | 2026-11-02 | **P6**：bridge 默认给 cline 加 `--json`，新增 `src/cline-json.js` 增量解析（终稿 / finishReason / error / usage / taskId）+ `isClineJsonFailure()`；`resultText` 取 `run_result.text`，失败原因优先事件 error；`commands.cline.json=false` 可回退；9 个单元 + 3 个假 CLI 端到端用例，bridge 37 项全绿；ADR-38；`docs/bridge-notes.md` §8 记实测事件样本 |
 | 2026-11-02 | **P18**：`npm run restart:idle`（= `stop.mjs --restart --when-idle`）拉起 detached supervisor，等执行中的命令跑完 + 3 秒缓冲后再重启；`liveCommandEntries()` 只认 pid + 启动时间双校验，超时/查询失败不动 bridge，锁文件防连点；`--keep-session` 注释更正为「保不住会话」。7 项测试，ADR-39；本机排队 / 超时验证通过 |
+| 2026-11-02 | **bridge 重启（when-idle）**：用户在手机上下发「重启 bridge」(`cmd_3ac6900fc5c5`) 时，该命令拉起的会话就是当前会话，故用 `npm run restart:idle -- --grace 15000` 排 detached supervisor，等命令跑完 + 15 秒缓冲再走 `/admin/stop` 优雅重启；顺带记下「默认 3s 缓冲偏紧」的坑（§5.14、`docs/interruptions.md` §2 12:51） |
+
+| 2026-11-02 | **P7 并发池**：`tick()` 改成「领取 → 入队」，`pump()` 按 `commands.concurrency`（默认 1、上限 8）派发；`slots` 覆盖「已派发未 spawn」窗口，同一 workspace（解析后小写路径）强制串行；槽位满不领取；`shutdown()` 同时收尾队列；新增 `test/command-pool.test.js` 2 项；ADR-41 |
+| 2026-11-02 | **P14 取消命令**：迁移 007（`cancel_requested_at` + 部分索引）/ 008（扩 `commands_status_check`）；`POST /api/v1/commands/:id/cancel`（排队中直接 `cancelled`、执行中 `cancelling`、已结束 409）；PATCH 防回翻；bridge 每 tick 查 `status=cancelling` 并按 commandId 杀、spawn 前预检、reconcile 收尾残留；App 详情页「取消这条命令」；5 项 server + 2 项 bridge 测试；ADR-40 |
+| 2026-11-02 | **P8 Markdown**：新增 `flutter_markdown_plus`；`MessageText` / `TextViewerPage` 加 `markdown` 开关（只对会话正文 / 问题 / 结果生效，命令输出保持原文）；折叠态仍纯文本，展开页渲染；`test/markdown_test.dart` 4 项；ADR-42 |
+| 2026-11-02 | **Hub 上线**：镜像重建 + 迁移 007/008 应用；线上实测取消已结束命令返回 409、`cancelling` 事务内回滚验证通过；**踩坑**：第一次取消返回 500（`commands_status_check` 不允许 `cancelling`），补 008 解决；另把当前会话命令误置 `cancelling`，5 秒内改库回滚（详见 `docs/interruptions.md`） |
+| 2026-11-02 | **1.1.4+6 已发布**：APK 55,207,088 B / sha256 `60fb0102…2304` → `/var/www/cline-hub/app/cline-console-1.1.4.apk`（HEAD 200）、清单 `/srv/cline-hub/releases/latest.json`，`GET /api/v1/app/latest` 返回 1.1.4 / build 6 / 四条 notes；`release-apk.mjs` 新增 `--skip-build`（构建超时后可只补清单）；`adb devices` 为空，手机走 App 内「检查更新」 |
+

@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 
 import {
   classifyRunningCommand,
@@ -52,6 +52,23 @@ const RECONCILE_INTERVAL_MS = 60 * 1000
 
 /** 回写孤儿命令时给手机看的原因：说清楚「不是命令本身失败」，可以直接重发。 */
 const ORPHAN_ERROR = '命令已中断：原来的执行进程不在了（bridge 重启 / 崩溃后没有接管）。可以重新下发。'
+
+/**
+ * 手机端取消后，bridge 多久去 Hub 看一次「有没有人要停我」。
+ *
+ * tick 本身是 5 秒一轮（`cfg.pollIntervalMs`），这里只是防止同一轮里重复请求；
+ * 真正的取消延迟上限 = pollIntervalMs + 一轮请求耗时，实测 5 秒左右。
+ */
+const CANCEL_POLL_MS = 3000
+
+/** 命令取消成功后回写的原因（手机上直接显示这一句）。 */
+const CANCELLED_ERROR = '已取消：手机端取消，执行进程已停止。'
+
+/** bridge 重启后才发现「有人要取消，但进程早没了」时回写的原因。 */
+const CANCEL_ORPHAN_ERROR = '已取消：原来的执行进程不在了（bridge 重启 / 崩溃），这条命令不会再继续。'
+
+/** 并发上限：cline 一个会话就吃满一个 CPU 核，配置再大也没意义，直接卡住。 */
+const MAX_CONCURRENCY = 8
 
 /**
  * 主动关闭 bridge 时回写给手机的原因。与 ORPHAN_ERROR 的区别：
@@ -192,6 +209,15 @@ export function createCommandWorker({ cfg, logger }) {
   const batchSize = Number.isFinite(Number(opts.batchSize)) && Number(opts.batchSize) > 0
     ? Math.min(10, Number(opts.batchSize))
     : 3
+  /**
+   * 并发池大小（P7）。默认 1 = 保持旧行为（一轮只跑一条）。
+   *
+   * 不管配多大，**同一个 workspace 永远串行**：两条 act 同时改一个仓库，
+   * 冲突和「看不见对方改了哪一行」比慢更难查。见 ADR-41。
+   */
+  const concurrency = Number.isFinite(Number(opts.concurrency)) && Number(opts.concurrency) > 0
+    ? Math.min(MAX_CONCURRENCY, Math.max(1, Math.floor(Number(opts.concurrency))))
+    : 1
   const defaultWorkspace = opts.defaultWorkspace ? path.resolve(opts.defaultWorkspace) : ''
 
   /**
@@ -210,17 +236,32 @@ export function createCommandWorker({ cfg, logger }) {
    */
   const state = {
     ticking: false,
-    busy: false,
     warned: false,
     stopped: false,
     children: new Map(),
+    /**
+     * 已领取、还没开始跑的命令（并发池放不下的部分）。
+     * 顺序即 Hub 的 created_at 顺序，`pump()` 只会因为「槽位满 / 同 workspace 还在跑」而留在队列里。
+     */
+    queue: [],
+    /**
+     * commandId → 它现在占着的 workspace key。
+     * children 是 spawn 成功之后才有的，而并发判定必须提前到「正在 spawn」阶段，
+     * 否则同一 workspace 的两条命令会同时通过检查、一起 spawn。
+     */
+    slots: new Map(),
     /** commandId → 中断原因：shutdown 已经回写 failed，handle() 别再抢着报一次。 */
     interrupted: new Map(),
+    /** commandId → 取消原因：手机端点了取消，handle() 收尾时要回写 cancelled 而不是 failed。 */
+    cancelled: new Map(),
     /** 防止 SIGINT 与 /admin/stop 同时进来跑两遍。 */
     shuttingDown: false,
     /** 上次对账时间 + 是否在跑：避免 tick 每 5 秒叠一次请求。 */
     lastReconcileAt: 0,
-    reconciling: false
+    reconciling: false,
+    /** 上次查「待取消」的时间 + 是否在跑（只在本机有活命令时才查）。 */
+    lastCancelPollAt: 0,
+    cancelPolling: false
   }
   const registry = registryDir()
 
@@ -246,6 +287,113 @@ export function createCommandWorker({ cfg, logger }) {
 
   function report(id, status, extra = {}) {
     return request('PATCH', `/api/v1/commands/${encodeURIComponent(id)}`, { status, ...extra })
+  }
+
+  /**
+   * 调度用的 workspace key。
+   *
+   * 解析失败（没带 workspace、defaultWorkspace 也不存在）时统一落到空串：
+   * 这些命令反正会立刻 failed，让它们彼此串行就行，别一口气 spawn 一堆再一起报错。
+   */
+  function workspaceKey(command) {
+    try {
+      return path.resolve(resolveWorkspace(command)).toLowerCase()
+    } catch {
+      return ''
+    }
+  }
+
+  /** 当前被占用的 workspace（包含「已派发、还在 spawn」的命令，不能只看 children）。 */
+  function busyWorkspaces() {
+    return new Set(state.slots.values())
+  }
+
+  /**
+   * 并发池（P7）：把队列里的命令填进空闲槽位。
+   *
+   * 两个条件缺一不可：
+   *   1. `slots.size < commands.concurrency`；
+   *   2. 它要用的 workspace 现在没有别的命令在跑（**同 workspace 强制串行**）。
+   * 队列顺序来自 Hub 的 `created_at asc`，所以不会被后来的命令插队。
+   */
+  function pump() {
+    if (state.stopped) return
+    while (state.slots.size < concurrency && state.queue.length > 0) {
+      const busy = busyWorkspaces()
+      const index = state.queue.findIndex((item) => !busy.has(workspaceKey(item)))
+      if (index < 0) return
+      const [item] = state.queue.splice(index, 1)
+      state.slots.set(item.id, workspaceKey(item))
+      void runOne(item)
+    }
+  }
+
+  async function runOne(item) {
+    try {
+      await handle(item)
+    } catch (error) {
+      logger.error('command run failed', { id: item.id, message: error.message })
+      // handle() 内部已经尽量回写；这里兜底，别让命令永远停在「执行中 / 取消中」。
+      try {
+        await report(item.id, 'failed', { errorText: `bridge 执行异常：${error.message}` })
+      } catch {}
+    } finally {
+      state.slots.delete(item.id)
+      pump()
+    }
+  }
+
+  /**
+   * 领取到 spawn 之间可能被取消：Hub 会把排队中的命令直接置成 `cancelled`。
+   * 花一次 GET 换「不会真的跑一条用户已经取消的命令」，值得。
+   *
+   * 查不到就照旧执行：宁可多跑一条，也别因为 Hub 抖一下把命令扔了。
+   */
+  async function cancelledOnHub(id) {
+    try {
+      const data = await request('GET', `/api/v1/commands/${encodeURIComponent(id)}`)
+      const status = String(data?.command?.status ?? '')
+      return status === 'cancelled' || status === 'cancelling'
+    } catch (error) {
+      logger.warn('command status precheck failed', { id, message: error.message })
+      return false
+    }
+  }
+
+  /**
+   * 手机端取消执行中的命令：Hub 把状态置成 `cancelling`，这里按 commandId 精确杀。
+   *
+   * 边界：只杀自己 `children` 里的进程。别人的命令（上一个 bridge 留下的）交给
+   * reconcile 判定，避免出现「看到 cancelling 就 taskkill」这种越权行为（ADR-40）。
+   */
+  async function pollCancellations() {
+    if (!enabled || !cfg.hubUrl || state.stopped) return
+    if (state.children.size === 0) return
+    if (state.cancelPolling) return
+    if (Date.now() - state.lastCancelPollAt < CANCEL_POLL_MS) return
+
+    state.cancelPolling = true
+    try {
+      const query = `deviceId=${encodeURIComponent(cfg.deviceId)}&status=cancelling&limit=20`
+      const data = await request('GET', `/api/v1/commands?${query}`)
+      const items = Array.isArray(data?.items) ? data.items : []
+      for (const item of items) {
+        const owned = state.children.get(item.id)
+        if (!owned || state.cancelled.has(item.id)) continue
+        state.cancelled.set(item.id, '手机端取消')
+        logger.warn('command cancel requested by app', {
+          id: item.id,
+          pid: owned.entry?.pid ?? null
+        })
+        // 只杀这一条命令的进程树；handle() 会等 runProcess 返回后回写 cancelled。
+        killTree(owned.child)
+      }
+    } catch (error) {
+      logger.warn('command cancel poll failed', { message: error.message })
+    } finally {
+      state.cancelPolling = false
+      state.lastCancelPollAt = Date.now()
+    }
   }
 
   /**
@@ -324,18 +472,94 @@ export function createCommandWorker({ cfg, logger }) {
         cleaned = cleanStaleEntries()
       }
 
+      /**
+       * 手机端点了取消、bridge 却在这中间重启：Hub 上会停在 `cancelling`。
+       * 这里把它收尾成 `cancelled`；如果执行进程还活着（上一个 bridge 留下的），
+       * 先按登记做 pid + 启动时间双校验，再精确杀这一棵进程树。
+       */
+      const cancelled = await reconcileCancelling({ dryRun, limit })
+
       return {
         ok: true,
         dryRun,
         checked: items.length,
         orphaned: orphans.length,
         ids: orphans.map((item) => item.id),
+        cancelled,
         cleaned
       }
     } finally {
       state.reconciling = false
       state.lastReconcileAt = Date.now()
     }
+  }
+
+  /**
+   * 把停在 `cancelling` 的命令收尾（详见 reconcile() 里的调用说明）。
+   * 返回被处理的 commandId 列表；dryRun 时只报告、不改状态、不杀进程。
+   */
+  async function reconcileCancelling({ dryRun = false, limit = 50 } = {}) {
+    const query = `deviceId=${encodeURIComponent(cfg.deviceId)}&status=cancelling&limit=${limit}`
+    const data = await request('GET', `/api/v1/commands?${query}`)
+    const items = Array.isArray(data?.items) ? data.items : []
+    if (items.length === 0) return []
+
+    const entries = new Map()
+    for (const item of items) {
+      if (state.children.has(item.id)) continue // 正在被 pollCancellations 处理
+      const fromDisk = readEntry(registry, item.id)
+      const fromHub = item.pid
+        ? { commandId: item.id, pid: item.pid, pidStartedAt: item.pidStartedAt ?? null }
+        : null
+      entries.set(item.id, fromDisk ?? fromHub)
+    }
+    const processes = inspectProcesses(
+      [...entries.values()].map((entry) => Number(entry?.pid)).filter((pid) => Number.isInteger(pid))
+    )
+
+    const handled = []
+    for (const [id, entry] of entries) {
+      const { alive, verified } = processLiveness(entry, processes)
+      if (dryRun) {
+        handled.push(id)
+        continue
+      }
+      if (alive && verified) killVerified(entry)
+      try {
+        await report(id, 'cancelled', { errorText: CANCEL_ORPHAN_ERROR })
+        removeEntry(registry, id)
+        handled.push(id)
+        logger.warn('command cancel recovered', {
+          id,
+          pid: entry?.pid ?? null,
+          killed: alive && verified
+        })
+      } catch (error) {
+        logger.error('command cancel recover failed', { id, message: error.message })
+      }
+    }
+    return handled
+  }
+
+  /**
+   * 按登记杀一棵「不是本进程 children」的进程树（上一个 bridge 留下的）。
+   * 调用前必须已经过 pid + 启动时间双校验（与 `npm run ps -- --kill` 同一套规则，ADR-33）。
+   */
+  function killVerified(entry) {
+    const pid = Number(entry?.pid)
+    if (!Number.isInteger(pid) || pid <= 0) return false
+    const result = process.platform === 'win32'
+      ? spawnSync('taskkill', ['/pid', String(pid), '/t', '/f'], { windowsHide: true, encoding: 'utf8' })
+      : spawnSync('kill', ['-9', String(pid)], { encoding: 'utf8' })
+    if (result.status !== 0) {
+      logger.warn('command cancel kill failed', {
+        commandId: entry?.commandId ?? null,
+        pid,
+        message: (result.stderr || result.stdout || '').trim() || `exit ${result.status}`
+      })
+      return false
+    }
+    return true
   }
 
   /**
@@ -667,6 +891,12 @@ export function createCommandWorker({ cfg, logger }) {
   }
 
   async function handle(command) {
+    // 排队期间被手机取消：不要 spawn，也不要把一条 cancelled 的命令跑成 done。
+    if (await cancelledOnHub(command.id)) {
+      logger.info('command skipped: cancelled before start', { id: command.id })
+      return
+    }
+
     const mode = String(command.mode ?? 'plan').toLowerCase()
 
     if (!allowModes.includes(mode)) {
@@ -783,6 +1013,27 @@ export function createCommandWorker({ cfg, logger }) {
       logger.info('command result skipped: interrupted at shutdown', { id: command.id })
       return
     }
+    // 手机端取消：进程是被 cancel 轮询杀掉的，exit code 必然非 0。
+    // 这不是「命令失败」，要回写 cancelled，否则手机上看到的是「失败」而不是「已取消」。
+    if (state.cancelled.has(command.id)) {
+      state.cancelled.delete(command.id)
+      try {
+        await report(command.id, 'cancelled', {
+          ...link,
+          resultText: truncate(outputText) + modeWarning,
+          errorText: CANCELLED_ERROR
+        })
+        logger.info('command cancelled', {
+          id: command.id,
+          runner,
+          exit: result.code,
+          sessionId: createdSession ?? null
+        })
+      } catch (error) {
+        logger.error('command cancel report failed', { id: command.id, message: error.message })
+      }
+      return
+    }
     const body = ok
       ? { ...link, resultText: (truncate(outputText) || '(no output)') + modeWarning }
       : {
@@ -823,12 +1074,23 @@ export function createCommandWorker({ cfg, logger }) {
       }
       return
     }
-    if (state.ticking || state.busy || !cfg.hubUrl) return
+    if (!cfg.hubUrl) return
+
+    // 取消轮询放在「ticking / 槽位」检查之前：命令正在跑的时候，才是最需要它的时刻。
+    if (!state.cancelPolling && state.children.size > 0) {
+      void pollCancellations()
+    }
+
+    if (state.ticking) return
 
     // 对账不阻塞领取：每 60 秒顺手确认一次「Hub 上 running 的命令本机还活着吗」。
     if (!state.reconciling && Date.now() - state.lastReconcileAt >= RECONCILE_INTERVAL_MS) {
-      reconcile().catch((error) => logger.warn('command reconcile failed', { message: error.message }))
+      void reconcile().catch((error) => logger.warn('command reconcile failed', { message: error.message }))
     }
+
+    // 槽位满就不领新的：领取了也只能在本地排队，还会把 Hub 上的状态从 pending 改成 delivered，
+    // 手机上看不出区别。等 runOne() 结束调 pump() 时再续。
+    if (state.slots.size >= concurrency) return
 
     state.ticking = true
     try {
@@ -837,20 +1099,19 @@ export function createCommandWorker({ cfg, logger }) {
       const items = Array.isArray(data?.items) ? data.items : []
       if (items.length === 0) return
 
-      state.busy = true
-      logger.info('commands claimed', { count: items.length })
-      try {
-        for (const item of items) {
-          if (state.stopped) break
-          await handle(item)
-        }
-      } finally {
-        state.busy = false
-      }
+      // 去重：队列里已有的（还没轮到的）和正在跑的都不可能再被领取一次，
+      // 这里只是兜底，避免 Hub 抖动时同一条命令进两次队列。
+      const known = new Set([...state.queue.map((item) => item.id), ...state.slots.keys()])
+      const fresh = items.filter((item) => !known.has(item.id))
+      if (fresh.length === 0) return
+
+      state.queue.push(...fresh)
+      logger.info('commands claimed', { count: fresh.length, queued: state.queue.length })
     } catch (error) {
       logger.warn('command poll failed', { message: error.message })
     } finally {
       state.ticking = false
+      pump()
     }
   }
 
@@ -877,22 +1138,23 @@ export function createCommandWorker({ cfg, logger }) {
     state.stopped = true
 
     const inflight = [...state.children.entries()]
-    if (inflight.length === 0) return { interrupted: [], reported: [] }
+    // 队列里还没开始的命令也要收尾：它们在 Hub 上是 delivered，
+    // 不写就永远停在「已送达」，手机上看不出这条其实已经不会跑了。
+    const queued = state.queue.splice(0, state.queue.length)
+    const ids = [...inflight.map(([id]) => id), ...queued.map((item) => item.id)]
+    if (ids.length === 0) return { interrupted: [], reported: [] }
 
     const errorText = interruptionErrorText(reason)
-    logger.warn('interrupting in-flight commands before shutdown', {
-      reason,
-      ids: inflight.map(([id]) => id)
-    })
+    logger.warn('interrupting in-flight commands before shutdown', { reason, ids })
 
-    const results = await Promise.allSettled(inflight.map(([id]) => {
+    const results = await Promise.allSettled(ids.map((id) => {
       state.interrupted.set(id, reason)
       return withTimeout(report(id, 'failed', { errorText }), reportTimeoutMs, `PATCH ${id}`)
     }))
 
     const reported = []
     results.forEach((result, index) => {
-      const id = inflight[index][0]
+      const id = ids[index]
       if (result.status === 'fulfilled') reported.push(id)
       else logger.error('command interrupt report failed', {
         id,
@@ -904,6 +1166,7 @@ export function createCommandWorker({ cfg, logger }) {
       logger.warn('in-flight commands left running (keepChildren)', {
         reason,
         interrupted: inflight.length,
+        queued: queued.length,
         reported: reported.length
       })
     } else {
@@ -911,10 +1174,11 @@ export function createCommandWorker({ cfg, logger }) {
       logger.warn('in-flight commands stopped', {
         reason,
         interrupted: inflight.length,
+        queued: queued.length,
         reported: reported.length
       })
     }
-    return { interrupted: inflight.map(([id]) => id), reported, keptChildren: keepChildren }
+    return { interrupted: ids, reported, keptChildren: keepChildren }
   }
 
   function stop() {

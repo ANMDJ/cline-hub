@@ -384,6 +384,20 @@ class HubStore extends ChangeNotifier {
     return created;
   }
 
+  /// 取消一条还没结束的命令（P14）。
+  ///
+  /// 服务端返回的是一条**新状态**的命令：排队中的直接 `cancelled`，
+  /// 执行中的先 `cancelling`，bridge 收尾后 SSE 会再推一条 `cancelled`。
+  /// 这里先把列表更新掉，用户不用等下一轮刷新才看到「取消中」。
+  Future<CommandItem> cancelCommand(String id) async {
+    final updated = await api.cancelCommand(id);
+    final previous = _upsertCommand(updated);
+    // 排队中取消是直接终态：通知规则同「命令结束」，别让用户以为它还在跑。
+    _maybeNotifyCommand(previous, updated);
+    notifyListeners();
+    return updated;
+  }
+
   // ---------------------------------------------------------------- hooks API
   Future<void> refreshHooks() async {
     if (_disposed || loadingHooks) return;

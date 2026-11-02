@@ -94,3 +94,63 @@
   2. `--keep-session` 的注释已改成「只保进程、保不住管道与会话」，别把它当万能开关。
   3. 每次重启前仍要按 §0 写一条记录，并在下次开工时先读这里。
 
+### 2026-11-02 12:51 用户要求重启 bridge（在当前会话里排 `restart:idle`，不掐断会话）
+
+- **为什么杀**：用户在手机上对 `cline-hub` 下发 `cmd_3ac6900fc5c5`（act，prompt「重启 bridge」），
+  要重启 bridge。这条命令拉起的 session `1793595008891_nkvfx` **就是当前会话**
+  （`bridge/logs/bridge.log` 04:50:06Z 有 `command started` / `command session linked`），
+  当时唯一的活命令就是它自己 —— 直接 `npm run restart` 会重演 12:24 的
+  「管道断 → cline exit 1 → 对话断在半路」。
+- **怎么杀的**：`cd bridge; npm run restart:idle -- --reason "用户要求重启 bridge（等当前会话跑完，15s 缓冲）" --grace 15000`
+  （= `stop.mjs --restart --when-idle`）。它只排一个 detached supervisor
+  （`scripts/restart-when-idle.mjs`，pid 7864，锁文件 `%TEMP%\cline-hub-cmd\restart-when-idle.json`），
+  轮询 `%TEMP%\cline-hub-cmd\running\`，等本条命令登记消失 + **15 秒**缓冲后再调用
+  `stop.mjs --restart`，走 `POST /admin/stop` 的优雅路径（ADR-36 / ADR-39）。
+  > 为什么把缓冲从默认 3s 放宽到 15s：登记文件是在 cline 子进程 `close` 时删的
+  > （`command-worker.js` 的 `finish()`），而回写 `done` 的 PATCH 在那之后才发；
+  > 3s 里还要加上 `stop.mjs` 启动 + 健康检查的时间，Hub 慢一点就可能被 `shutdown()`
+  > 当成 in-flight 命令改成 `failed`。第一版 supervisor（pid 23472，默认 3s）排好后
+  > 按精确 pid 结束并重排 —— supervisor 不是 bridge、不持有命令状态，只留下一个过期锁
+  > 文件，新 supervisor 会覆盖它。
+- **受影响**：没有执行中的命令被回写 `failed`（`cmd_3ac6900fc5c5` 在本次回复结束后自然
+  `done`，登记文件由 worker 正常清理）；bridge 重启的那几秒手机 SSE 会断一下，
+  App 会自己重连，命令/会话数据不丢。
+- **恢复**：重启由 supervisor 自动完成，无需人工拉起。下次开工核对：
+  1. `bridge/logs/restart-when-idle.log` 末尾有 `idle, handing over to stop.mjs` + `stop/restart spawned`；
+  2. `bridge/logs/bridge.log` 有 `shutting down` 与新的 `bridge started`；
+  3. `(Invoke-WebRequest http://127.0.0.1:3210/health).Content` 返回 `"service":"cline-bridge"`；
+  4. `npm run ps` 里没有残留的 `cmd_3ac6900fc5c5` 登记。
+- **遗留**：无。若 supervisor 因「2 小时内有命令一直活着」超时（`timeout, bridge left untouched`），
+  说明它等的那条命令卡住了 —— 先 `npm run reconcile -- --dry-run`，再按 §0 重排一次。
+
+### 2026-11-02 13:07 误取消当前会话 + 排 restart:idle 让 P7 / P14 生效
+
+- **事故**：验证 `POST /api/v1/commands/:id/cancel` 时，我挑了「列表里最新一条」作为测试对象，
+  而最新那条正是当前会话 `cmd_4699c43ec58a`（bridge 拉起的这条命令）。接口把状态改成了
+  `cancelling`。发现后立刻在服务器上用 psql 把它改回 `running` 并清空 `cancel_requested_at`：
+  ```sql
+  update commands set status='running', cancel_requested_at=null where id='cmd_4699c43ec58a';
+  ```
+  当时线上 bridge 还是 12:27 的旧版本（没有取消轮询），所以进程没被杀，会话继续跑。
+- **教训**：测取消接口不要拿最新一条命令；用一条 `done` 的命令验 409，或直接开事务 +
+  `rollback` 验约束。这条已写进 `docs/status.md` 的落地记录。
+- **为什么重启**：P7（并发池）和 P14（取消轮询）都在 `bridge/src/command-worker.js`，
+  必须重启才加载。当前命令就是本会话，直接 `npm run restart` 会重演 12:24 的断线，
+  所以用：
+  ```powershell
+  cd bridge
+  npm run restart:idle -- --reason "加载 P7 并发池 / P14 取消轮询（等当前命令跑完）" --grace 20000
+  ```
+  它只排一个 detached supervisor，等本命令的登记文件消失 + 20 秒缓冲后再走
+  `/admin/stop` 的优雅路径；`commands.concurrency` 本次同时从缺省 1 调成 2（同目录仍串行）。
+- **受影响**：执行中的命令只有本会话；本会话自然结束后才重启，不应有命令被回写 `failed`。
+  重启的那几秒手机 SSE 会断一下，App 自己重连。
+- **恢复**：无需人工拉起。下次开工核对：
+  1. `bridge/logs/restart-when-idle.log` 末尾有 `idle, handing over to stop.mjs`；
+  2. `bridge/logs/bridge.log` 有 `shutting down` 与新的 `bridge started`；
+  3. `(Invoke-WebRequest http://127.0.0.1:3210/health).Content` 返回 `"service":"cline-bridge"`；
+  4. 日志里出现 `commands claimed {"count":…,"queued":…}` 说明新代码已生效（旧版没有 `queued` 字段）。
+- **遗留**：手机需要装 App `1.1.4+6`（`adb devices` 为空，用 App 内「检查更新」）；
+  装完后可在命令详情里点「取消这条命令」做一次真机验证。
+
+
