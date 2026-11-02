@@ -2,6 +2,7 @@ import {
   optionalString,
   isoOrNull,
   limitFrom,
+  normalizeFsPath,
   resolveDeviceId,
   readDeviceScope,
   toJsonObject
@@ -15,7 +16,7 @@ function workspaceFromPayload(payload) {
     payload?.cwd ??
     null
   if (typeof candidate !== 'string' || !candidate.trim()) return null
-  return candidate.trim().slice(0, 1000)
+  return normalizeFsPath(candidate.trim().slice(0, 1000))
 }
 
 export function createHookRoutes({ db, logger, sse }) {
@@ -93,7 +94,7 @@ export function createHookRoutes({ db, logger, sse }) {
             id: row.id,
             deviceId: row.device_id,
             event: row.event,
-            workspace: row.workspace,
+            workspace: normalizeFsPath(row.workspace),
             title: row.title,
             body: row.body,
             sessionId: row.session_id,

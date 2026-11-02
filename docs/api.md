@@ -1,6 +1,6 @@
 # Hub API 约定（v1）
 
-Base URL：本机 `http://127.0.0.1:3100`，线上 `https://hub.littlewish.top`。
+Base URL：本机 `http://127.0.0.1:3100`，线上 `https://hub.littlewish.top:8443`。
 
 ## 鉴权
 
@@ -44,6 +44,7 @@ SSE 例外：`GET /api/v1/events?token=<token>`（EventSource 不能设置请求
 | 方法 | 路径 | 角色 | 说明 |
 |---|---|---|---|
 | GET | `/api/v1/health` | 匿名 | 存活 + DB 延迟 |
+| GET | `/api/v1/devices` | any | 电脑端（bridge）列表：在线时间 / 会话数 / 命令计数 |
 | GET | `/api/v1/clients` | admin | 设备列表（含会话数、待执行命令数） |
 | POST | `/api/v1/clients` | admin | 创建设备，返回一次性 token |
 | DELETE | `/api/v1/clients/:id?confirm=1` | admin | 删除设备（级联删数据） |
@@ -76,9 +77,47 @@ SSE 例外：`GET /api/v1/events?token=<token>`（EventSource 不能设置请求
 | `app` / `admin` | 全部设备 | 只看指定设备 |
 
 适用于 `GET /sessions`、`GET /sessions/:sessionId`、`GET /sessions/:sessionId/messages`、
-`GET /commands`、`GET /commands/:id`、`GET /hooks`、`GET /events`（SSE）。
+`GET /commands`、`GET /commands/:id`、`GET /hooks`、`GET /events`（SSE）、`GET /devices`。
 `device` token 读别人的命令详情返回 `403 forbidden`；命令**领取**（`/commands/pending`）
 一直是「只领自己的」，不受影响。
+
+## 设备列表（`GET /api/v1/devices`，ADR-47）
+
+给 App 渲染「已接入设备」和多设备筛选 chip。只返回 `role='device'` 的 client（手机自己的
+`app` client 不算设备）。
+
+```json
+{
+  "ok": true,
+  "items": [
+    {
+      "id": "localone",
+      "name": "LocalOne-Windows",
+      "createdAt": "2026-11-01T00:00:00.000Z",
+      "lastSeenAt": "2026-11-02T05:00:00.000Z",
+      "sessionCount": 12,
+      "commandCount": 4,
+      "pendingCommands": 1,
+      "runningCommands": 2,
+      "lastSessionAt": "2026-11-02T04:59:00.000Z",
+      "lastCommandAt": "2026-11-02T04:58:00.000Z"
+    }
+  ]
+}
+```
+
+| 字段 | 含义 |
+|---|---|
+| `lastSeenAt` | bridge 最近一次请求 Hub 的时间（服务端 60 秒节流写入）；App 用「2 分钟内」粗略判在线 |
+| `sessionCount` / `commandCount` | 该设备的历史总数 |
+| `pendingCommands` | `pending` + `delivered`（还没开始跑） |
+| `runningCommands` | `running` + `cancelling` |
+| `lastSessionAt` | 最近一条会话的有效时间（`ended_at → started_at → updated_at → collected_at` 依次兜底） |
+| `lastCommandAt` | 最近一条命令的创建时间 |
+
+- `app` / `admin`：返回全部电脑端；`device` token：只返回自己（与 ADR-43 一致）。
+- 没有这个接口时 App 会退回「从已加载数据里猜设备」；升级 Hub 后设备列表更完整
+  （新接入、还没产生数据的电脑也会出现）。
 
 ## 会话上报（bridge 用）
 
@@ -117,6 +156,11 @@ SSE 例外：`GET /api/v1/events?token=<token>`（EventSource 不能设置请求
 ```
 
 响应：`{ "ok": true, "sessionId": "...", "inserted": true }`
+
+`workspaceRoot` / `projectRoot` 入库前会过 `normalizeFsPath()`（`C:/a/b` → `C:\a\b`，
+去重复 / 尾部斜杠；大小写与 POSIX 路径不动），读取时再归一化一次，历史行也能按目录合并。
+会话里的 `workspace` 只是展示用的目录名，不做归一化；命令 / hook 里的 `workspace` 可能是绝对路径，
+会一起归一化。
 
 - 幂等：`(device_id, session_id)` 唯一，重复上报走 `update`，`inserted` 反映是否新建。
 - 时间接受 ISO8601 或 epoch 毫秒；无法解析时为 `null`。

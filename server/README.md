@@ -52,6 +52,15 @@ curl http://127.0.0.1:3100/api/v1/health
 - `commands`：`pending → delivered → running → done/failed/cancelled`，
   手机端取消执行中的命令会先进入 `cancelling`（bridge 停完进程再回写 `cancelled`）；
   领取用 `for update skip locked`，多实例也不会重复取。
+- 路径列（`sessions.workspace_root` / `project_root`、`commands.workspace`、`hooks.workspace`）
+  写入前过 `normalizeFsPath()`：`C:/a/b` 与 `C:\a\b` 存成同一串；读取时再归一化一次，
+  历史行不用回填也能按目录合并（ADR-44）。只动 Windows 风格的路径，POSIX 路径原样保留。
+
+## 设备列表
+
+`GET /api/v1/devices`（`auth: any`）给 App 用：只返回 `role='device'`，`device` token 只看自己，
+`app` / `admin` 看全部。字段与口径见 [`../docs/api.md`](../docs/api.md)「设备列表」。
+`GET /api/v1/clients` 仍是 admin 专属（含 `app` client 与创建 / 删除）。
 
 ## 读接口的设备范围
 

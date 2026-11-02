@@ -6,6 +6,7 @@ import {
   optionalString,
   limitFrom,
   isoOrNull,
+  normalizeFsPath,
   readDeviceScope
 } from '../util.js'
 
@@ -37,7 +38,7 @@ function toCommand(row) {
     deviceId: row.device_id,
     prompt: row.prompt,
     mode: row.mode,
-    workspace: row.workspace,
+    workspace: normalizeFsPath(row.workspace),
     /** 有值时 bridge 会用 `cline --id` 续在这个会话里；空表示新开会话。 */
     sessionId: row.session_id ?? null,
     status: row.status,
@@ -81,7 +82,7 @@ export function createCommandRoutes({ db, logger, sse }) {
         if (!MODES.has(mode)) {
           throw new HttpError(400, `mode must be one of ${[...MODES].join(', ')}`, 'invalid_field')
         }
-        const workspace = optionalString(body.workspace, 'workspace', 1000)
+        const workspace = normalizeFsPath(optionalString(body.workspace, 'workspace', 1000))
         const sessionId = optionalString(body.sessionId, 'sessionId', 200)
         const id = `cmd_${crypto.randomBytes(6).toString('hex')}`
 

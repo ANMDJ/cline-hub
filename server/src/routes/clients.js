@@ -17,8 +17,59 @@ function toClient(row) {
   }
 }
 
+/**
+ * 设备列表的对外形状（`GET /api/v1/devices`）。
+ *
+ * 只给「电脑端」(`role='device'`)：手机自己的 app client 不算设备，
+ * 否则设备筛选里会出现用户根本没在下发目标里见过的 id。
+ */
+function toDevice(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    createdAt: row.created_at,
+    lastSeenAt: row.last_seen_at,
+    sessionCount: row.session_count,
+    commandCount: row.command_count,
+    pendingCommands: row.pending_commands,
+    runningCommands: row.running_commands,
+    lastSessionAt: row.last_session_at,
+    lastCommandAt: row.last_command_at
+  }
+}
+
 export function createClientRoutes({ db, logger }) {
   return [
+    {
+      // App 也要能读，所以是 `any` 而不是 `admin`：device token 只看自己，
+      // app/admin 看全部电脑端（ADR-47）。`GET /api/v1/clients` 仍是 admin 专属。
+      method: 'GET',
+      pattern: '/api/v1/devices',
+      auth: 'any',
+      async handler({ client }) {
+        if (!client) throw new HttpError(401, 'missing or invalid token', 'unauthorized')
+
+        const scoped = client.role === 'device'
+        const rows = await db.many(
+          `select c.id, c.name, c.created_at, c.last_seen_at,
+                  (select count(*)::int from sessions s where s.device_id = c.id) as session_count,
+                  (select count(*)::int from commands m where m.device_id = c.id) as command_count,
+                  (select count(*)::int from commands m
+                    where m.device_id = c.id and m.status in ('pending', 'delivered')) as pending_commands,
+                  (select count(*)::int from commands m
+                    where m.device_id = c.id and m.status in ('running', 'cancelling')) as running_commands,
+                  (select max(coalesce(s.ended_at, s.started_at, s.updated_at, s.collected_at))
+                     from sessions s where s.device_id = c.id) as last_session_at,
+                  (select max(m.created_at) from commands m where m.device_id = c.id) as last_command_at
+           from clients c
+           where c.role = 'device'${scoped ? ' and c.id = $1' : ''}
+           order by c.created_at asc`,
+          scoped ? [client.id] : []
+        )
+        return { ok: true, items: rows.map(toDevice) }
+      }
+    },
+
     {
       method: 'GET',
       pattern: '/api/v1/clients',

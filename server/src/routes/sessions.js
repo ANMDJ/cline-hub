@@ -6,6 +6,7 @@ import {
   isoOrNull,
   boolOrFalse,
   limitFrom,
+  normalizeFsPath,
   resolveDeviceId,
   readDeviceScope,
   toJsonArray,
@@ -76,9 +77,11 @@ function toListItem(row) {
     deviceId: row.device_id,
     sessionId: row.session_id,
     workspace: row.workspace,
-    workspaceRoot: row.workspace_root,
+    // 读的时候也归一化：历史行里混着 `C:/...`（cline CLI 写的）和 `C:\...`（人手填的），
+    // 不纠正的话 App 按路径分组会把同一个项目拆成两组。
+    workspaceRoot: normalizeFsPath(row.workspace_root),
     project: row.project,
-    projectRoot: row.project_root,
+    projectRoot: normalizeFsPath(row.project_root),
     projectKind: row.project_kind,
     source: row.source,
     status: row.status,
@@ -142,7 +145,7 @@ export function createSessionRoutes({ db, logger, sse }) {
           deviceId,
           sessionId,
           optionalString(session.workspace, 'session.workspace', 300),
-          optionalString(session.workspaceRoot, 'session.workspaceRoot', 1000),
+          normalizeFsPath(optionalString(session.workspaceRoot, 'session.workspaceRoot', 1000)),
           optionalString(session.source, 'session.source', 50),
           optionalString(session.status, 'session.status', 50),
           intOrNull(session.exitCode),
@@ -161,7 +164,7 @@ export function createSessionRoutes({ db, logger, sse }) {
           JSON.stringify(metrics),
           isoOrNull(session.collectedAt),
           optionalString(session.project, 'session.project', 200),
-          optionalString(session.projectRoot, 'session.projectRoot', 1000),
+          normalizeFsPath(optionalString(session.projectRoot, 'session.projectRoot', 1000)),
           optionalString(session.projectKind, 'session.projectKind', 20)
         ])
 

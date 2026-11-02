@@ -96,6 +96,22 @@ async function main() {
     items1.length > 0 && 'resultPreview' in items1[0] && !('resultText' in items1[0])
   )
 
+  const devicesForDevice = await req('GET', '/api/v1/devices', { token: deviceToken })
+  check(
+    'GET /devices as device -> only self',
+    devicesForDevice.status === 200 &&
+      Array.isArray(devicesForDevice.json?.items) &&
+      devicesForDevice.json.items.length <= 1,
+    `${devicesForDevice.json?.items?.length ?? '?'} items`
+  )
+
+  const devicesForApp = await req('GET', '/api/v1/devices', { token: appToken })
+  check(
+    'GET /devices as app -> device list',
+    devicesForApp.status === 200 && Array.isArray(devicesForApp.json?.items),
+    `${devicesForApp.json?.items?.length ?? '?'} devices`
+  )
+
   if (page1.json?.nextCursor && items1.length > 0) {
     const cursor = encodeURIComponent(page1.json.nextCursor)
     const page2 = await req('GET', `/api/v1/sessions?limit=2&cursor=${cursor}`, { token: deviceToken })

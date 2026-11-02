@@ -16,6 +16,36 @@ export function optionalString(value, field, max = 4000) {
   return trimmed.length > max ? trimmed.slice(0, max) : trimmed
 }
 
+/**
+ * 统一文件系统路径的写法。
+ *
+ * Windows 上同一个目录可能被写成 `C:\a\b` 或 `C:/a/b`：cline CLI 落库用正斜杠，
+ * 人手填的白名单 / 命令参数用反斜杠。两者在库里是不同的字符串，App 按路径分组
+ * 就会把同一个项目拆成两组（2026-11-02 实测：`...\cline-hub` 31 条 + `.../cline-hub` 1 条）。
+ *
+ * 规则只抹平「同一个目录的不同写法」，**不动大小写**（Linux 路径大小写敏感）：
+ *   * `C:/a/b`、`C:\\a\\b`、`C:\a\b\` → `C:\a\b`
+ *   * `\\server\share\` → `\\server\share`（UNC 的两个前导反斜杠保留）
+ *   * `/home/me/app` 原样返回（POSIX 路径没有分隔符歧义）
+ *   * 相对名（`kids_points_app`）原样返回
+ */
+export function normalizeFsPath(value) {
+  if (typeof value !== 'string') return value
+  const raw = value.trim()
+  if (!raw) return raw
+  const windows = /^[a-zA-Z]:[\\/]/.test(raw) || raw.startsWith('\\\\')
+  if (!windows) return raw
+
+  const unc = raw.startsWith('\\\\')
+  const body = (unc ? raw.slice(2) : raw)
+    .replace(/\//g, '\\')
+    .replace(/\\{2,}/g, '\\')
+    .replace(/\\+$/, '')
+  // 盘符根 `C:\` 不能去掉反斜杠：`C:` 的语义是「盘符当前目录」
+  const normalized = /^[a-zA-Z]:$/.test(body) ? `${body}\\` : body
+  return (unc ? '\\\\' : '') + normalized
+}
+
 export function intOrNull(value) {
   if (value === undefined || value === null || value === '') return null
   const num = Number(value)
