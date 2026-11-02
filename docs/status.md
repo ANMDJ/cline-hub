@@ -169,7 +169,7 @@
 - **验证**：`cd bridge; node --test` **48 项全绿**（新增 `command-pool.test.js` 2 项、
   `command-cancel.test.js` 2 项，都是真跑 PowerShell 进程的端到端）；`cd server; node --test`
   **18 项全绿**（新增 5 项取消 / 防回翻）；`cd app; flutter analyze` 无问题、
-  `flutter test` **56 项通过（5 项真机用例跳过）**。
+  `flutter test` **57 项通过（5 项真机用例跳过）**。
 - **上线**：Hub 镜像已重建，迁移 007 / 008 已应用；线上 `POST /cancel` 对已结束命令返回
   **409**，`cancelling` 在事务内写入再回滚验证通过；APK `1.1.4+6`（55,207,088 B，
   sha256 `60fb0102…2304`）已发布，`HEAD /app/cline-console-1.1.4.apk` 200，
@@ -185,7 +185,7 @@
 
 | 项 | 实测 |
 |---|---|
-| 分支 / HEAD | `master` @ `919ef39`（P7 / P14 / P8） |
+| 分支 / HEAD | `master` @ `f60ddf9`（P7 / P14 / P8） |
 | Hub | `{"ok":true,...,"db":{"ok":true,"latencyMs":0},"sseClients":1}` |
 | bridge | `{"ok":true,"service":"cline-bridge"}`（手动启动，未开机自启） |
 | 线上入口 | `https://hub.littlewish.top:8443` |

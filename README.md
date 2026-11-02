@@ -128,7 +128,7 @@ flutter build apk --release
 | M0 | Hook 脚本 + ntfy 通知 | ✅ 完成 |
 | M1 | bridge 采集器 + Hub 服务 + 部署 | ✅ 完成（smoke 20/20；域名被备案拦截后改走 IP 前缀入口，见上节） |
 | M2a | 远程命令通道（bridge 执行器） | ✅ 完成（App→Hub→bridge→PowerShell→回写，实测 6s 闭环） |
-| M2b | Flutter App（会话列表/命令执行） | ✅ 完成（三 Tab + SSE 实时 + 下发/取消命令 + 系统通知 + Markdown；`flutter test` 56/56 通过，5 个真机用例默认跳过） |
+| M2b | Flutter App（会话列表/命令执行） | ✅ 完成（三 Tab + SSE 实时 + 下发/取消命令 + 系统通知 + Markdown；`flutter test` 57/57 通过，5 个真机用例默认跳过） |
 
 
 ## 快速开始（本机）

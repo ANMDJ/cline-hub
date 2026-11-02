@@ -291,6 +291,51 @@ void main() {
 
     store.dispose();
   });
+
+  testWidgets('命令详情可以取消运行中的命令（二次确认）', (tester) async {
+    tester.view.physicalSize = const Size(411, 914);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final settings = await configuredSettings();
+    final fake = FakeHubApi(
+      commandItems: [
+        CommandItem(
+          id: 'cmd_cancel',
+          deviceId: 'localone',
+          prompt: '跑很久的任务',
+          mode: 'act',
+          status: 'running',
+          workspace: r'C:\work\hub',
+          createdAt: DateTime.now(),
+        ),
+      ],
+    );
+    final store = HubStore(settings: settings, apiFactory: (_) => fake);
+    await store.refreshCommands();
+
+    await tester.pumpWidget(wrap(CommandsPage(store: store)));
+    await tester.pump();
+
+    await tester.tap(find.text('跑很久的任务'));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('取消这条命令'));
+    await tester.tap(find.text('取消这条命令'));
+    await tester.pumpAndSettle();
+
+    // 二次确认：还没点「取消命令」时不能发请求。
+    expect(fake.cancelledCommands, isEmpty);
+
+    await tester.tap(find.text('取消命令'));
+    await tester.pumpAndSettle();
+
+    expect(fake.cancelledCommands, <String>['cmd_cancel']);
+    expect(find.textContaining('已请求取消'), findsWidgets);
+
+    store.dispose();
+  });
 }
 
 /// 三条会话：两条在 kids_points_app、一条在 hub，按最近对话时间倒序。
