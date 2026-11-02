@@ -281,7 +281,7 @@
 | M2c | 逐条消息流 + 项目聚合 + 详情页 |
 | M3（进行中） | 稳定性与可读性：模式、配色、全文、复制、并发 |
 
-最近 6 个提交：`a20abe1` 无空格 prompt 被当子命令 → `e0995aa` 详情页概览弹层 → `30b51ab` 活动流误报失败 → `161919e` 轮询定时器泄漏 → `d254f49` 回写新会话 ID → `f0e6e69` 会话按项目聚合。
+最近 6 个提交：`c3ee1da` 无空格 prompt 被当子命令 → `abb6a35` 详情页概览弹层 → `ca49d22` 活动流误报失败 → `5513f3e` 轮询定时器泄漏 → `e3d8e47` 回写新会话 ID → `ec1d3ea` 会话按项目聚合。
 
 ## 3. 拓扑与端口
 
@@ -320,7 +320,7 @@ P19 已上线）；下一步候选：真机核对 P2、Web 预览降级（P2 段
 1. **CLI 没有 `--act`**：`modeExplicitlySet` 只认 `--plan/--yolo/--zen`，否则模式取 `settings/global-settings.json` 的 `planActMode` → 手机发 act 也会跑成 plan。修法见 `command-worker.js` 的 `clineModeEnv()`。
 2. **`--id` 续会话要 TTY**：无头只能 `-c <workspace>` 新开会话。
 3. **`spawn` 必须 `stdio: 'ignore'`**：否则 cline 等 stdin，命令永远「执行中」。
-4. **prompt 单个词会被当子命令**：不带空格时补尾随空格（`a20abe1`）。
+4. **prompt 单个词会被当子命令**：不带空格时补尾随空格（`c3ee1da`）。
 5. **SSE 反代必须 `flush_interval -1`**，否则事件被 Caddy 缓冲。
 6. **本机打包要先设 `JAVA_HOME`**：SDK 在 `%LOCALAPPDATA%\Android\Sdk`、JDK 17 在 `<JDK 17 路径>`，
    但默认 PATH 上是 zulu-8（Gradle 9 直接拒绝）。`flutter build apk` 前：
@@ -413,7 +413,7 @@ powershell -NoProfile -File deploy/windows/verify-hub.ps1
 | 2026-11-02 | **P25 接入文档**：`docs/new-device.md`（第二台 Windows：建设备 / config 字段 / 起 bridge / 手机确认 / 多机边界 / 排障）、`docs/self-host.md`（从零自托管：Hub + Postgres + Caddy、两类 token、bridge、APK、验收清单、多人边界、升级备份、安全基线）、`bridge/README.md`（配置 / 脚本 / 目录 / 验证）；`docs/README.md`、`AGENTS.md`、`README.md` 加入口 |
 | 2026-11-02 | **P26 App 1.1.5+7 发版**：APK 55,239,940 B / sha256 `53a64cd1…d5ac` → `/var/www/cline-hub/app/cline-console-1.1.5.apk`（HEAD 200 / `application/vnd.android.package-archive`）；`/srv/cline-hub/releases/latest.json` 已更新，`GET /api/v1/app/latest` 返回 1.1.5 / build 7 / 三条 notes；`adb devices` 为空，手机走 App 内「检查更新」 |
 | 2026-11-02 | **Hub 重部署核对（14:18–14:19）**：先逐文件核对 —— 宿主机 `/srv/cline-hub/server/src`、容器内 `src` 与本地工作区 16 个 `*.js` 的 sha256 全部一致（`http.js` / `auth.js` 仅行尾 CRLF 差异），`scripts/*.mjs` 也一致；`docker compose build` 全命中缓存（同一镜像 ID，`up -d` 判定无需重建）；`migrate` 输出 `migrations up to date {"total":8}`；用 `up -d --force-recreate hub` 真正重启容器（`Up 5s`、health `uptimeSec=5`、`sseClients` 自动回到 1）；线上 `node server/scripts/smoke.mjs` **22/22 通过**（含两条新增 `/devices` 检查与 SSE 命令事件）；109 条会话里 `workspaceRoot` 含正斜杠 **0 条**（4 组：49/35/21/4）；smoke 留下的 `cmd_b9fa6fb6e797`（无 workspace）被 bridge 判 `failed: no usable workspace`，没有真起 cline |
-| 2026-11-02 | **推到 GitHub（P27）**：新建**私有**仓库 `ANMDJ/cline-hub`（`gh` 2.103.3 用 `winget` 装到 `C:\Program Files\GitHub CLI\`；设备流第一次卡在 `github.com/login/oauth/access_token` 超时，改走本机代理 `127.0.0.1:7897` 后以账号 `ANMDJ` 授权成功，scopes `repo`/`read:org`/`gist`）；`origin` = `git@github.com:ANMDJ/cline-hub.git`，`master` 已推送（`4f005cd`）并设上游；仓库本地 `core.sshCommand` 钉到 `~/.ssh/id_github_work`（默认 `id_ed25519` 是另一把密钥）；推送前核对：179 个跟踪文件 / 2.5 MiB 对象库，无 `bridge/config.json`、`.secrets/`、`server/.env`、`*.pem` 被跟踪；`site` 的 4 个 `data-todo="repo"` 链接**未**替换（仓库仍私有，转公开再改） |
+| 2026-11-02 | **推到 GitHub（P27）**：新建**私有**仓库 `ANMDJ/cline-hub`（`gh` 2.103.3 用 `winget` 装到 `C:\Program Files\GitHub CLI\`；设备流第一次卡在 `github.com/login/oauth/access_token` 超时，改走本机代理 `127.0.0.1:7897` 后以账号 `ANMDJ` 授权成功，scopes `repo`/`read:org`/`gist`）；`origin` = `git@github.com:ANMDJ/cline-hub.git`，`master` 已推送（`817f418`）并设上游；仓库本地 `core.sshCommand` 钉到 `~/.ssh/id_github_work`（默认 `id_ed25519` 是另一把密钥）；推送前核对：179 个跟踪文件 / 2.5 MiB 对象库，无 `bridge/config.json`、`.secrets/`、`server/.env`、`*.pem` 被跟踪；`site` 的 4 个 `data-todo="repo"` 链接**未**替换（仓库仍私有，转公开再改） |
 | 2026-11-02 | **仓库转公开 + 落地页填链接（P28）**：`gh repo edit --visibility public`（`ANMDJ/cline-hub`）；`site/index.html` 三处 `data-todo="repo"` 占位（顶栏 / CTA「看源码」/ 页脚）换成 `https://github.com/ANMDJ/cline-hub` 并**去掉 `data-todo`**（否则 `app.js` 会 `preventDefault` 弹「地址还没填」），`app.js` 注释改为「只兜 fork 后的占位」；`site/README.md` / `README.md` / `AGENTS.md` 更正「4 个占位 / 仓库还是私有」的过期说法（实际 3 处）；服务器 IP 与域名**未脱敏**（`hub.littlewish.top` 的 A 记录本就直指该 IP，仓库里藏它没有安全意义） |
 | 2026-11-02 | **落地页对齐 1.1.5 + 接上仓库（P29）**：`site/index.html` 按当前版本重写 —— Hero 按钮「五分钟自建 / 下载 App 1.1.5（`/app/cline-console-1.1.5.apk`）/ GitHub 源码」，facts 换成 `1.1.5` + `22/22`；特性卡 6→8（远程命令与取消、模板化执行 · 并发池、多设备、结构化输出、8 个迁移、22 项冒烟）；架构三段补 `messages.json` / `devices` / Markdown / 设备筛选 / `pid` 对账；快速开始 `git clone` 填真仓库、冒烟输出改 `22/22`；进度表 M2b/M2c 完成、M3 进行中（剩 FCM 与审计视图）；FAQ 加「APK 在哪下载」；页脚接仓库 + CHANGELOG + 版本号。`site/check-site.mjs` 增加 `/app/*` 运行时白名单（APK 由 Caddy 直出、不在 `site/` 里，否则误报「文件不存在」）；`site/README.md` 记下「版本 / APK 路径共 6 行 9 处，发版一起改」。`node site/check-site.mjs` 通过；**已发版**：`tar` → `scp` → 服务器解包（备份 `/tmp/site-backup-20261102-153423.tgz`，文件 chmod `644`），线上 `http://82.157.153.22/` 实测 200、`1.1.5`×9、`22/22`×2、APK 链接×3、`data-todo` 残留 0、APK HEAD 200 |
 | 2026-11-02 | **脱敏本机路径（P30）**：公开仓库里写死的个人绝对路径全部换掉 —— Windows 用户目录统一写成 `C:\Users\alice`（代码注释 / 接口示例 / 测试夹具，大小写用例同步成 `ALICE` 以保留「不动大小写」的断言）、Git Bash 的 `/c/Users/<账号>/...` → `<仓库>`、Android SDK / Gradle / JDK 的本机绝对路径 → `%LOCALAPPDATA%\Android\Sdk` / `%USERPROFILE%\.gradle` / `<JDK 17 路径>`、`Downloads\kids_privae.pem` → `<下载目录>/kids.pem`。`deploy/windows/ClineBridge.vbs` 改为顶部 `REPO` 常量 + 拼接（它会被复制进「启动」文件夹，无法靠脚本自定位；同时 `README.md` 里的同款片段同步）。`AGENTS.md` 仓库根改成「当前目录 + `<仓库>` + `%USERPROFILE%` 示例」，`docs/bridge-notes.md` 的本机账号改成 `<你的账号>`；`LICENSE` 的版权署名保留（那是作者名，不是路径）。回归：server **39/39**、bridge **53/53**、whitelist 自检 **10/10**、App `flutter test` **67 通过 / 5 跳过**、`node site/check-site.mjs` 通过 |
