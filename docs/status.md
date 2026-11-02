@@ -27,6 +27,10 @@
 3. 重启 Windows bridge：会触发 `transcript version changed, re-arming backfill`，随后 2 个会话/tick 补历史；
 4. App 重新打包（`1.1.0+2`）后才带新的详情页/复制/选项更新 UI。
 
+**App 自更新还需要一步（一次性）**：`8443` 站点原来把所有路径都反代给 Hub，
+`/app/*.apk` 没有静态出口。`deploy/Caddyfile` 已补 `handle_path /app/*` 路由，
+服务器上要同步一次并 `systemctl reload caddy`，否则更新链接会 404（Hub 返回的是 404 而不是 APK）。
+
 规则：**P3 方案已定为 B** —— 提升限额后，只回填最近 60 个会话（`TRANSCRIPT_BACKFILL_LIMIT`），每 tick 2 个，按字节切批。
 
 ## 1. 基线快照（2026-11-02 09:15 实测）

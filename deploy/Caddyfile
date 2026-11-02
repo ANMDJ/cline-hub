@@ -129,6 +129,15 @@ http://82.157.153.22 {
 hub.littlewish.top:8443 {
 	encode zstd gzip
 
+	# App 自更新：APK 是静态文件，必须抢在 catch-all 反代之前。
+	# handle_path 会剥掉 /app 前缀，所以 root 指到 /var/www/cline-hub/app，
+	# 即 /app/cline-console-1.1.0.apk -> /var/www/cline-hub/app/cline-console-1.1.0.apk。
+	# 50MB 的包不该过 Node 进程。
+	handle_path /app/* {
+		root * /var/www/cline-hub/app
+		file_server
+	}
+
 	# SSE 必须实时下发：关掉反代缓冲（与 443 站点一致）
 	@events path /api/v1/events*
 	reverse_proxy @events 127.0.0.1:3100 {
