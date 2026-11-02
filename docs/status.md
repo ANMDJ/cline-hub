@@ -20,16 +20,19 @@
 | P9 | 「选择题」`ask_question` 在 App 里可点选 | ✅ 代码完成，**待部署**（migration 005） |
 | P10 | App 内更新：版本 1.1.0 / 更新日志 / 检查更新 / 发版脚本 | ✅ APK 已打包（`app/dist/cline-console-1.1.0.apk`，53MB，全 ABI）并已 adb 覆盖安装到手机；**服务器发布待上传** |
 
-### 上线前必须做（代码已改，服务器还没吃）
+### 上线状态（2026-11-02 10:55 已全部完成）
 
-1. `cd server && npm run migrate`（新增 `004_message_truncated`、`005_message_options`）；
-2. 重启 Hub（`systemctl restart cline-hub`）才会暴露 `/api/v1/app/latest` 与新字段；
-3. 重启 Windows bridge：会触发 `transcript version changed, re-arming backfill`，随后 2 个会话/tick 补历史；
-4. App 重新打包（`1.1.0+2`）后才带新的详情页/复制/选项更新 UI。
+1. ✅ 迁移 `004_message_truncated` / `005_message_options` 已应用（`docker compose run --rm hub node src/migrate.js`）
+2. ✅ Hub 已重建镜像并重启（新容器 `cline-hub`，`/api/v1/app/latest` 生效）
+3. ✅ bridge 已重启并**重置过一次水位**（因为首次回填发生在迁移之前，>8000 字的消息被旧服务端截过），现在按 20000 字重发
+4. ✅ App `1.1.0+2` 已打包并 `adb install -r` 到手机（settings/token 保留）
+5. ✅ APK 已发布：`/var/www/cline-hub/app/cline-console-1.1.0.apk`，`https://hub.littlewish.top:8443/app/...` 返回 **200 / application/vnd.android.package-archive / 53109532 字节**
+6. ✅ Caddy 增加 `handle_path /app/*` 静态出口，`caddy validate` 通过后 `reload`
 
-**App 自更新还需要一步（一次性）**：`8443` 站点原来把所有路径都反代给 Hub，
-`/app/*.apk` 没有静态出口。`deploy/Caddyfile` 已补 `handle_path /app/*` 路由，
-服务器上要同步一次并 `systemctl reload caddy`，否则更新链接会 404（Hub 返回的是 404 而不是 APK）。
+**已知边界**：回填只覆盖最近 60 个会话（`TRANSCRIPT_BACKFILL_LIMIT`）。
+更早的会话（例如 `1791744249853_in12x`，含 33,547 字的长回复）仍是被截断的历史版本；
+单独补法：`cd bridge && node scripts/resend-session.mjs <sessionId>`（已用它补过这个会话，
+重发后最大单条 20,015 字、`truncated=true`）。
 
 规则：**P3 方案已定为 B** —— 提升限额后，只回填最近 60 个会话（`TRANSCRIPT_BACKFILL_LIMIT`），每 tick 2 个，按字节切批。
 
@@ -124,4 +127,4 @@ powershell -NoProfile -File deploy/windows/verify-hub.ps1
 | 2026-11-02 | P4：消息气泡复制、AppBar「复制整段对话」、长文本折叠 + `TextViewerPage` 全文页 |
 | 2026-11-02 | P9：`ask_question` → `kind=question` + `options jsonb`（migration 005）；App 渲染成按钮，点选变新命令 |
 | 2026-11-02 | P10：版本 1.0.0+1 → 1.1.0+2；设置页「版本与更新」+ 更新日志 + 检查更新；`GET /api/v1/app/latest`；`app/scripts/release-apk.mjs` |
-| 2026-11-02 | P10 收尾：APK `cline-console-1.1.0.apk`（53MB，versionCode 2，sha256 `8d3c5b0f…`）已产出并 `adb install -r` 到手机；`latest.json` 待上传服务器（SSH 公钥未授权） |
+| 2026-11-02 | P3/P9/P10 **已上线**：迁移 004/005 应用、Hub 镜像重建并重启、Caddy 增加 `/app/*` 静态出口、APK 发布（HTTP 200 / 53,109,532 B）、手机装 1.1.0(2)；bridge 重置水位后按 20000 字重发 |

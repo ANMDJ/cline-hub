@@ -27,6 +27,10 @@ services:
       HUB_HOST: 127.0.0.1
       # 生产不自动建表：迁移显式跑，避免应用角色拥有 DDL 权限
       HUB_AUTO_MIGRATE: "0"
+      # App 自更新清单：宿主机挂进来，发版只换文件、不用重建镜像
+      HUB_APP_RELEASE_FILE: /app/releases/latest.json
+    volumes:
+      - /srv/cline-hub/releases:/app/releases:ro
     logging:
       driver: json-file
       options:
