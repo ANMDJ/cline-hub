@@ -18,7 +18,7 @@
 | P7 | 命令并发池 + 卡死命令回收 | ⏳ 未开始 |
 | P8 | 详情页 Markdown 渲染（`flutter_markdown_plus`） | ⏳ 未开始 |
 | P9 | 「选择题」`ask_question` 在 App 里可点选 | ✅ 代码完成，**待部署**（migration 005） |
-| P10 | App 内更新：版本 1.1.0 / 更新日志 / 检查更新 / 发版脚本 | 🟡 代码完成；APK 需 Android SDK + JDK 17（本机缺） |
+| P10 | App 内更新：版本 1.1.0 / 更新日志 / 检查更新 / 发版脚本 | ✅ APK 已打包（`app/dist/cline-console-1.1.0.apk`，53MB，全 ABI）并已 adb 覆盖安装到手机；**服务器发布待上传** |
 
 ### 上线前必须做（代码已改，服务器还没吃）
 
@@ -39,7 +39,7 @@
 | 线上入口 | `https://hub.littlewish.top:8443` |
 | Cline CLI | `3.0.74`（已是最新，`--json` 可用，**没有 `--act`**） |
 | Flutter / Dart | `3.47.5` / `13.4` |
-| Android 工具链 | ❌ 无 SDK（`ANDROID_HOME` 空、无 `sdkmanager`/`gradle`）、JDK 仅 1.8 |
+| Android 工具链 | SDK `%LOCALAPPDATA%\Android\Sdk`（platforms 33–37 / build-tools 30–37）；JDK 17 与 21 在 `<JDK 目录>\`；`GRADLE_USER_HOME=%USERPROFILE%\.gradle` 已缓存 gradle-9.3.1。**`JAVA_HOME` 为空**，默认 PATH 上是 zulu-8，打包前必须设成 JDK 17 |
 | 已跟踪会话 | 89 个（80 个有 `messages.json`），14,755 条已上报消息 |
 
 ## 2. 里程碑与最近提交
@@ -85,7 +85,10 @@ Windows bridge ──轮询/上报──> https://hub.littlewish.top:8443
 3. **`spawn` 必须 `stdio: 'ignore'`**：否则 cline 等 stdin，命令永远「执行中」。
 4. **prompt 单个词会被当子命令**：不带空格时补尾随空格（`a20abe1`）。
 5. **SSE 反代必须 `flush_interval -1`**，否则事件被 Caddy 缓冲。
-6. **本机打不了 APK**：缺 Android SDK + JDK 17；`app/build` 里的产物来自 `flutter test`/Web 预览，不是 APK。
+6. **本机打包要先设 `JAVA_HOME`**：SDK 在 `%LOCALAPPDATA%\Android\Sdk`、JDK 17 在 `<JDK 17 路径>`，
+   但默认 PATH 上是 zulu-8（Gradle 9 直接拒绝）。`flutter build apk` 前：
+   `$env:JAVA_HOME='<JDK 17 路径>'`（想一劳永逸就 `setx`）。
+   `release` 用的是 debug 签名（模板默认），换机器重建会签名冲突、必须先卸载。
 7. **会话消息在源头被截断**：`extract.js` 的 `clip()`（`maxTextChars`）与 `maxResultChars`，不是 UI 折叠问题。
 8. **`TRANSCRIPT_VERSION` 提升只影响被扫描到的会话**：静止老会话不会自动重发，需重开回填队列（§0 P3）。
 
@@ -117,3 +120,4 @@ powershell -NoProfile -File deploy/windows/verify-hub.ps1
 | 2026-11-02 | P4：消息气泡复制、AppBar「复制整段对话」、长文本折叠 + `TextViewerPage` 全文页 |
 | 2026-11-02 | P9：`ask_question` → `kind=question` + `options jsonb`（migration 005）；App 渲染成按钮，点选变新命令 |
 | 2026-11-02 | P10：版本 1.0.0+1 → 1.1.0+2；设置页「版本与更新」+ 更新日志 + 检查更新；`GET /api/v1/app/latest`；`app/scripts/release-apk.mjs` |
+| 2026-11-02 | P10 收尾：APK `cline-console-1.1.0.apk`（53MB，versionCode 2，sha256 `8d3c5b0f…`）已产出并 `adb install -r` 到手机；`latest.json` 待上传服务器（SSH 公钥未授权） |

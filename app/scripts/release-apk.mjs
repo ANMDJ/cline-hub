@@ -12,7 +12,7 @@
  *   app/dist/cline-console-<version>.apk
  *   app/dist/latest.json          ← 上传到服务器的 releases/latest.json
  */
-import { execFileSync } from 'node:child_process'
+import { execSync } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -50,13 +50,19 @@ const { version, build } = readPubspecVersion()
 assertVersionDartMatches(version, build)
 
 console.log(`→ 打包 ${version}+${build}`)
-execFileSync('flutter', [
-  'build',
-  'apk',
-  '--release',
-  `--build-name=${version}`,
-  `--build-number=${build}`
-], { cwd: appRoot, stdio: 'inherit' })
+// Windows 上 flutter 是 .bat，execFileSync 直接调不到；构建命令的参数全部来自
+// 上面校验过的 pubspec，没有外部输入，这里用 execSync 是安全的。
+const javaHome = process.env.JAVA_HOME ?? ''
+if (!/\b(17|21|22|23)\b/.test(javaHome)) {
+  console.warn(
+    `! JAVA_HOME=${javaHome || '(empty)'}：AGP 9 / Gradle 9 需要 JDK 17+，` +
+    '否则会在 Gradle 启动阶段失败。'
+  )
+}
+execSync(
+  `flutter build apk --release --build-name=${version} --build-number=${build}`,
+  { cwd: appRoot, stdio: 'inherit', shell: true }
+)
 
 const apk = path.join(appRoot, 'build', 'app', 'outputs', 'flutter-apk', 'app-release.apk')
 if (!fs.existsSync(apk)) throw new Error(`没有找到产物：${apk}`)
