@@ -16,6 +16,7 @@
     "restart": "node scripts/stop.mjs --restart",
     "restart:idle": "node scripts/stop.mjs --restart --when-idle",
     "reconcile": "node scripts/reconcile.mjs",
+    "resend": "node scripts/resend.mjs",
     "check:whitelist": "node scripts/check-workspace-whitelist.mjs",
     "test": "node --test"
   }
