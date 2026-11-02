@@ -121,6 +121,12 @@ export function createCommandWorker({ cfg, logger }) {
     planArgs: toArgs(opts.cline?.planArgs, ['-p']),
     actArgs: toArgs(opts.cline?.actArgs, ['--auto-approve', 'true']),
     extraArgs: toArgs(opts.cline?.extraArgs, []),
+    /**
+     * Cline CLI 3.0.74 没有 `--act`：`modeExplicitlySet` 只认 --plan/--yolo/--zen，
+     * 其余情况模式取 `settings/global-settings.json` 的 `planActMode`（上一次 UI 停留的模式）。
+     * 于是手机发 act、CLI 却按 plan 跑（2026-11-02 实测），关掉这个开关就退回旧行为。
+     */
+    forceModeEnv: opts.cline?.forceModeEnv !== false,
     // resume 已停用：--id 需要 TTY，无头 bridge 用不了（见 runCline 注释）。
     resume: false,
     timeoutMs: Number.isFinite(Number(opts.cline?.timeoutMs)) && Number(opts.cline?.timeoutMs) > 0
@@ -262,7 +268,7 @@ export function createCommandWorker({ cfg, logger }) {
         // 命令在手机上看就是「一直执行中」（cmd_1757ca588f92 那次）。
         stdio: ['ignore', 'pipe', 'pipe'],
         shell: useShell,
-        env: { ...process.env, CLINE_HUB_COMMAND: '1' }
+        env: { ...process.env, CLINE_HUB_COMMAND: '1', ...(options.env ?? {}) }
       })
       state.child = child
 
@@ -325,6 +331,44 @@ export function createCommandWorker({ cfg, logger }) {
   }
 
   /**
+   * 让 CLI 真正按命令的模式跑。
+   *
+   * 实测（2026-11-02）：手机发 act → bridge 日志 `mode:"act"`、CLI 会话元数据
+   * `metadata.mode:"act"`，但首条用户消息被包成 `<user_input mode="plan">`，
+   * 模型于是按 plan 执行（只出方案、不改文件）。
+   * 原因是 CLI 3.0.74 没有 `--act` 旗标，`--auto-approve` 只管审批、不改模式，
+   * 不显式传 `-p/--yolo` 时模式来自 `settings/global-settings.json` 的 `planActMode`。
+   *
+   * 这里给每次运行注入一份临时 settings 文件，把 `planActMode` 钉死成命令模式。
+   * providers.json 只做只读引用（CLINE_PROVIDER_SETTINGS_PATH），不复制任何密钥；
+   * 临时文件落在 os.tmpdir()，不进仓库。
+   */
+  function clineModeEnv(mode) {
+    if (!clineOpts.forceModeEnv) return {}
+    const env = {}
+    try {
+      fs.mkdirSync(tmpDir, { recursive: true })
+      const file = path.join(tmpDir, `cline-settings-${mode}.json`)
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          planActMode: mode === 'plan' ? 'plan' : 'act',
+          toolAutoApprove: true,
+          autoUpdateEnabled: false,
+          telemetryOptOut: true
+        }, null, 2),
+        'utf8'
+      )
+      env.CLINE_GLOBAL_SETTINGS_PATH = file
+    } catch (error) {
+      logger.warn('cline mode settings not written', { mode, message: error.message })
+    }
+    const providers = path.join(cfg.dataDir, 'settings', 'providers.json')
+    if (fs.existsSync(providers)) env.CLINE_PROVIDER_SETTINGS_PATH = providers
+    return env
+  }
+
+  /**
    * 把一条命令翻译成 cline CLI 的调用。
    *
    * 一律 `-c <workspace>` 新开会话：`--id` 续会话在无 TTY 下会直接报
@@ -349,7 +393,10 @@ export function createCommandWorker({ cfg, logger }) {
     // 中文用户一句话经常不打空格，所以这里补一个尾随空格，对模型语义无影响。
     args.push(/\s/.test(prompt) ? prompt : `${prompt} `)
     const target = resolveClineTarget()
-    return runProcess(target.command, [...target.argv, ...args], cwd, clineOpts.timeoutMs, { shell: target.shell })
+    return runProcess(target.command, [...target.argv, ...args], cwd, clineOpts.timeoutMs, {
+      shell: target.shell,
+      env: clineModeEnv(mode)
+    })
   }
 
   /**
@@ -456,12 +503,21 @@ export function createCommandWorker({ cfg, logger }) {
     const createdSession = runner === 'cline' ? findNewSession(sessionBefore, cwd) : null
     const link = createdSession ? { sessionId: createdSession } : {}
 
+    // CLI 的模式可能被 global-settings 带走：跑完核对真实模式，
+    // 不一致就在结果末尾留证据，别让手机上「看起来成功了」。
+    const actualMode = createdSession
+      ? String(readSessionMeta(createdSession)?.metadata?.mode ?? '')
+      : ''
+    const modeWarning = actualMode && actualMode !== mode
+      ? `\n\n[cline-hub] 注意：命令要求 ${mode} 模式，CLI 实际以 ${actualMode} 模式运行。`
+      : ''
+
     const ok = !result.timedOut && result.code === 0
     const body = ok
-      ? { ...link, resultText: truncate(result.output) || '(no output)' }
+      ? { ...link, resultText: (truncate(result.output) || '(no output)') + modeWarning }
       : {
           ...link,
-          resultText: truncate(result.output),
+          resultText: truncate(result.output) + modeWarning,
           errorText: failureReason(result, limitMs)
         }
 
@@ -473,7 +529,8 @@ export function createCommandWorker({ cfg, logger }) {
         status: ok ? 'done' : 'failed',
         exit: result.code,
         outChars: result.output.length,
-        sessionId: createdSession ?? null
+        sessionId: createdSession ?? null,
+        actualMode: actualMode || null
       })
     } catch (error) {
       logger.error('command result report failed', { id: command.id, message: error.message })

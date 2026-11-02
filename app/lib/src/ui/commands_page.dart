@@ -97,7 +97,7 @@ class _CommandTile extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  Pill(label: item.modeLabel, color: kInfo),
+                  Pill(label: item.modeLabel, color: modeColor(item.mode)),
                   const Spacer(),
                   Text(
                     formatClock(item.createdAt),
@@ -202,7 +202,7 @@ void _showCommandDetail(BuildContext context, CommandItem item, HubStore store) 
                   ),
                 ),
                 const SizedBox(width: 8),
-                Pill(label: item.modeLabel, color: kInfo),
+                Pill(label: item.modeLabel, color: modeColor(item.mode)),
                 const Spacer(),
                 CopyButton(text: item.id, label: '复制 ID'),
               ],

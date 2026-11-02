@@ -1,3 +1,4 @@
+import { createAppRoutes } from './app.js'
 import { createClientRoutes } from './clients.js'
 import { createCommandRoutes } from './commands.js'
 import { createHookRoutes } from './hooks.js'
@@ -42,6 +43,7 @@ export function createRoutes({ db, logger, sse, config, startedAt }) {
   return [
     health,
     events,
+    ...createAppRoutes({ logger }),
     ...createClientRoutes({ db, logger }),
     ...createSessionRoutes({ db, logger, sse }),
     ...createHookRoutes({ db, logger, sse }),

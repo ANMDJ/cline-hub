@@ -283,20 +283,36 @@ function syncTranscript(row) {
   const pending = result.messages.slice(start)
   if (pending.length === 0) return false
 
-  const batch = Number(cfg.messageBatch) > 0 ? Number(cfg.messageBatch) : 40
-  for (let i = 0; i < pending.length; i += batch) {
+  // 条数 + 字节双上限：单条消息现在可到 20000 字，40 条一封会撞 Hub 的 4MB body 上限。
+  const batchSize = Number(cfg.messageBatch) > 0 ? Number(cfg.messageBatch) : 40
+  const batchBytes = 64 * 1024
+  let chunk = []
+  let chunkBytes = 0
+  let batches = 0
+  const flush = () => {
+    if (chunk.length === 0) return
     outbox.add({
       kind: 'messages',
-      body: { sessionId: row.session_id, messages: pending.slice(i, i + batch) }
+      body: { sessionId: row.session_id, messages: chunk }
     })
+    chunk = []
+    chunkBytes = 0
+    batches += 1
   }
+  for (const message of pending) {
+    const size = Buffer.byteLength(JSON.stringify(message))
+    if (chunk.length > 0 && (chunk.length >= batchSize || chunkBytes + size > batchBytes)) flush()
+    chunk.push(message)
+    chunkBytes += size
+  }
+  flush()
 
   state.transcripts[row.session_id] = { v: TRANSCRIPT_VERSION, n: total, tail }
   logger.info('transcript queued', {
     id: row.session_id,
     from: start,
     total,
-    batches: Math.ceil(pending.length / batch)
+    batches
   })
   return true
 }
@@ -549,6 +565,14 @@ async function tick() {
   ticking = true
   try {
     pollSessions()
+    // 抽取规则升级（TRANSCRIPT_VERSION 变化）后旧水位线全部失效，但静止会话
+    // 不会被任何扫描路径碰到 —— 必须重开一次有限回填，否则它们永远停在旧版本
+    // （2026-11-02：单条上限从 2000 提到 20000 时就是这么补历史的）。
+    if (state.transcriptBackfillDone &&
+        Object.values(state.transcripts).some((entry) => entry?.v !== TRANSCRIPT_VERSION)) {
+      state.transcriptBackfillDone = false
+      logger.info('transcript version changed, re-arming backfill', { version: TRANSCRIPT_VERSION })
+    }
     queueTranscriptBackfill()
     drainTranscriptBackfill()
   } catch (error) {

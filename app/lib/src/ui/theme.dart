@@ -35,6 +35,44 @@ String statusLabel(String? status) => switch (status) {
   _ => status,
 };
 
+/// 模式色：PLAN 用信息色，ACT 用警示色。
+///
+/// 别把 PLAN 画成灰色 —— 会和「未知状态」撞色，用户分不清是只读还是没数据。
+const Color kPlan = kInfo;
+const Color kAct = kDanger;
+
+Color modeColor(String? mode) => mode == 'act' ? kAct : kPlan;
+
+/// SegmentedButton 的统一样式。
+///
+/// 只设 `foregroundColor` 是不够的：M3 选中段的背景取 `secondaryContainer`，
+/// 本项目没定义，派生出来是一块浅蓝，浅底配 kInfo/kDanger 的字直接糊成一片
+/// （2026-11-02 手机端反馈「PLAN 状态看不清」）。这里把背景、边框、文字一起钉死。
+ButtonStyle modeSegmentStyle(Color color) {
+  return ButtonStyle(
+    visualDensity: VisualDensity.compact,
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    textStyle: const WidgetStatePropertyAll<TextStyle>(
+      TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+    ),
+    backgroundColor: WidgetStateProperty.resolveWith<Color>(
+      (states) => states.contains(WidgetState.selected)
+          ? color.withValues(alpha: 0.18)
+          : Colors.transparent,
+    ),
+    foregroundColor: WidgetStateProperty.resolveWith<Color>(
+      (states) => states.contains(WidgetState.selected) ? color : kMuted,
+    ),
+    side: WidgetStateProperty.resolveWith<BorderSide>(
+      (states) => BorderSide(
+        color: states.contains(WidgetState.selected)
+            ? color.withValues(alpha: 0.55)
+            : kLine,
+      ),
+    ),
+  );
+}
+
 ThemeData buildTheme() {
   const scheme = ColorScheme.dark(
     primary: kAccent,

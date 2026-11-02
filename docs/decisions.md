@@ -523,3 +523,75 @@ args.push(/\s/.test(prompt) ? prompt : `${prompt} `)
 
 **实测**：`cmd_d443917048ea`，prompt = `只回复SPACE-OK`（无空格）→ `done`，
 `resultText` 含 `SPACE-OK`，`sessionId=1793568956535_um63t` 且已回写。
+
+## 28. 手机发 ACT，CLI 实际按 PLAN 执行（2026-11-02）
+
+**现象**：App 里选 ACT 下发，bridge 日志 `mode:"act"`、会话元数据 `metadata.mode:"act"`，
+但会话首条消息被包成 `<user_input mode="plan">`，模型于是只出方案、不改文件。
+
+**证据链**（本机 2026-11-02）：
+
+| 环节 | 实测 |
+|---|---|
+| bridge 参数 | `actArgs = ["--auto-approve","true"]`（不带 `-p`） |
+| CLI 选项表 | `modeExplicitlySet: !!(t.plan \|\| t.act \|\| t.yolo \|\| t.zen)`，但二进制里 **`"--act"` 命中 0 次** |
+| CLI 模式解析 | `me(e,r){ if(e.modeExplicitlySet) return e.mode; return r.planActMode ?? e.mode }` |
+| 包装函数 | `q_(n,o="act")` → `<user_input mode="${o}">` |
+
+**根因**：CLI **没有 `--act`**，`--auto-approve` 只管审批不改模式；不传 `-p/--yolo` 时，
+模式取 `~/.cline/data/settings/global-settings.json` 的 `planActMode`（上一次 UI 停留的模式）。
+
+**修法**：bridge 每次运行生成 `<tmp>/cline-settings-<mode>.json`（`planActMode` = 命令模式），
+注入 `CLINE_GLOBAL_SETTINGS_PATH`；`CLINE_PROVIDER_SETTINGS_PATH` 只读指向真实 `providers.json`
+（不复制密钥）。跑完读 `<id>.json` 的 `metadata.mode` 核对，不一致就在 `resultText` 末尾追加警告。
+
+**验证**：探针 `1793586094677_7y65n` → `metadata.mode=act`，首条消息 `<user_input mode="act">`；
+带工具的探针 `run_commands` 在无审批下执行成功（输出 `PROBE-TOOL-OK`）。
+
+**回退**：`commands.cline.forceModeEnv=false`，行为回到「随 UI 的 planActMode 走」。
+
+## 29. 会话消息在源头被截断，不是 UI 折叠问题（2026-11-02）
+
+**现象**：手机上会话内容「展示不全」，长回复到某处戛然而止。
+
+**根因**：`bridge/src/extract.js` 的 `clip()`：`maxTextChars` 默认 2000 字/条，
+`maxResultChars` 默认 4000；服务端 `optionalString(..., 8000)` 还会再切一刀。
+
+**决策**：提升到 `maxTextChars=20000`、`maxResultChars=12000`、服务端上限 40000；
+`clip()` 返回 `{text, truncated}`，消息带 `truncated` 标记并入库（migration 004）。
+
+**历史数据怎么补**（这是最容易误解的一步）：`TRANSCRIPT_VERSION` 1 → 2 只是让
+`transcriptCursor()` 认为旧水位无效；但 `syncTranscript()` 只会被「有新活动 / running /
+回填队列」的会话触发，**静止老会话不会自动重发**。所以额外在 tick 里检测
+`entry.v !== TRANSCRIPT_VERSION` 并重开回填队列（最近 60 个，2 个/tick）。
+
+**体量实测**（14,755 条消息 / 80 个会话）：2000 字上限 6.68MB → 20000 字上限 **7.51MB**，
+只多 0.83MB；切批改成「40 条 或 64KB」避免撞 Hub 4MB body 上限。
+
+**代价与边界**：一次性重传约 7.5MB；更早的 29 个会话不动；`truncated=true` 时 UI 明确写「原文更长」。
+
+## 30. 「选择题」必须能在手机上回答（2026-11-02）
+
+**现象**：Cline 调 `ask_question` 时，手机上看不到问题与选项，会话就卡在等输入。
+
+**决策**：
+- bridge 把 `ask_question` 的 `tool_use` 抽成 `kind=question`，把 `options` 原样带上；
+- 服务端单独存 `options jsonb`（migration 005），不塞进 `text` 让客户端用正则猜；
+- App 渲染成按钮；点击后的语义是**带上下文新开一条命令**（`关于问题「…」，我选择：X`），
+  因为无头 CLI 的会话是一次性的（`stdio: ignore`），bridge 无法中途注入回答。
+- UI 在气泡底部写清这一点，避免用户以为能「接着原会话答」。
+
+## 31. App 自更新：清单走 Hub、APK 走静态（2026-11-02）
+
+**约束**：仓库没有 remote（不推 GitHub），所以不能用 GitHub Releases；本机也缺
+Android SDK + JDK 17，打不出 APK。
+
+**决策**：
+- 发布清单 `latest.json`（version/build/notes/apkUrl/sha256）放服务器 `releases/latest.json`，
+  由 `GET /api/v1/app/latest` 读出（`HUB_APP_RELEASE_FILE` 可覆盖）；没发布时 404。
+- APK 由 Caddy `file_server` 从 `/var/www/cline-hub/app/` 直出，不经过 Hub 进程（大文件不进 Node）。
+- 客户端版本号手工维护在 `app/lib/src/data/app_version.dart`，`release-apk.mjs` 会校验它与
+  `pubspec.yaml` 一致后才打包 —— 拒绝「包是 1.1.0、界面显示 1.0.0」。
+- 更新 UI 只做「检查 + 展示 + 复制下载地址」：安装必须由系统安装器完成，
+  不引第三方安装插件（维持 http / shared_preferences 两个依赖）。
+

@@ -163,3 +163,28 @@ SSE 四种事件都用上了：`session`（去抖 900ms 后刷新列表）、`ho
 - 每 IP 有令牌桶限流（默认 120 突发 / 5 rps），轮询太猛会撞 `429 rate_limited`。
 - 前缀即口令：地址里少了 `/_h/<前缀>` 会直接 404，Caddy 返回的是**空 body**
   （错误码 `http_404`），所以客户端把 404 统一翻译成「检查 baseUrl 是否包含 /_h/<前缀>」。
+
+## 消息展示、复制与更新（1.1.0 起）
+
+| 能力 | 位置 | 说明 |
+|---|---|---|
+| 长文本折叠 | `ui/widgets.dart` 的 `MessageText` | 超过 900 字或 12 行折叠，点「展开全文」进 `TextViewerPage` |
+| 消息复制 | 气泡右下角 / 命令条 | `CopyButton`，剪贴板写入后 snackbar 提示 |
+| 复制整段对话 | 详情页 AppBar 的 `copy_all` | 按 `seq` 拼「用户/助手」，命令附 `$ cmd` |
+| 截断提示 | 气泡 / 命令条 | `truncated=true` 时明确写「原文更长」，不假装完整 |
+| 选择题 | `_QuestionBubble` | `ask_question` 的选项渲染成按钮；点选 = 带上下文**新开一条命令**（无头 CLI 不能中途注入） |
+| 版本与更新 | `ui/settings_page.dart` | 版本号来自 `data/app_version.dart`；「检查更新」读 `GET /api/v1/app/latest` |
+
+### 发版流程
+
+1. 改 `pubspec.yaml` 的 `version: x.y.z+n` **和** `lib/src/data/app_version.dart` 的
+   `kAppVersion` / `kAppBuild`（两处不一致时脚本会直接报错）。
+2. 更新 `kChangelog`（App 内「更新日志」直接读它）。
+3. `node scripts/release-apk.mjs --notes "a;b" --base-url https://hub.littlewish.top:8443/app`
+   → `dist/cline-console-<version>.apk` + `dist/latest.json`。
+4. 按脚本打印的 `scp`/`ssh` 命令上传：APK 进 `/var/www/cline-hub/app/`，
+   清单进 `/opt/cline-hub/releases/latest.json`（Hub 用 `HUB_APP_RELEASE_FILE` 读）。
+
+> 本机 2026-11-02 缺 Android SDK + JDK 17，`flutter build apk` 跑不了；
+> 脚本与 UI 已就绪，补齐工具链即可出包（`flutter doctor` 全绿为准）。
+

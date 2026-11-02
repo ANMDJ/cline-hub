@@ -212,9 +212,14 @@ export function createSessionRoutes({ db, logger, sse }) {
           const messageId = String(item.id ?? '').trim()
           if (!messageId) continue
           const role = item.role === 'user' ? 'user' : 'assistant'
-          const kind = item.kind === 'command' ? 'command' : 'text'
-          const text = optionalString(item.text, 'messages[].text', 8000) ?? ''
+          const kind = item.kind === 'command'
+            ? 'command'
+            : item.kind === 'question' ? 'question' : 'text'
+          const text = optionalString(item.text, 'messages[].text', 40000) ?? ''
           const tool = optionalString(item.tool, 'messages[].tool', 100)
+          const options = Array.isArray(item.options)
+            ? item.options.map((value) => String(value).slice(0, 500)).slice(0, 8)
+            : []
           const base = values.length
           values.push(
             deviceId,
@@ -225,18 +230,20 @@ export function createSessionRoutes({ db, logger, sse }) {
             kind,
             text,
             tool,
-            isoOrNull(item.ts)
+            isoOrNull(item.ts),
+            item.truncated === true,
+            JSON.stringify(options)
           )
           tuples.push(
             `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, ` +
-            `$${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}::timestamptz)`
+            `$${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}::timestamptz, $${base + 10}, $${base + 11}::jsonb)`
           )
         }
         if (tuples.length === 0) return { ok: true, stored: 0 }
 
         await db.query(
           `insert into session_messages
-             (device_id, session_id, message_id, seq, role, kind, text, tool, ts)
+             (device_id, session_id, message_id, seq, role, kind, text, tool, ts, truncated, options)
            values ${tuples.join(', ')}
            on conflict (device_id, session_id, message_id) do update set
              seq        = excluded.seq,
@@ -245,6 +252,8 @@ export function createSessionRoutes({ db, logger, sse }) {
              text       = excluded.text,
              tool       = excluded.tool,
              ts         = excluded.ts,
+             truncated  = excluded.truncated,
+             options    = excluded.options,
              updated_at = now()`,
           values
         )
@@ -291,7 +300,7 @@ export function createSessionRoutes({ db, logger, sse }) {
         // （>800 条时最新消息反而不在里面）。after 是追新，必须升序。
         const asc = after !== null && Number.isFinite(after)
         const rows = await db.many(
-          `select device_id, session_id, message_id, seq, role, kind, text, tool, ts
+          `select device_id, session_id, message_id, seq, role, kind, text, tool, ts, truncated, options
            from session_messages
            where ${where.join(' and ')}
            order by seq ${asc ? 'asc' : 'desc'}, created_at ${asc ? 'asc' : 'desc'}
@@ -310,6 +319,8 @@ export function createSessionRoutes({ db, logger, sse }) {
             role: row.role,
             kind: row.kind,
             text: row.text,
+            truncated: row.truncated === true,
+            options: Array.isArray(row.options) ? row.options : [],
             tool: row.tool,
             ts: row.ts
           })),

@@ -20,11 +20,11 @@ const DEFAULTS = {
   batchSize: 20,
   workspaceWhitelist: [],
   commandTools: ['run_commands', 'execute_command'],
-  maxResultChars: 4000,
+  maxResultChars: 12000,
   maxCommands: 300,
   maxCommandChars: 2000,
   /** 单条消息在 Hub 里的长度上限（超出截断，手机不渲染超长 blob）。 */
-  maxTextChars: 2000,
+  maxTextChars: 20000,
   /** 一次 outbox 最多带多少条消息，避免单个请求过大。 */
   messageBatch: 40,
   dataDir: '',
@@ -49,6 +49,11 @@ const DEFAULTS = {
       actArgs: ['--auto-approve', 'true'],
       /** 额外参数（模型、thinking 等）。 */
       extraArgs: [],
+      /**
+       * 用环境变量把 CLI 的模式钉死成命令模式（见 command-worker 的 clineModeEnv）。
+       * CLI 3.0.74 没有 `--act`，不钉就会取 global-settings 里的 planActMode。
+       */
+      forceModeEnv: true,
       /** 带 sessionId 时是否用 --id 续会话。 */
       resume: true,
       /** CLI 跑一整轮通常比 shell 命令久。 */

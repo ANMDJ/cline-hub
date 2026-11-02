@@ -239,7 +239,8 @@ void main() {
     await tester.pumpAndSettle();
 
     // 首屏贴着底部（尾部 60 条），先滚到顶部才能看到「会话开头」
-    await tester.drag(find.byType(CustomScrollView), const Offset(0, 4000));
+    // 气泡现在多了一行「时间 + 复制」，内容更高，这里一次滚到底不现实，直接拉满。
+    await tester.fling(find.byType(CustomScrollView), const Offset(0, 20000), 6000);
     await tester.pumpAndSettle();
 
     expect(find.text('会话开头'), findsOneWidget);

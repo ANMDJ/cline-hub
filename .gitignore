@@ -22,6 +22,10 @@ node_modules/
 .DS_Store
 .idea/
 
+# 发版产物（APK / latest.json 由 scripts/release-apk.mjs 生成）
+app/dist/
+server/releases/
+
 # 崩溃转储 / 本地备份（config.json 备份里有明文 token，绝不能进仓库）
 *.stackdump
 bash.exe.stackdump

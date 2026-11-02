@@ -35,6 +35,14 @@ List<Map<String, dynamic>> _maps(Object? value) => value is List
           .toList(growable: false)
     : const <Map<String, dynamic>>[];
 
+List<String> _strings(Object? value) => value is List
+    ? value
+          .whereType<String>()
+          .map((item) => item.trim())
+          .where((item) => item.isNotEmpty)
+          .toList(growable: false)
+    : const <String>[];
+
 /// 列表页用的会话摘要：不含 resultText 全文（服务端只给前 400 字预览）。
 class SessionItem {
   const SessionItem({
@@ -363,6 +371,8 @@ class SessionMessage {
     this.tool,
     this.ts,
     this.seq = 0,
+    this.truncated = false,
+    this.options = const <String>[],
   });
 
   factory SessionMessage.fromJson(Map<String, dynamic> json) => SessionMessage(
@@ -373,6 +383,8 @@ class SessionMessage {
     tool: _str(json['tool']),
     ts: _dt(json['ts']),
     seq: _int(json['seq']) ?? 0,
+    truncated: _bool(json['truncated']),
+    options: _strings(json['options']),
   );
 
   final String messageId;
@@ -382,6 +394,14 @@ class SessionMessage {
   final String? tool;
   final DateTime? ts;
   final int seq;
+
+  /// bridge 上报时已按 `maxTextChars` 截断：界面上要说明「这不是全文」。
+  final bool truncated;
+
+  /// kind=question 时的可选项（Cline `ask_question` 的 options）。
+  final List<String> options;
+
+  bool get isQuestion => kind == 'question';
 
   bool get isUser => role == 'user';
   bool get isCommand => kind == 'command';

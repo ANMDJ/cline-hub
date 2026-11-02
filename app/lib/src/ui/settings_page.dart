@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../data/app_update.dart';
+import '../data/app_version.dart';
 import '../data/hub_api.dart';
 import '../data/settings_store.dart';
 import '../state/hub_store.dart';
@@ -24,6 +26,11 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _checking = false;
   String? _healthLine;
   String? _healthError;
+
+  bool _checkingUpdate = false;
+  bool _checkedUpdate = false;
+  AppRelease? _release;
+  String? _updateError;
 
   @override
   void dispose() {
@@ -52,6 +59,71 @@ class _SettingsPageState extends State<SettingsPage> {
     } finally {
       if (mounted) setState(() => _checking = false);
     }
+  }
+
+  /// 检查更新：读 Hub 的 `/api/v1/app/latest`（服务器上没有清单时返回 404）。
+  Future<void> _checkUpdate() async {
+    setState(() {
+      _checkingUpdate = true;
+      _checkedUpdate = true;
+      _updateError = null;
+    });
+    try {
+      final release = await fetchLatestRelease(
+        baseUrl: widget.settings.baseUrl,
+        token: widget.settings.token,
+      );
+      if (!mounted) return;
+      setState(() => _release = release);
+    } catch (error) {
+      if (mounted) setState(() => _updateError = '$error');
+    } finally {
+      if (mounted) setState(() => _checkingUpdate = false);
+    }
+  }
+
+  void _showChangelog() {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: kPanel,
+        title: const Text('更新日志'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              for (final entry in kChangelog) ...[
+                Text(
+                  '${entry.version} · ${entry.date}',
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: kAccent,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                for (final item in entry.items)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 3),
+                    child: Text(
+                      '· $item',
+                      style: const TextStyle(fontSize: 12, height: 1.6),
+                    ),
+                  ),
+                const SizedBox(height: 12),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _saveDevice() async {
@@ -262,19 +334,81 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
           const SizedBox(height: 12),
-          const SectionCard(
-            title: '关于',
+          SectionCard(
+            title: '版本与更新',
+            trailing: TextButton(
+              onPressed: _checkingUpdate ? null : _checkUpdate,
+              child: Text(
+                _checkingUpdate ? '检查中…' : '检查更新',
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Cline Console 0.1.0',
-                  style: TextStyle(fontSize: 12.5, height: 1.7),
+                  'Cline Console $kAppVersion（build $kAppBuild）',
+                  style: const TextStyle(fontSize: 12.5, height: 1.7),
                 ),
-                SizedBox(height: 4),
-                Text(
+                const SizedBox(height: 4),
+                const Text(
                   'Hub API v1 · Flutter Android 客户端 · 数据只存在你自己的服务器',
                   style: TextStyle(fontSize: 11.5, height: 1.7, color: kMuted),
+                ),
+                if (_updateError != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    '检查失败：$_updateError',
+                    style: const TextStyle(fontSize: 11.5, height: 1.6, color: kWarn),
+                  ),
+                ],
+                if (_release != null) ...[
+                  const SizedBox(height: 10),
+                  if (_release!.isNewer) ...[
+                    Text(
+                      '有新版本 ${_release!.version}（build ${_release!.build}）',
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        color: kAccent,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    for (final note in _release!.notes)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 3),
+                        child: Text(
+                          '· $note',
+                          style: const TextStyle(fontSize: 11.5, height: 1.6),
+                        ),
+                      ),
+                    const SizedBox(height: 6),
+                    if ((_release!.apkUrl ?? '').isNotEmpty)
+                      CopyButton(text: _release!.apkUrl!, label: '复制下载地址'),
+                    const Text(
+                      '下载后用系统安装器覆盖安装即可（同一签名）。',
+                      style: TextStyle(fontSize: 11, height: 1.6, color: kMuted),
+                    ),
+                  ] else
+                    const Text(
+                      '已是最新版本。',
+                      style: TextStyle(fontSize: 12, color: kMuted),
+                    ),
+                ],
+                if (_checkedUpdate && _release == null && _updateError == null)
+                  const Text(
+                    '服务器还没有发布过 APK（releases/latest.json 不存在）。',
+                    style: TextStyle(fontSize: 11.5, height: 1.6, color: kMuted),
+                  ),
+                const SizedBox(height: 6),
+                TextButton(
+                  onPressed: _showChangelog,
+                  style: TextButton.styleFrom(
+                    padding: EdgeInsets.zero,
+                    minimumSize: const Size(0, 32),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: const Text('更新日志', style: TextStyle(fontSize: 12)),
                 ),
               ],
             ),

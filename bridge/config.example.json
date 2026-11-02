@@ -12,10 +12,10 @@
     "run_commands",
     "execute_command"
   ],
-  "maxResultChars": 4000,
+  "maxResultChars": 12000,
   "maxCommands": 300,
   "maxCommandChars": 2000,
-  "maxTextChars": 2000,
+  "maxTextChars": 20000,
   "messageBatch": 40,
   "dataDir": "",
   "commands": {
@@ -42,6 +42,7 @@
         "true"
       ],
       "extraArgs": [],
+      "forceModeEnv": true,
       "resume": false,
       "timeoutMs": 1800000
     }

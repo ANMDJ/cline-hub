@@ -309,6 +309,11 @@ sh.Run "node ""C:\Users\alice\.cline\data\workspaces\chat\cline-hub\bridge\src\i
 
 备案通过后的正路：删掉 `http://82.157.153.22` 兜底块，客户端直接回 `https://hub.littlewish.top`（443）。
 
+## 文档
+
+- 新会话先读 [`AGENTS.md`](AGENTS.md)：30 秒看懂 + 开工三条命令 + 硬约束。
+- 现状与待办看 [`docs/status.md`](docs/status.md) §0；文档索引见 [`docs/README.md`](docs/README.md)。
+
 ## 约定
 
 - 仓库内**不出现任何真实口令/token**；`bridge/config.json` 与 `.env` 均被 gitignore。

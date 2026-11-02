@@ -121,14 +121,17 @@ SSE 例外：`GET /api/v1/events?token=<token>`（EventSource 不能设置请求
 
 - 主键 `(device_id, session_id, message_id)`：流式回复的同一条消息会被重发覆盖，
   详情页不会出现重复气泡。
-- `kind`：`text` = 正文，`command` = 白名单工具的调用（命令过程）。
-- 一次最多 200 条；bridge 默认 40 条一批。
-- `text` 超过 8000 字会被服务端截断（bridge 侧已按 `maxTextChars` 截到 2000）。
+- `kind`：`text` = 正文，`command` = 白名单工具的调用（命令过程），
+  `question` = Cline 的 `ask_question`（带 `options`，手机端要渲染成按钮）。
+- 一次最多 200 条；bridge 按「40 条 **或** 64KB 先到者」切批（单条可到 20000 字）。
+- `text` 超过 40000 字会被服务端截断（bridge 侧 `maxTextChars` 默认 20000）。
+- `truncated: true` 表示 bridge 侧已截断，手机上的文本不是全文。
+- `options`：`kind=question` 的可选项数组，最多 8 条；其他 kind 为空数组。
 
 `GET /api/v1/sessions/:sessionId/messages?limit=800&after=<seq>`（any）
 
 ```json
-{ "ok": true, "items": [ { "messageId": "...", "seq": 0, "role": "user", "kind": "text", "text": "...", "tool": null, "ts": "..." } ], "hasMore": false }
+{ "ok": true, "items": [ { "messageId": "...", "seq": 0, "role": "user", "kind": "text", "text": "...", "truncated": false, "options": [], "tool": null, "ts": "..." } ], "hasMore": false }
 ```
 
 - 按 `seq asc` 返回；`after` 只返回 `seq > after` 的部分，用于会话还在跑时续拉。
@@ -136,6 +139,27 @@ SSE 例外：`GET /api/v1/events?token=<token>`（EventSource 不能设置请求
 - 「取会话开头」= `after=-1&limit=12`：只要有 `after` 就按升序取，`seq > -1` 即从第 0 条开始。
   不要写 `after=0`（会漏掉 `seq=0`）；即使以后语义改成 `>=`，`-1` 依然成立。
 - 不传 `after` 时取的是**最近** `limit` 条（内部 desc 再反转），翻更早用 `before=<最小 seq>`。
+
+## App 发布信息（客户端自更新）
+
+`GET /api/v1/app/latest`（any）→ 服务器上 `releases/latest.json` 的内容：
+
+```json
+{
+  "ok": true,
+  "version": "1.1.0",
+  "build": 2,
+  "notes": ["修复 ACT 模式", "长文本折叠"],
+  "apkUrl": "https://hub.littlewish.top:8443/app/cline-console-1.1.0.apk",
+  "sha256": "…",
+  "publishedAt": "2026-11-02T02:40:00.000Z"
+}
+```
+
+- 清单由 `app/scripts/release-apk.mjs` 生成，默认放 `<server>/releases/latest.json`，
+  可用 `HUB_APP_RELEASE_FILE` 覆盖。
+- 没发布过时返回 `404 not_found`，客户端据此显示「服务器还没有发布过 APK」。
+- APK 本身由 Caddy 的 `file_server` 从 `/var/www/cline-hub/app/` 直出，不经过 Hub 进程。
 
 ## 会话列表
 

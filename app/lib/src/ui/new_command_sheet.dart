@@ -161,6 +161,7 @@ class _NewCommandSheetState extends State<_NewCommandSheet> {
             ],
             selected: {_mode},
             showSelectedIcon: false,
+            style: modeSegmentStyle(modeColor(_mode)),
             onSelectionChanged: (selection) =>
                 setState(() => _mode = selection.first),
           ),

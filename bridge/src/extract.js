@@ -60,13 +60,14 @@ function commandFromBlock(block, allowedTools, maxCommandChars) {
 
   command = command.trim()
   if (!command) return null
-  if (command.length > maxCommandChars) command = command.slice(0, maxCommandChars) + '\n... (truncated)'
-  return { id: block.id ?? '', tool: name, command }
+  const truncated = command.length > maxCommandChars
+  if (truncated) command = command.slice(0, maxCommandChars) + '\n... (truncated)'
+  return { id: block.id ?? '', tool: name, command, truncated }
 }
 
-function clip(text, limit) {
-  if (text.length <= limit) return text
-  return `${text.slice(0, limit)}…[+${text.length - limit} chars]`
+function clipText(text, limit) {
+  if (text.length <= limit) return { text, truncated: false }
+  return { text: `${text.slice(0, limit)}…[+${text.length - limit} chars]`, truncated: true }
 }
 
 /**
@@ -76,7 +77,7 @@ function clip(text, limit) {
  * (device, session, message_id) upsert。抽取规则一旦改动就要 +1，
  * 否则老会话的水位线会被误认为「已经发全了」。
  */
-export const TRANSCRIPT_VERSION = 1
+export const TRANSCRIPT_VERSION = 2
 
 /**
  * 把一条会话的 messages.json 拍平成手机能直接渲染的消息流。
@@ -125,16 +126,41 @@ export function extractTranscript(messagesPath, options = {}) {
           text = cleanUserText(text)
           if (!text || isInjectedUserText(text)) continue
         }
+        const clipped = clipText(text, maxTextChars)
         messages.push({
           id: `${baseId}:${index}`,
           role,
           kind: 'text',
-          text: clip(text, maxTextChars),
+          text: clipped.text,
+          truncated: clipped.truncated,
           ts,
           seq: messages.length
         })
         index += 1
       } else if (block.type === 'tool_use') {
+        // 「选择题」：Cline 的 ask_question 带 question + options，
+        // 手机上必须能看见并点选，否则会话就卡在等待输入（2026-11-02 反馈）。
+        if (block.name === 'ask_question') {
+          const question = typeof block.input?.question === 'string'
+            ? block.input.question.trim()
+            : ''
+          const options = Array.isArray(block.input?.options)
+            ? block.input.options.map((item) => toText(item).trim()).filter(Boolean).slice(0, 8)
+            : []
+          if (question) {
+            messages.push({
+              id: `${baseId}:${index}`,
+              role,
+              kind: 'question',
+              text: question,
+              options,
+              ts,
+              seq: messages.length
+            })
+            index += 1
+          }
+          continue
+        }
         const hit = commandFromBlock(block, allowedTools, maxTextChars)
         if (!hit) continue
         messages.push({
@@ -142,6 +168,7 @@ export function extractTranscript(messagesPath, options = {}) {
           role,
           kind: 'command',
           text: hit.command,
+          truncated: hit.truncated === true,
           tool: hit.tool,
           ts,
           seq: messages.length

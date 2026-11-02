@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../data/hub_api.dart';
 import '../models/models.dart';
@@ -142,7 +143,50 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
     return byKey.values.toList()..sort((a, b) => a.seq.compareTo(b.seq));
   }
 
+  /// 默认模式跟着这个会话最近一条命令走。
+  ///
+  /// 之前硬编码 `plan`：用户刚用 ACT 下发过，一进详情页却又显示 PLAN，
+  /// 看起来像「系统把我的选择忘了」（2026-11-02 反馈）。
+  void _syncModeFromCommands() {
+    final mine = widget.store.commands
+        .where((item) => item.sessionId == widget.item.sessionId)
+        .toList(growable: false);
+    if (mine.isEmpty) return;
+    mine.sort((a, b) {
+      final left = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final right = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return left.compareTo(right);
+    });
+    final mode = mine.last.mode == 'act' ? 'act' : 'plan';
+    if (mode != _mode && mounted) setState(() => _mode = mode);
+  }
+
+  /// 复制整段对话：按 seq 拼「用户 / 助手」正文，命令过程附 `$ 命令`。
+  /// 会话动辄几百条，这里只拼已经加载到内存的部分，并在提示里说明条数。
+  Future<void> _copyConversation() async {
+    final lines = <String>[];
+    for (final message in _messages) {
+      if (message.isCommand) {
+        lines.add('\$ ${message.text}');
+      } else {
+        lines.add('${message.isUser ? '用户' : '助手'}：${message.text}');
+      }
+    }
+    if (lines.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('还没有可复制的内容')),
+      );
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: lines.join('\n\n')));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('已复制 ${lines.length} 条消息')),
+    );
+  }
+
   Future<void> _load() async {
+    _syncModeFromCommands();
     setState(() {
       _loading = true;
       _error = null;
@@ -304,6 +348,60 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
     }
   }
 
+  /// 「选择题」的回答：作为一条新命令下发。
+  ///
+  /// 无头 CLI 的会话是一次性的（`stdio: ignore`，进程跑完就退出），bridge 没有
+  /// 办法往正在跑的会话里注入回答；所以语义是「带着原问题和选择，新开一条命令」。
+  Future<void> _chooseOption(SessionMessage question, String option) async {
+    if (_sending) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: kPanel,
+        title: const Text('把选择发成新命令？'),
+        content: Text(
+          '原会话已经结束，bridge 不能中途注入回答。\n\n'
+          '会以 ${_mode == 'act' ? 'ACT' : 'PLAN'} 模式新开一条命令，并带上你的选择：\n$option',
+          style: const TextStyle(fontSize: 13, height: 1.6),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('下发'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _sending = true);
+    try {
+      await widget.store.api.sendCommand(
+        deviceId: widget.item.deviceId,
+        prompt: '关于问题「${question.text}」，我选择：$option。请按这个选择继续。',
+        mode: _mode,
+        workspace: _summary.workspaceRoot,
+        sessionId: widget.item.sessionId,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已下发选择，等 bridge 执行')),
+      );
+    } on ApiException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('发送失败：${error.friendly}')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final summary = _summary;
@@ -333,6 +431,11 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
             visualDensity: VisualDensity.compact,
             icon: const Icon(Icons.info_outline_rounded, size: 20),
             onPressed: () => showSessionOverview(context, summary),
+          ),
+          IconButton(
+            icon: const Icon(Icons.copy_all_rounded, size: 20),
+            tooltip: '复制整段对话',
+            onPressed: _copyConversation,
           ),
           CopyButton(text: summary.sessionId, label: '复制 ID'),
           const SizedBox(width: 6),
@@ -397,7 +500,11 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
                         ],
                         if (head.isNotEmpty && headGap > 0) ...[
                           const SizedBox(height: 12),
-                          _HeadSection(messages: head, commands: groups),
+                          _HeadSection(
+                            messages: head,
+                            commands: groups,
+                            onChoose: _chooseOption,
+                          ),
                           const SizedBox(height: 8),
                           _GapHint(count: headGap),
                         ],
@@ -445,6 +552,7 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
                           padding: const EdgeInsets.only(bottom: 8),
                           child: _MessageBubble(
                             message: chat[index],
+                            onChoose: _chooseOption,
                             commands: groups[_baseMessageId(chat[index].messageId)] ??
                                 const <SessionMessage>[],
                           ),
@@ -492,10 +600,15 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
 
 /// 会话开头：首屏只加载了最近几十条，这里把最开始那几句也摆出来。
 class _HeadSection extends StatelessWidget {
-  const _HeadSection({required this.messages, required this.commands});
+  const _HeadSection({
+    required this.messages,
+    required this.commands,
+    required this.onChoose,
+  });
 
   final List<SessionMessage> messages;
   final Map<String, List<SessionMessage>> commands;
+  final void Function(SessionMessage question, String option) onChoose;
 
   @override
   Widget build(BuildContext context) {
@@ -508,6 +621,7 @@ class _HeadSection extends StatelessWidget {
             if (i > 0) const SizedBox(height: 8),
             _MessageBubble(
               message: messages[i],
+              onChoose: onChoose,
               commands: commands[_baseMessageId(messages[i].messageId)] ??
                   const <SessionMessage>[],
             ),
@@ -708,8 +822,10 @@ class _OverviewContent extends StatelessWidget {
           SectionCard(
             title: '结果',
             trailing: CopyButton(text: resultText, label: '复制'),
-            child: Text(
-              resultText,
+            child: MessageText(
+              text: resultText,
+              title: '会话结果',
+              truncated: detail?.resultTruncated ?? false,
               style: const TextStyle(
                 fontSize: 12.5,
                 height: 1.6,
@@ -773,6 +889,7 @@ class _MessageBubble extends StatelessWidget {
   const _MessageBubble({
     required this.message,
     this.commands = const <SessionMessage>[],
+    required this.onChoose,
   });
 
   final SessionMessage message;
@@ -780,9 +897,18 @@ class _MessageBubble extends StatelessWidget {
   /// 这条消息里产生的工具调用；主流程不渲染，只在气泡下留一个入口。
   final List<SessionMessage> commands;
 
+  /// 「选择题」选中后回调（由页面负责变成一条新命令）。
+  final void Function(SessionMessage question, String option) onChoose;
+
   @override
   Widget build(BuildContext context) {
     if (message.isCommand) return _CommandBubble(message: message);
+    if (message.isQuestion) {
+      return _QuestionBubble(
+        message: message,
+        onChoose: (option) => onChoose(message, option),
+      );
+    }
 
     final isUser = message.isUser;
     final width = MediaQuery.of(context).size.width;
@@ -806,21 +932,28 @@ class _MessageBubble extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              message.text,
+            MessageText(
+              text: message.text,
+              title: isUser ? '我的提问' : '助手回复',
+              truncated: message.truncated,
               style: TextStyle(
                 fontSize: 13.5,
                 height: 1.62,
                 color: isUser ? kText : const Color(0xFFD6E2EE),
               ),
             ),
-            if (message.ts != null) ...[
-              const SizedBox(height: 4),
-              Text(
-                formatClock(message.ts),
-                style: const TextStyle(fontSize: 10.5, color: kMuted),
-              ),
-            ],
+            const SizedBox(height: 2),
+            Row(
+              children: [
+                if (message.ts != null)
+                  Text(
+                    formatClock(message.ts),
+                    style: const TextStyle(fontSize: 10.5, color: kMuted),
+                  ),
+                const Spacer(),
+                CopyButton(text: message.text, label: '复制'),
+              ],
+            ),
             if (commands.isNotEmpty) ...[
               const SizedBox(height: 7),
               Align(
@@ -840,6 +973,94 @@ class _MessageBubble extends StatelessWidget {
                 ),
               ),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 「选择题」气泡：问题正文 + 可点选项。
+///
+/// 之前在手机上看不到 `ask_question`，会话就卡在那儿等输入（2026-11-02 反馈）。
+class _QuestionBubble extends StatelessWidget {
+  const _QuestionBubble({required this.message, required this.onChoose});
+
+  final SessionMessage message;
+  final ValueChanged<String> onChoose;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.92,
+        ),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        decoration: BoxDecoration(
+          color: kPlan.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: kPlan.withValues(alpha: 0.35)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.help_outline_rounded, size: 14, color: kPlan),
+                const SizedBox(width: 6),
+                const Text(
+                  '需要你选择',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                    color: kPlan,
+                  ),
+                ),
+                const Spacer(),
+                if (message.ts != null)
+                  Text(
+                    formatClock(message.ts),
+                    style: const TextStyle(fontSize: 10.5, color: kMuted),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            MessageText(
+              text: message.text,
+              title: '问题',
+              style: const TextStyle(fontSize: 13.5, height: 1.6),
+            ),
+            const SizedBox(height: 8),
+            ...message.options.map(
+              (option) => Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: () => onChoose(option),
+                    style: OutlinedButton.styleFrom(
+                      alignment: Alignment.centerLeft,
+                      foregroundColor: kText,
+                      side: BorderSide(color: kPlan.withValues(alpha: 0.45)),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                    ),
+                    child: Text(
+                      option,
+                      style: const TextStyle(fontSize: 12.5, height: 1.45),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const Text(
+              '原会话已结束：点选项会带着这句选择新开一条命令。',
+              style: TextStyle(fontSize: 10.5, height: 1.5, color: kMuted),
+            ),
           ],
         ),
       ),
@@ -892,6 +1113,7 @@ class _CommandBubbleState extends State<_CommandBubble> {
                 ),
               ),
               const Spacer(),
+              CopyButton(text: message.text, label: '复制'),
               if (collapsible)
                 InkWell(
                   onTap: () => setState(() => _expanded = !_expanded),
@@ -916,6 +1138,14 @@ class _CommandBubbleState extends State<_CommandBubble> {
               color: const Color(0xFFA9BBCB),
             ),
           ),
+          if (message.truncated)
+            const Padding(
+              padding: EdgeInsets.only(top: 4),
+              child: Text(
+                '已截断：完整命令在电脑上',
+                style: TextStyle(fontSize: 10.5, color: kWarn),
+              ),
+            ),
         ],
       ),
     );
@@ -1039,22 +1269,7 @@ class _ModeBar extends StatelessWidget {
           ],
           selected: <String>{mode},
           showSelectedIcon: false,
-          style: ButtonStyle(
-            visualDensity: VisualDensity.compact,
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            textStyle: const WidgetStatePropertyAll<TextStyle>(
-              TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
-            ),
-            side: const WidgetStatePropertyAll<BorderSide>(
-              BorderSide(color: kLine),
-            ),
-            foregroundColor: WidgetStateProperty.resolveWith<Color>((states) {
-              if (states.contains(WidgetState.selected)) {
-                return act ? kDanger : kInfo;
-              }
-              return kMuted;
-            }),
-          ),
+          style: modeSegmentStyle(modeColor(mode)),
           onSelectionChanged: (values) => onChanged(values.first),
         ),
         const SizedBox(width: 8),
@@ -1063,7 +1278,7 @@ class _ModeBar extends StatelessWidget {
             act ? 'ACT：会直接改文件' : 'PLAN：只读，不改文件',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 11, color: act ? kDanger : kMuted),
+            style: TextStyle(fontSize: 11, color: act ? kAct : kPlan),
           ),
         ),
       ],

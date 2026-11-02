@@ -338,3 +338,138 @@ class LinkBadge extends StatelessWidget {
     );
   }
 }
+/// 长文本折叠阈值：字符数或行数任一超限就折叠。
+const int kCollapseChars = 900;
+const int kCollapseLines = 12;
+
+/// 二级页：完整文本 + 复制。
+///
+/// 为什么不在气泡里原地展开：一条 3 万字的回复展开后会把整页布局顶开、
+/// 滚动位置也跟着跳；二级页能独立滚动、独立复制，回退也不需要重新定位。
+class TextViewerPage extends StatelessWidget {
+  const TextViewerPage({
+    super.key,
+    required this.title,
+    required this.text,
+    this.mono = false,
+    this.truncated = false,
+  });
+
+  final String title;
+  final String text;
+
+  /// 命令过程用等宽字体，正文用普通字体。
+  final bool mono;
+
+  /// bridge 侧已截断：明确告诉用户「这不是全文」，而不是让 UI 假装完整。
+  final bool truncated;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(title),
+        actions: [CopyButton(text: text, label: '复制')],
+      ),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+          children: [
+            if (truncated) ...[
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: kWarn.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: kWarn.withValues(alpha: 0.35)),
+                ),
+                child: const Text(
+                  '原始内容更长：bridge 上报时按上限截断了，完整文本只在电脑上。',
+                  style: TextStyle(fontSize: 11.5, height: 1.6, color: kWarn),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+            SelectableText(
+              text,
+              style: mono
+                  ? kMono.copyWith(fontSize: 12)
+                  : const TextStyle(fontSize: 13.5, height: 1.65, color: kText),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 会话正文：短文本直接显示，长文本折叠成 12 行 + 「展开全文」入口。
+class MessageText extends StatelessWidget {
+  const MessageText({
+    super.key,
+    required this.text,
+    required this.style,
+    this.title = '全文',
+    this.truncated = false,
+  });
+
+  final String text;
+  final TextStyle style;
+  final String title;
+  final bool truncated;
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = '\n'.allMatches(text).length + 1;
+    final collapsible = text.length > kCollapseChars || lines > kCollapseLines;
+    if (!collapsible) return Text(text, style: style);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          text,
+          maxLines: kCollapseLines,
+          overflow: TextOverflow.ellipsis,
+          style: style,
+        ),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            InkWell(
+              borderRadius: BorderRadius.circular(6),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => TextViewerPage(
+                    title: title,
+                    text: text,
+                    truncated: truncated,
+                  ),
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                child: Text(
+                  '展开全文（${text.length} 字）',
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                    color: kInfo,
+                  ),
+                ),
+              ),
+            ),
+            if (truncated) ...[
+              const SizedBox(width: 8),
+              const Text(
+                '原文更长',
+                style: TextStyle(fontSize: 10.5, color: kWarn),
+              ),
+            ],
+          ],
+        ),
+      ],
+    );
+  }
+}
+
