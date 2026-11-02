@@ -185,7 +185,7 @@
 
 | 项 | 实测 |
 |---|---|
-| 分支 / HEAD | `master` @ `f60ddf9`（P7 / P14 / P8） |
+| 分支 / HEAD | `master`（P7 / P14 / P8 之后；当前哈希看 `git log -1`） |
 | Hub | `{"ok":true,...,"db":{"ok":true,"latencyMs":0},"sseClients":1}` |
 | bridge | `{"ok":true,"service":"cline-bridge"}`（手动启动，未开机自启） |
 | 线上入口 | `https://hub.littlewish.top:8443` |
