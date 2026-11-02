@@ -185,7 +185,7 @@
 
 | 项 | 实测 |
 |---|---|
-| 分支 / HEAD | `master` @ `a20abe1` |
+| 分支 / HEAD | `master` @ `919ef39`（P7 / P14 / P8） |
 | Hub | `{"ok":true,...,"db":{"ok":true,"latencyMs":0},"sseClients":1}` |
 | bridge | `{"ok":true,"service":"cline-bridge"}`（手动启动，未开机自启） |
 | 线上入口 | `https://hub.littlewish.top:8443` |
