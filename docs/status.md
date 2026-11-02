@@ -23,7 +23,8 @@
 | 11 | P16 | 停 bridge 前先停任务：`POST /admin/stop` + `commandWorker.shutdown()`（先回写 running，再杀进程树）+ `npm run stop` / `npm run restart` + `docs/interruptions.md` | ✅ 已上线（bridge 12:27 起为新版本；未在本会话里自杀验证） |
 | 12 | P17 | App 自动更新可直接「打开下载页」：原生 `ACTION_VIEW`（`link_launcher.dart` + `MainActivity`），复制链接保留 | ✅ 已发布 `1.1.4+6`（与 P8 一起发版） |
 
-已完成并上线的：P0 / P1 / P3 / P4 / P5 / P9 / P10（P3、P9 已部署，P5、P10 已发布 1.1.1）。
+已完成并上线的：P0 / P1 / P3 / P4 / P5 / P6 / P7 / P8 / P9 / P10 / P11–P18
+（P3、P9 已部署；P5、P10、P15、P17、P8 已发布到 App；P7/P14 待 bridge 重启生效）。
 
 ### Step 1 + Step 2 落地记录（2026-11-02）
 
