@@ -593,13 +593,19 @@ async function tick() {
   }
 }
 
-async function shutdown(reason) {
+async function shutdown(reason, { keepChildren = false } = {}) {
   if (shuttingDown) return
   shuttingDown = true
-  logger.info('shutting down', { reason, pending: outbox.pending })
+  logger.info('shutting down', { reason, pending: outbox.pending, keepChildren })
+  // 顺序不能反：先把执行中的命令回写成 failed（手机不再卡「执行中」），
+  // 再杀进程树，最后才退出。硬杀（Stop-Process / taskkill）等于跳过这一步，
+  // 见 docs/interruptions.md。
   try {
-    commandWorker.stop()
-  } catch {}
+    const result = await commandWorker.shutdown({ reason, keepChildren })
+    if (result.interrupted.length > 0) logger.warn('in-flight commands interrupted', result)
+  } catch (error) {
+    logger.error('command shutdown failed', { message: error.message })
+  }
   try {
     server?.close()
   } catch {}
@@ -611,7 +617,15 @@ async function shutdown(reason) {
   process.exit(0)
 }
 
-server = await startHookServer({ host: cfg.hookHost, port: cfg.hookPort, onHook, logger })
+server = await startHookServer({
+  host: cfg.hookHost,
+  port: cfg.hookPort,
+  onHook,
+  // 本机控制口：`npm run stop` / `npm run restart` 走这里，触发的是优雅关闭。
+  // options 目前只有 keepChildren（`npm run restart -- --keep-session`）。
+  onStop: (reason, options) => { void shutdown(reason, options) },
+  logger
+})
 
 logger.info('bridge started', {
   config: cfg.configPath,
@@ -625,6 +639,14 @@ logger.info('bridge started', {
 
 if (!cfg.hubUrl) {
   logger.warn('hubUrl is empty: records stay in outbox.json until you set it in bridge/config.json')
+}
+
+// 启动时先对一次账：上次 bridge 崩溃/被重启时留下的 running 命令，
+// 会话已经翻成 failed，这里负责把命令状态也收尾（不杀进程，只在进程确实不在时回写）。
+if (!ONCE) {
+  commandWorker.reconcile()
+    .then((result) => logger.info('command reconcile on boot', result))
+    .catch((error) => logger.warn('command reconcile on boot failed', { message: error.message }))
 }
 
 await tick()

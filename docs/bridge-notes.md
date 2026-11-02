@@ -211,3 +211,39 @@ schtasks /create /tn "ClineBridge" ^
 - ~~计划任务 `\Hermes_Gateway`~~：**已于 2026-11-01 删除**（原指向不存在的 `hermes\gateway-service\Hermes_Gateway.vbs`，
   每分钟重试报 `0x80070002`，是 9 月装 Hermes agent 的残留，与本案无关）。
 - ~~`Guest` 账号启用~~：**已于 2026-11-01 禁用**。
+
+## 8. `cline --json` 的实测输出（2026-11-02）
+
+隔离 `data-dir` + 临时 `CLINE_GLOBAL_SETTINGS_PATH`，用 `-P deepseek -m deepseek-flash`
+跑一句「Reply with just OK」，完整 stdout（stdout 是纯 NDJSON，正常情况 stderr 为空）：
+
+```json
+{"ts":"2026-11-02T04:32:26.771Z","type":"hook_event","hookEventName":"agent_start","agentId":"agent_45eb8f39","taskId":"conv_1793593946761_emhq93x","parentAgentId":null}
+{"ts":"…","type":"agent_event","event":{"type":"iteration_start","iteration":1}}
+{"ts":"…","type":"agent_event","event":{"type":"content_start","contentType":"text","text":"OK","accumulated":"OK"}}
+{"ts":"…","type":"agent_event","event":{"type":"usage","inputTokens":9000,"outputTokens":2,"totalCost":0.0013512}}
+{"ts":"…","type":"agent_event","event":{"type":"content_end","contentType":"text","text":"OK"}}
+{"ts":"…","type":"agent_event","event":{"type":"iteration_end","iteration":1,"hadToolCalls":false,"toolCallCount":0}}
+{"ts":"…","type":"hook_event","hookEventName":"agent_end","agentId":"agent_45eb8f39","taskId":"conv_…","parentAgentId":null}
+{"ts":"…","type":"agent_event","event":{"type":"done","reason":"completed","text":"OK","iterations":1,"usage":{…}}}
+{"ts":"…","type":"run_result","finishReason":"completed","iterations":1,"usage":{…},"aggregateUsage":{…},"durationMs":1568,"text":"OK","model":{"id":"deepseek-flash","provider":"deepseek","info":{…}}}
+```
+
+失败时（deepseek 认证被拒）：
+
+```json
+{"type":"hook_event","hookEventName":"agent_error","agentId":"agent_…","taskId":"conv_…"}
+{"type":"agent_event","event":{"type":"error","error":{"message":"Authentication Fails (governor)"},"errorClass":"auth","recoverable":false,"iteration":1}}
+```
+
+stderr 上还会有一条 `{"ts":"…","type":"error","message":"Authentication Fails (governor)"}`。
+
+**要点**：
+
+- `run_result.text` 就是终稿；`agent_event.done.text` 是兜底。`run_result` 是**最后一行**
+  且不一定带结尾换行（解析器要 flush）。
+- `taskId` 形如 `conv_<ms>_<随机>`，**不是**会话目录 ID；与本次新建的
+  `sessions/1793593943487_mfefk` 时间戳都不同，`sessions.db.conversation_id` 为 `null`。
+- `--json` 不影响落盘：`sessions/<id>/<id>.json`、`.messages.json`、`sessions.db` 都会写。
+- 探针必须隔离：临时 `--data-dir` 里放一份 `settings/providers.json`（或 junction），
+  否则报 `Authentication Fails`；`-m` 可能回写 providers.json，别直接拿主配置做实验。

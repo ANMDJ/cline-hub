@@ -17,13 +17,19 @@ class SettingsStore extends ChangeNotifier {
     String baseUrl = '',
     String token = '',
     String deviceId = '',
+    bool notifyCommands = true,
+    bool notifySessions = true,
   }) : _baseUrl = baseUrl,
        _token = token,
-       _deviceId = deviceId;
+       _deviceId = deviceId,
+       _notifyCommands = notifyCommands,
+       _notifySessions = notifySessions;
 
   static const _kBaseUrl = 'hub.baseUrl';
   static const _kToken = 'hub.token';
   static const _kDeviceId = 'hub.deviceId';
+  static const _kNotifyCommands = 'notify.commands';
+  static const _kNotifySessions = 'notify.sessions';
 
   static Future<SettingsStore> load({SharedPreferences? prefs}) async {
     final store = prefs ?? await SharedPreferences.getInstance();
@@ -32,6 +38,9 @@ class SettingsStore extends ChangeNotifier {
       baseUrl: store.getString(_kBaseUrl) ?? '',
       token: store.getString(_kToken) ?? '',
       deviceId: store.getString(_kDeviceId) ?? '',
+      // 没存过时默认开启：新装用户第一晚就能收到「命令跑完了」。
+      notifyCommands: store.getBool(_kNotifyCommands) ?? true,
+      notifySessions: store.getBool(_kNotifySessions) ?? true,
     );
   }
 
@@ -39,10 +48,20 @@ class SettingsStore extends ChangeNotifier {
   String _baseUrl;
   String _token;
   String _deviceId;
+  bool _notifyCommands;
+  bool _notifySessions;
 
   String get baseUrl => _baseUrl;
   String get token => _token;
   String get deviceId => _deviceId;
+
+  /// 命令完成 / 失败时弹系统通知。
+  bool get notifyCommands => _notifyCommands;
+
+  /// 会话结束 / 失败 / 中断时弹系统通知（bridge 的 `session_*` 事件）。
+  bool get notifySessions => _notifySessions;
+
+  bool get notificationsEnabled => _notifyCommands || _notifySessions;
 
   bool get isConfigured =>
       _baseUrl.trim().isNotEmpty && _token.trim().isNotEmpty;
@@ -73,6 +92,20 @@ class SettingsStore extends ChangeNotifier {
     if (trimmed == _deviceId) return;
     _deviceId = trimmed;
     await _prefs.setString(_kDeviceId, _deviceId);
+    notifyListeners();
+  }
+
+  Future<void> setNotifyCommands(bool value) async {
+    if (_notifyCommands == value) return;
+    _notifyCommands = value;
+    await _prefs.setBool(_kNotifyCommands, value);
+    notifyListeners();
+  }
+
+  Future<void> setNotifySessions(bool value) async {
+    if (_notifySessions == value) return;
+    _notifySessions = value;
+    await _prefs.setBool(_kNotifySessions, value);
     notifyListeners();
   }
 

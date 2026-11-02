@@ -70,6 +70,11 @@ App → POST /api/v1/commands（可带 sessionId）
 cd bridge; node src/index.js            # 常驻；npm start 等价
 cd bridge; npm run once                 # 只跑一轮，调试用
 cd bridge; npm run health               # 本机 3210 健康检查
+cd bridge; npm run ps                   # commandId → pid（pid + 启动时间双校验）
+cd bridge; npm run stop -- --reason "升级 bridge" # 优雅停：先回写执行中的命令，再杀进程树
+cd bridge; npm run restart -- --reason "换配置"   # 停 + detached 重启（等价 Start-Process）
+cd bridge; npm run restart:idle -- --reason "升级 bridge" # 等执行中的命令跑完再重启（在命令里发起重启时用这个）
+cd bridge; npm run reconcile -- --dry-run # 哪些 running 命令已经没有进程（不改状态）
 cd bridge; npm run check:whitelist      # 校验 workspaceWhitelist 配置
 
 # server（Hub）
@@ -78,7 +83,7 @@ cd server; npm run create-device -- --id phone --role app --name Pixel
 cd server; npm run smoke                # 端到端冒烟
 
 # app（Flutter）
-cd app; flutter pub get; flutter test   # 19 个用例
+cd app; flutter pub get; flutter test   # 48 个用例
 cd app; flutter run -d chrome           # 桌面预览（Web 没有 SSE，降级为轮询）
 cd app; flutter build apk --release     # → build/app/outputs/flutter-apk/
 
@@ -98,6 +103,10 @@ Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 ```
 
+要看/停**某一条 App 命令**同理，不要按 `node.exe` / `cline` 杀：
+`cd bridge; npm run ps` 给出 `commandId → pid`，`npm run ps -- --kill <commandId>` 会先用
+「pid + 启动时间」双校验再杀进程树；bridge 崩溃留下的孤儿用 `npm run ps -- --clean` 收。
+
 ## 5. 硬约束（违反会直接出事）
 
 1. **仓库里不出现真实 token / 口令**。`bridge/config.json`、`server/.env`、`.secrets/` 都已 gitignore；
@@ -113,6 +122,12 @@ Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
 7. **SSE 反代必须 `flush_interval -1`**，否则事件会被 Caddy 缓冲（ADR-5）。
 8. 改完行为要**同步文档**：模块 README + 根 README 对应段落；新的「为什么」追加到
    `docs/decisions.md`（ADR 编号递增，不修改旧条目）；现状变化更新 `docs/status.md`。
+9. **停 bridge 之前先停任务**：用 `cd bridge; npm run stop -- --reason "..."`（先回写执行中的
+   命令为 `failed`，再杀进程树，最后退出）。`Stop-Process` / `taskkill /pid` 是硬杀，Node
+   收不到 `SIGTERM`，手机上的命令会卡「执行中」。**在命令里发起重启**用
+   `npm run restart:idle`（等命令跑完）；`--keep-session` 保不住会话（bridge 一死管道就断，
+   cline 十几秒后 exit 1）。**每次主动中断都要在
+   [`docs/interruptions.md`](docs/interruptions.md) 追加一条**（为什么杀 / 影响了谁 / 怎么恢复）。
 
 ## 6. 一次任务的推荐流程
 
@@ -130,7 +145,8 @@ Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
 | 手机列表空 | bridge 没跑 / outbox 积压（`bridge/outbox.json`）/ Hub 没数据 |
 | 命令一直 `pending` | `commands.enabled`、`allowModes`、bridge 进程 |
 | 命令 `failed: workspace not allowed` | `workspaceWhitelist`（跑 `npm run check:whitelist`） |
-| 命令卡 `running` 不结束 | cline 在等 stdin（`spawn` 必须 `stdio: 'ignore'`）/ 超时被杀 |
+| 命令卡 `running` 不结束 | cline 在等 stdin（`spawn` 必须 `stdio: 'ignore'`）/ 超时被杀 / bridge 重启过 → `npm run reconcile -- --dry-run` |
+| 命令卡 `running` 且是刚重启过 bridge | 是不是硬杀过（`Stop-Process`）？硬杀不回写状态 → `npm run reconcile`；以后用 `npm run stop -- --reason "..."` |
 | 顶栏一直「连接中」 | 旧 APK；SSE 被反代缓冲（`flush_interval -1`） |
 | `401 invalid_token` | token 被轮换，重新签发并同步到 App |
 | `404` 且 body 为空 | 旧文档里的 `/_h/<前缀>` 入口已退役，用 `https://hub.littlewish.top:8443` |
@@ -145,7 +161,8 @@ Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
 | [`README.md`](README.md) | 项目总览、里程碑、安全基线、快速开始 | 需要全貌 |
 | [`docs/api.md`](docs/api.md) | Hub v1 接口契约（鉴权 / 错误码 / 请求响应） | 改接口、写客户端 |
 | [`docs/bridge-notes.md`](docs/bridge-notes.md) | 本机实测事实：Cline 数据位置、messages.json 结构、安全排查 | 改采集 / 怀疑环境 |
-| [`docs/decisions.md`](docs/decisions.md) | 27 条 ADR：「为什么这么做」 | 想推翻某个设计之前 |
+| [`docs/decisions.md`](docs/decisions.md) | 37 条 ADR：「为什么这么做」 | 想推翻某个设计之前 |
+| [`docs/interruptions.md`](docs/interruptions.md) | 主动中断记录：为什么杀 bridge / 杀了谁 / 怎么恢复 | 开工前、要重启 bridge 时 |
 | [`docs/server-prep.md`](docs/server-prep.md) | 服务器从零准备（Docker / Postgres / Caddy / ntfy） | 换机、重建 |
 | [`deploy/README.md`](deploy/README.md) | 部署 runbook、回滚、常见故障 | 上服务器 |
 | [`server/README.md`](server/README.md) · [`app/README.md`](app/README.md) · [`site/README.md`](site/README.md) | 各模块的跑法与取舍 | 进模块前 |

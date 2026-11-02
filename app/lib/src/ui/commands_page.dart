@@ -230,6 +230,30 @@ void _showCommandDetail(BuildContext context, CommandItem item, HubStore store) 
               const SizedBox(height: 10),
               MetaLine(parts: [item.workspace], icon: Icons.folder_outlined),
             ],
+            // 进程身份：pid 只在 bridge 活着时可信；pidStartedAt 用于防 PID 复用。
+            if (item.pid != null) ...[
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: MetaLine(
+                      parts: [
+                        'pid ${item.pid}',
+                        if (item.runner != null) item.runner!,
+                        if (item.pidStartedAt != null)
+                          '启动于 ${formatDateTime(item.pidStartedAt)}',
+                      ],
+                      icon: Icons.memory_rounded,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  CopyButton(
+                    text: item.diagnosticsCommand,
+                    label: '复制排查命令',
+                  ),
+                ],
+              ),
+            ],
             // bridge 执行完会把新开会话的 ID 回写到这里，点一下直接进会话。
             if ((item.sessionId ?? '').isNotEmpty) ...[
               const SizedBox(height: 12),

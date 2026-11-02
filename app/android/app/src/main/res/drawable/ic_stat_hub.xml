@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 通知栏小图标：必须是纯白剪影（Android 会按系统色调重新着色），
+     不能用带颜色的 launcher 图标，否则在通知栏是一个白方块。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M3.4,5.2L4.9,3.8L12.2,12L4.9,20.2L3.4,18.8L9.3,12Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12.6,17.2H21v2.2h-8.4z" />
+</vector>

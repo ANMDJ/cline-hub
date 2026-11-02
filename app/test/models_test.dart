@@ -82,6 +82,34 @@ void main() {
       expect(done.modeLabel, 'YOLO');
       expect(done.duration, const Duration(seconds: 6));
     });
+
+    test('进程身份：pid / 启动时间 / 排查命令', () {
+      final item = CommandItem.fromJson(<String, dynamic>{
+        'id': 'cmd_3',
+        'status': 'running',
+        'runner': 'cline',
+        'pid': 4242,
+        'pidStartedAt': '2026-11-02T03:00:00.000Z',
+      });
+      expect(item.pid, 4242);
+      expect(item.runner, 'cline');
+      expect(item.pidStartedAt, isNotNull);
+      expect(item.diagnosticsCommand, contains('Get-Process -Id 4242'));
+      expect(item.diagnosticsCommand, contains('taskkill /pid 4242 /t /f'));
+      // PowerShell 的 $pid 是「当前 PowerShell 进程」，复制文本里不能出现
+      expect(item.diagnosticsCommand, isNot(contains(r'$pid')));
+    });
+
+    test('没有 pid 时不生成排查命令', () {
+      const item = CommandItem(
+        id: 'cmd_4',
+        deviceId: 'localone',
+        prompt: 'dir',
+        mode: 'plan',
+        status: 'pending',
+      );
+      expect(item.diagnosticsCommand, isEmpty);
+    });
   });
 
   group('HubEvent', () {

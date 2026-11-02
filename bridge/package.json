@@ -11,6 +11,11 @@
     "dev": "node --watch src/index.js",
     "once": "node src/index.js --once",
     "health": "node -e \"fetch('http://127.0.0.1:3210/health').then(r=>r.text()).then(console.log)\"",
+    "ps": "node scripts/ps.mjs",
+    "stop": "node scripts/stop.mjs",
+    "restart": "node scripts/stop.mjs --restart",
+    "restart:idle": "node scripts/stop.mjs --restart --when-idle",
+    "reconcile": "node scripts/reconcile.mjs",
     "check:whitelist": "node scripts/check-workspace-whitelist.mjs",
     "test": "node --test"
   }

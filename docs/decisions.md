@@ -615,3 +615,218 @@ Android SDK + JDK 17，打不出 APK。
 **代价与边界**：列表查询每行多取 1600 字原文（50 行约 80KB 库内传输，出网仍是 400 字）；
 「纯文本化」是去记号不是渲染——表格会变成空格分隔的一行；改规则不需要回填，读时现算。
 
+## 33. 命令进程身份：pid + 启动时间，登记在本机（2026-11-02）
+
+**问题**：手机下发命令后，App 只知道「执行中」，不知道 Windows 上对应哪个进程；
+出事时只能按 `node.exe` / prompt 猜，或者按进程名杀（会误伤别的 node / cline）。
+P7 的并发池一旦放开，单槽位 `state.child` 只能杀掉最后一条，其余立刻变孤儿。
+
+**决策**：
+- `commands` 存 `pid` + `pid_started_at`（migration 006），bridge spawn 成功立刻 PATCH 上报，
+  `runner` 一并记录；用 `coalesce` 写入，后续 `done/failed` 不会把身份清掉。
+- **pid 与启动时间必须成对**。Windows 会复用 PID，只凭 pid 杀进程可能打到无关进程；
+  任何 kill 前都要拿 `Get-CimInstance Win32_Process` 的 `CreationDate` 比一次（容差 5s）。
+- 真正决定「能不能杀」的是本机登记文件 `%TEMP%\cline-hub-cmd\running\<commandId>.json`
+  （`bridge/src/command-registry.js`）。Hub 上的 pid 只用于展示与复制排查命令，
+  **不作为杀进程依据**：Hub 不知道 bridge 何时重启、PID 何时被复用。
+- `npm run ps` 是唯一推荐的排查入口：`commandId → pid → 存活/双校验 → 精确 kill 命令`；
+  `--kill` 校验失败直接拒绝，`--clean` 收掉已退出 / 被复用的登记。
+- bridge 内的子进程集合从单槽位改成 `Map<commandId, child>`，`stop()` 杀掉全部；
+  进程结束即删登记，`ps` 只显示还活着的命令。
+
+**代价与边界**：
+- `pidStartedAt` 取 spawn 返回后的本地时间，与 Windows CreationDate 有毫秒级误差，故留 5 秒容差；
+  超出容差宁可拒绝 kill，也不猜。
+- 登记文件落在 `%TEMP%`，机器重启或清理临时目录会丢；这时 Hub 上的 pid 只作历史线索。
+- 还不能从手机取消命令（P14 计划 `POST /api/v1/commands/:id/cancel`）；
+  当前停止方式是本机 `npm run ps -- --kill` 或等超时。
+
+## 34. 命令孤儿回收：对账放在 bridge，只改状态不杀进程（2026-11-02）
+
+**现象**：`cmd_3ced4a851f4c`（03:40 下发）在手机上永远显示「执行中」，而它开出来的会话
+`1793590853159_ewhd0` 已经 `failed`。时间线：03:40:51 bridge 认领并 spawn cline →
+03:47:13 bridge 为了加载 P11/P12 被重启，子进程跟着没了 → 会话扫描器把会话翻成 failed，
+但 **commands 表只有 bridge 会写**，没人收尾。
+
+**决策**：
+- 对账放在 bridge（`command-worker.reconcile()`），因为它才是「本机有没有这个进程」的权威：
+  每 60 秒 + 启动时各跑一次，取 `GET /api/v1/commands?deviceId=…&status=running`，
+  逐条判断后把没有进程接管的回写成 `failed`，`errorText` 明确写「原来的执行进程不在了，可重新下发」。
+- 判定用纯函数 `classifyRunningCommand()`：`owned`（本进程在跑）/ `recent`（进入 running 不足 2 分钟，
+  留观）/ `alive`（进程在且 pid+启动时间对得上）/ `orphaned` 才回写。
+  证据优先用本机登记，登记被 `%TEMP%` 清掉时退回 Hub 的 `pid` + `pidStartedAt`。
+- **不杀进程**：对账只负责「状态别骗人」。真要停某条命令，仍然走 `npm run ps -- --kill <id>`
+  的 pid+启动时间双校验（ADR-33）；bridge 重启留下的孤儿由人决定。
+- 顺手清掉登记目录里进程已不在 / pid 被复用的文件，`npm run ps` 不再显示假条目。
+- 排障入口：`cd bridge; npm run reconcile -- --dry-run` 先看会改哪些，去掉 `--dry-run` 立即回写。
+
+**代价与边界**：
+- bridge 完全没起来时没人对账（手机仍会看到 running）；这是「执行者不可用」的必然结果，
+  等 bridge 回来会在启动对账里收尾。
+- 2 分钟留观意味着刚领取的命令最多多显示 2 分钟；换来的是不会把「正在 spawn」误判成失败。
+- 对账只处理最近 50 条 running（`limit`），足够单人使用；真到并发池（P7）再调。
+
+## 35. 手机通知走原生 MethodChannel，不引第三个依赖（2026-11-02）
+
+**需求**：命令完成 / 失败、会话结束时，手机上要有系统通知；不能只靠 App 内 snackbar。
+
+**决策**：
+- 原生 `MainActivity` 注册 `top.littlewish.cline_console/notify`，只做三件事：
+  `ensurePermission()`（Android 13+ 的 `POST_NOTIFICATIONS`）、`show(id,title,body)`、`cancelAll()`。
+  通知通道 `cline_hub_events`（IMPORTANCE_HIGH），小图标是纯白剪影 `ic_stat_hub`。
+- Dart 侧 `data/notifier.dart`：`HubNotifier` 接口 + `LocalHubNotifier`（Android）/ `NoopHubNotifier`（Web、测试）。
+  `HubStore` 注入接口，测试里换成记录器，不需要 mock 平台通道。
+- **不引 flutter_local_notifications**：客户端从第一天起只保留 http / shared_preferences（ADR-31），
+  而这里只需要「建通道 + 发通知 + 要权限」；引插件会连带要求 core library desugaring，
+  给本来就靠手工配 `JAVA_HOME` 的发版流程再加一个失败点。
+- 触发点只有两处：命令 `active → done/failed/cancelled` 的跃迁（首次加载的历史命令不弹）、
+  bridge 合成的 `session_done/session_failed/session_cancelled`（不认 `agent_*`，避免和 ntfy 重复）。
+  同一个 `commandId:status` / `hook:<id>` 只弹一次（SSE 重放、回前台补拉都会去重）。
+
+**边界**：
+- App 退到后台会主动断 SSE 省电（ADR-14 的取舍），这期间**收不到事件**，可靠通道仍然是 ntfy；
+  回前台会补拉一次，并把「后台期间结束的命令」补一条通知（`_refreshAfterResume`）。
+- 通知点击只打开 App，不做深链到具体命令（需要额外保存 payload → 路由，P8 之后再说）。
+- 通知权限被拒时静默失败，设置页「通知」卡片可以再次请求并显示结果。
+
+
+## 36. 停 bridge 之前先停任务：`/admin/stop` + 优雅 shutdown，再杀进程树（2026-11-02）
+
+**问题**：Windows 上 `Stop-Process` / `taskkill /pid` 是 `TerminateProcess`，Node 收不到
+`SIGTERM`，`index.js` 里的 `shutdown()` 根本不会执行。旧实现即使执行了，也是
+「先 `killTree()` → 立刻 `process.exit(0)`」，回写 `failed` 的 PATCH 排在后面，来不及发出去。
+结果就是：命令的 cline 子进程没了，但 Hub 上的 `commands.status` 一直是 `running`，
+手机上的卡片停在「执行中」，要等下一次启动对账或人工 `npm run reconcile` 才收尾
+（`cmd_3ced4a851f4c` 卡了 19 分钟）。
+
+**决策**：
+- 本机 hook server 增加 `POST /admin/stop`（只认 `127.0.0.1` / `::1`，其他一律 403），
+  请求体 `{ "reason": "..." }`。收到后先回 202，再触发 `shutdown(reason)`。
+- `commandWorker.shutdown({ reason })` 的顺序固定为：
+  1. `state.stopped = true`（不再领取新命令）；
+  2. 对 `state.children` 里每条 in-flight 命令并发 `PATCH failed`，`errorText` 用
+     `interruptionErrorText(reason)`（写清「bridge 正在关闭（原因），执行进程已停止，
+     可以直接重新下发」），每条 3 秒超时；
+  3. 杀进程树（`taskkill /t /f`）；
+  4. 交给 `index.js` 关 server、存 state、退出。
+- `handle()` 在收尾时检查 `state.interrupted`：已经由 shutdown 回写过的命令不再报一次，
+  否则「bridge 关闭」会被覆盖成 `exit code -1`。
+- 命令行入口：`npm run stop -- --reason "..."`、`npm run restart -- --reason "..."`。
+  `restart` 用 `spawn(process.execPath, ['src/index.js'], { detached: true, stdio: 'ignore' })`
+  拉起，等价于 `Start-Process`（不用 Git Bash 的 `nohup`，那会把终端 shell 一起带走）。
+- **每次主动中断都写 `docs/interruptions.md`**：为什么杀 / 怎么杀 / 影响了谁 / 怎么恢复。
+  下次会话读这一页就知道上次为什么断在半路。
+
+**代价与边界**：
+- 回写失败（Hub 不可达）不阻塞退出：命令状态留给下次启动的 `reconcile()` 兜底，
+  原因会变成「原来的执行进程不在了」而不是「bridge 正在关闭」。
+- in-flight 命令被主动中断 = 用户要接受「这次执行作废」。这是「要重启」的必然代价，
+  换来的是状态不再骗人；想跑完就先等它结束。
+- 硬杀仍然可能发生（蓝屏 / 任务管理器）。所以 `reconcile()` 不能删，两条路径并存。
+
+## 37. App 用系统浏览器直接打开下载地址，不引 url_launcher（2026-11-02）
+
+**问题**：设置页「检查更新」发现有新版本时只提供了「复制下载地址」，手机上要
+「复制 → 切浏览器 → 粘贴 → 下载」，多三步，而且粘贴还可能失败。
+
+**决策**：
+- `MainActivity` 增加第二个 MethodChannel `top.littlewish.cline_console/links`，
+  方法 `openUrl`：只接受 `http` / `https`，用 `Intent(ACTION_VIEW, uri)` 交给系统浏览器。
+- Dart 侧 `data/link_launcher.dart`：`LinkLauncher.isHttpUrl()`（纯函数）+ `open()`；
+  Web / 非 Android 返回 `false`，UI 自动退回复制并提示「这个环境打不开浏览器，已复制下载地址」。
+- 「复制链接」保留：没有浏览器、地址是内网 IP、或者用户就是要粘到别处时仍然用得上。
+- **不引 url_launcher**：客户端只保留 http / shared_preferences 两个依赖（ADR-31），
+  这个需求在 Android 侧就是一次 `startActivity`；也不需要 `<queries>`（只 launch 隐式
+  intent，不做 `resolveActivity` 查询）。`ActivityNotFoundException` → 返回 `false`。
+
+**边界**：
+- Web 预览没有原生侧，点了只会复制；这是预览环境的限制，不是功能缺失。
+- 打开的是浏览器，下载/安装仍由系统安装器负责（同一签名覆盖安装）。
+
+## 38. 用 `cline --json` 取干净终稿，会话 ID 仍靠目录扫描（2026-11-02）
+
+**问题**：bridge 以前把 cline 的 stdout/stderr 原样回写，手机上看到的是 `[thinking]`、
+ANSI 和进度行；失败时只能拿「stderr 里第一条像错误的行」猜原因（`failureReason()`），
+遇到认证失败、模型下线这类只有一行 JSON 的错误就猜不准；并发（P7）时也没法从输出里
+区分「哪条命令对应哪次运行」。
+
+**实测 CLI 3.0.74 的 `--json` 输出**（9 行样本，隔离 data-dir 跑出来的）：
+
+```json
+{"ts":"…","type":"hook_event","hookEventName":"agent_start","agentId":"agent_…","taskId":"conv_…"}
+{"ts":"…","type":"agent_event","event":{"type":"iteration_start","iteration":1}}
+{"ts":"…","type":"agent_event","event":{"type":"usage","inputTokens":9000,"outputTokens":2,"totalCost":0.0013}}
+{"ts":"…","type":"agent_event","event":{"type":"done","reason":"completed","text":"OK","usage":{…}}}
+{"ts":"…","type":"run_result","finishReason":"completed","text":"OK","durationMs":1568,"model":{"id":"deepseek-flash","provider":"deepseek"}}
+{"ts":"…","type":"error","message":"Authentication Fails (governor)"}   ← 失败时可能只在 stderr
+```
+
+**决策**：
+
+- `commands.cline.json` **默认开**，`runCline()` 直接把 `--json` 加到参数里；
+  设成 `false` 退回原来的纯文本输出（老版本 CLI 的逃生口）。
+- 新增 `bridge/src/cline-json.js`：**增量** NDJSON 解析（chunk 可能在任意字节截断），
+  只保留终稿、`finishReason`、`errorMessage/errorClass`、`usage`、`taskId`、工具调用数；
+  不把整条事件流堆内存。
+- `resultText` 优先用 `run_result.text`（没有则 `agent_event.done.text`），
+  **只有 CLI 完全没吐 JSON 时才退回原始 stdout**；失败时 `errorText` 优先用事件里的
+  `error.message`，没有才走原来的 `failureReason()`。
+- `ok` 不再只看 exit code：`isClineJsonFailure()` 在 `finishReason` 属于
+  `error/failed/aborted/cancelled`，或「有 error 且没有终稿」时判失败。
+  认证失败实测走的就是这条（CLI 的退出码不可靠）。
+- `command finished` 日志补 `finishReason / taskId / toolCalls / outputTokens / cost`，
+  手机上仍只看结果与错误，不塞用量。
+
+**边界（重要）**：
+
+- `taskId` 是 `conv_…`，**不是**会话 ID（`~/.cline/data/sessions/<id>`）。实测两者的时间戳
+  都不同，`sessions.db.conversation_id` 也是 `null`。所以命令 → 会话的配对**仍然**
+  靠「运行前快照 + 扫描新增会话目录 + cwd 比对」（ADR-25），P7 的同 workspace 串行
+  也需要它，别拿 `taskId` 当 sessionId。
+- `--json` 不改变落盘行为：`sessions/<id>/<id>.messages.json`、`sessions.db` 照旧写，
+  所以会话采集 / 逐条消息流不受影响。
+- 终稿按 20000 字截断（与 `RESULT_LIMIT` 一致），超长部分不进入 `resultText`。
+
+**验证**：`bridge/test/cline-json.test.js`（9 个用例：成功流 / 认证失败 / 任意位置切块 /
+末尾无换行 / 噪声行 / 终稿优先级 / 截断 / 非 JSON 回退）+ `command-json-mode.test.js`
+（假 CLI 端到端：断言 `--json` 被传入、`done` 的 `resultText` 是 `OK` 而不是 JSON 原文、
+error 事件判 failed、`json=false` 退回原始输出）。`cd bridge; node --test` 37 项全绿。
+
+
+## 39. 重启等命令跑完：detached supervisor，而不是 `--keep-session`（2026-11-02）
+
+**事故**：用户在手机命令 `cmd_c4a49f60fccf` 里要求重启 bridge（让 P12/P16/P13 生效）。
+上一版用 `npm run restart -- --keep-session`：bridge 先回写命令 `failed`，再只杀 bridge
+（不带 `/t`），理论上 cline 子进程能继续跑。实际结果（同一次 12:24 事故）：
+
+- bridge 12:27:51 退出，新 bridge 12:27:53 起来；
+- 子进程的 stdout/stderr 是 `stdio: ['ignore','pipe','pipe']`，**管道另一端在 bridge 上**；
+- bridge 一死管道就断，cline 在 12:28:10 以 **exit code 1** 结束，发起重启的那轮对话断在半路；
+- 新会话（下一次命令）看不到上一轮上下文，只能从 `docs/status.md` 和旧 `messages.json` 找回来。
+
+**决策**：重启要「等当前命令跑完」，并且由一个**不属于任何命令进程树**的 supervisor 执行：
+
+- `npm run restart:idle`（= `stop.mjs --restart --when-idle`）只做一件事：`spawn(detached)`
+  一个 `scripts/restart-when-idle.mjs`，打印「已排队」，立刻返回。
+- supervisor 轮询本机登记目录（`readEntries` + `inspectProcesses`），用
+  `liveCommandEntries()` 只认「pid 存在 + 启动时间对得上」的命令（pid 被复用的不算）；
+  进程查询失败按「还在忙」处理，宁可多等也不误重启。
+- 空闲后先等 3 秒（`--grace`），再确认一次；这 3 秒里来了新命令就继续等。
+- 确认空闲才调用 `stop.mjs --restart`，走正常的「先回写 → 再杀 → 再拉起」。
+- 默认最多等 2 小时（`--timeout` 可覆盖，且只有显式传时才生效）；超时只写日志、
+  **不动 bridge**。锁文件 `%TEMP%\cline-hub-cmd\restart-when-idle.json` 防连点排两个 supervisor。
+
+**边界**：
+
+- 这不是「热升级」：当前命令跑完之后、新命令进来之前有一个几秒空窗；期间手机发命令会
+  落在一个正在关闭的 bridge 上，可能显示 `pending` 到新 bridge 起来。
+- supervisor 只保证「不掐断已经在跑的命令」，不保证「重启期间新命令不丢」；命令是
+  服务端认领语义，`pending` 的还会被新 bridge 领走。
+- `--keep-session` 仍保留（极少数「进程还要跑、结果不要了」的场景），但注释与文档都写明
+  它保不住会话，别当重启开关用。
+
+**验证**：`bridge/test/idle-restart.test.js` 7 项（存活判定 / 立即返回 / 等最后一条结束 /
+超时不误重启 / 查询失败不误重启 / 锁读写与存活判断）；本机实测排队后日志显示
+`still busy {"commands":["cmd_c2e5d2d05eec"]}`，超时分支 `timeout, bridge left untouched`
+且 bridge pid 未变、锁文件自动清理。
+

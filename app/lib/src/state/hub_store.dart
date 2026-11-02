@@ -3,8 +3,10 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../data/hub_api.dart';
+import '../data/notifier.dart';
 import '../data/settings_store.dart';
 import '../models/models.dart';
+import '../util/format.dart';
 
 /// 与服务端 SSE 的连接状态。
 enum LinkState { idle, connecting, live, retrying, offline }
@@ -38,13 +40,18 @@ class HubStore extends ChangeNotifier {
   HubStore({
     required this.settings,
     HubApi Function(SettingsStore settings)? apiFactory,
-  }) : api = (apiFactory ?? _defaultApi)(settings);
+    HubNotifier? notifier,
+  }) : api = (apiFactory ?? _defaultApi)(settings),
+       notifier = notifier ?? LocalHubNotifier();
 
   static HubApi _defaultApi(SettingsStore settings) =>
       HttpHubApi(baseUrl: settings.baseUrl, token: settings.token);
 
   final SettingsStore settings;
   final HubApi api;
+
+  /// 通知出口：Android 走原生 MethodChannel，Web / 测试注入 Noop 实现。
+  final HubNotifier notifier;
 
   // ---------------------------------------------------------------- sessions
   List<SessionItem> sessions = <SessionItem>[];
@@ -92,6 +99,27 @@ class HubStore extends ChangeNotifier {
   StreamSubscription<HubEvent>? _sub;
   Timer? _reconnectTimer;
   Timer? _sessionDebounce;
+
+  /// 已弹过通知的键（`commandId:status` / `hook:<id>`）：
+  /// SSE 与「回前台补拉」可能同时命中同一条，只弹一次。
+  final Set<String> _notified = <String>{};
+
+  /// 退到后台时还在跑的命令 id：回前台如果已经结束，补一条通知。
+  Set<String> _activeAtPause = <String>{};
+
+  static const Set<String> _terminalStatuses = <String>{
+    'done',
+    'failed',
+    'cancelled',
+  };
+
+  /// bridge 自己合成的会话终态事件（见 `bridge/src/index.js` 的 emitCompletion）。
+  /// 只认这三个，不认 `agent_*`：那边是 Cline hook，和 sessions.db 的状态跃迁会重复。
+  static const Set<String> _terminalSessionEvents = <String>{
+    'session_done',
+    'session_failed',
+    'session_cancelled',
+  };
 
   /// 已知设备 id：优先设置里的，其次从已有数据里猜。
   List<String> get knownDevices {
@@ -414,6 +442,11 @@ class HubStore extends ChangeNotifier {
   void pause() {
     if (_paused || _disposed) return;
     _paused = true;
+    // 后台期间收不到 SSE：先记下还在跑的命令，回前台时补通知（见 _refreshAfterResume）。
+    _activeAtPause = commands
+        .where((item) => item.isActive)
+        .map((item) => item.id)
+        .toSet();
     _sub?.cancel();
     _sub = null;
     _reconnectTimer?.cancel();
@@ -425,8 +458,19 @@ class HubStore extends ChangeNotifier {
     if (!_paused || _disposed) return;
     _paused = false;
     _attempt = 0;
-    unawaited(refreshAll());
+    final wasActive = _activeAtPause;
+    _activeAtPause = <String>{};
+    unawaited(_refreshAfterResume(wasActive));
     _connect();
+  }
+
+  /// 回前台：先拉最新数据，再把「后台期间已经结束的命令」补一条通知。
+  Future<void> _refreshAfterResume(Set<String> wasActive) async {
+    await refreshAll();
+    if (_disposed || wasActive.isEmpty) return;
+    for (final item in commands) {
+      if (wasActive.contains(item.id)) _notifyCommandResult(item);
+    }
   }
 
   // ---------------------------------------------------------------- SSE 连接
@@ -457,11 +501,14 @@ class HubStore extends ChangeNotifier {
       case 'session':
         _scheduleSessionRefresh();
       case 'hook':
-        _upsertHook(HookItem.fromJson(event.data));
+        final hook = HookItem.fromJson(event.data);
+        if (_upsertHook(hook)) _maybeNotifyHook(hook);
       case 'command':
       case 'command.update':
         final item = CommandItem.fromJson(event.data);
-        if (item.id.isNotEmpty) _upsertCommand(item);
+        if (item.id.isEmpty) break;
+        final previous = _upsertCommand(item);
+        _maybeNotifyCommand(previous, item);
       case 'tick':
         _refreshTick();
       case 'open':
@@ -518,20 +565,96 @@ class HubStore extends ChangeNotifier {
     if (_ticks % 5 == 0) unawaited(refreshSessions());
   }
 
-  void _upsertCommand(CommandItem item) {
+  /// 就地替换/插入命令；返回替换前的那一条（新命令返回 null）。
+  CommandItem? _upsertCommand(CommandItem item) {
     final index = commands.indexWhere((entry) => entry.id == item.id);
     if (index < 0) {
       commands = <CommandItem>[item, ...commands];
-      return;
+      return null;
     }
     final next = List<CommandItem>.of(commands);
+    final previous = next[index];
     next[index] = item;
     commands = next;
+    return previous;
   }
 
-  void _upsertHook(HookItem item) {
-    if (item.id == 0 || hooks.any((entry) => entry.id == item.id)) return;
+  /// 返回是否是「第一次见到」，动态列表与通知都靠它去重。
+  bool _upsertHook(HookItem item) {
+    if (item.id == 0 || hooks.any((entry) => entry.id == item.id)) return false;
     hooks = <HookItem>[item, ...hooks];
+    return true;
+  }
+
+  // ------------------------------------------------------------------ 通知
+  /// 命令从「执行中」走到终态才弹：首次加载的一堆历史命令不该刷屏。
+  void _maybeNotifyCommand(CommandItem? previous, CommandItem next) {
+    if (previous == null || !previous.isActive) return;
+    _notifyCommandResult(next);
+  }
+
+  void _notifyCommandResult(CommandItem item) {
+    if (!settings.notifyCommands) return;
+    if (!_terminalStatuses.contains(item.status)) return;
+    final key = '${item.id}:${item.status}';
+    if (!_notified.add(key)) return;
+
+    final ok = item.status == 'done';
+    final headline = switch (item.status) {
+      'done' => '命令完成',
+      'cancelled' => '命令已取消',
+      _ => '命令失败',
+    };
+    final detail = ok
+        ? (item.resultText ?? item.prompt)
+        : (item.errorText ?? item.resultText ?? item.prompt);
+    unawaited(
+      notifier.show(
+        HubNotification(
+          key: key,
+          title: '$headline · ${item.modeLabel}',
+          body: _notificationBody(detail),
+        ),
+      ),
+    );
+  }
+
+  /// 会话终态由 bridge 合成（`session_*`），只弹一次。
+  void _maybeNotifyHook(HookItem item) {
+    if (!settings.notifySessions) return;
+    final event = item.event ?? '';
+    if (!_terminalSessionEvents.contains(event)) return;
+    final key = 'hook:${item.id}';
+    if (!_notified.add(key)) return;
+
+    final headline = switch (event) {
+      'session_done' => '会话完成',
+      'session_cancelled' => '会话已中断',
+      _ => '会话失败',
+    };
+    final subject = _shorten(inlinePreview(item.title ?? ''), 40);
+    unawaited(
+      notifier.show(
+        HubNotification(
+          key: key,
+          title: subject.isEmpty ? headline : '$headline · $subject',
+          body: _notificationBody(item.body),
+        ),
+      ),
+    );
+  }
+
+  /// 通知正文：去 ANSI、折叠空白、截到一行能读的长度（按码点切，不劈开 emoji）。
+  static String _notificationBody(String? text) {
+    final plain = inlinePreview(text ?? '');
+    if (plain.isEmpty) return '（没有输出）';
+    return _shorten(plain, 160);
+  }
+
+  static String _shorten(String text, int max) {
+    final points = text.runes.toList(growable: false);
+    if (points.length <= max) return text;
+    return '${String.fromCharCodes(points.take(max - 1))}…';
   }
 
   @override

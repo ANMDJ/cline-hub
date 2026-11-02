@@ -10,7 +10,8 @@
 | 想知道现在线上是什么状态 | [`status.md`](status.md) §1 基线快照 | 1 分钟 |
 | 要改 Hub 接口 / 写客户端 | [`api.md`](api.md) | 10 分钟 |
 | 要改 bridge 的采集或执行 | [`bridge-notes.md`](bridge-notes.md) + `../bridge/README.md` | 15 分钟 |
-| 想推翻某个设计 | [`decisions.md`](decisions.md)（27 条 ADR，只追加） | 按条查 |
+| 想推翻某个设计 | [`decisions.md`](decisions.md)（37 条 ADR，只追加） | 按条查 |
+| 要重启 / 停掉 bridge | [`interruptions.md`](interruptions.md)（先停任务、再杀进程） | 3 分钟 |
 | 换服务器 / 从零重建 | [`server-prep.md`](server-prep.md) + `../deploy/README.md` | 30 分钟 |
 | 改手机端 UI | `../app/README.md` | 10 分钟 |
 | 改落地页 | `../site/README.md` | 5 分钟 |
@@ -32,6 +33,7 @@
 | [`api.md`](api.md) | Hub v1 契约（鉴权 / 错误码 / 请求响应） |
 | [`bridge-notes.md`](bridge-notes.md) | Windows 端实测：数据位置、`messages.json` 结构、安全排查 |
 | [`decisions.md`](decisions.md) | ADR：为什么这么做 |
+| [`interruptions.md`](interruptions.md) | 主动中断记录：为什么杀 bridge / 影响了谁 / 怎么恢复 |
 | [`server-prep.md`](server-prep.md) | 服务器从零准备 |
 | [`../AGENTS.md`](../AGENTS.md) | 给新会话的入口页（30 秒看懂 + 开工三条命令） |
 | [`../README.md`](../README.md) | 项目总览、里程碑、安全基线 |

@@ -3,7 +3,17 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 
-import { bridgeRoot } from './config.js'
+import {
+  classifyRunningCommand,
+  processLiveness,
+  readEntries,
+  readEntry,
+  registryDir,
+  removeEntry,
+  writeEntry
+} from './command-registry.js'
+import { createClineJsonParser, isClineJsonFailure } from './cline-json.js'
+import { inspectProcesses } from './process-info.js'
 
 /**
  * 远程命令执行器（Hub → Windows）。
@@ -30,6 +40,38 @@ const SHELLS = {
 }
 
 const RESULT_LIMIT = 20000
+
+/**
+ * Hub 上 running 的命令多久对一次账。
+ *
+ * bridge 崩溃 / 被重启时，子进程要么跟着没了、要么留在本机成为孤儿；
+ * 会话侧会自己翻成 failed，但命令状态只有 bridge 会写，没人对账就会一直「执行中」。
+ * 60 秒是「手机上不会等太久」与「别把 Hub 打成轮询」的折中。
+ */
+const RECONCILE_INTERVAL_MS = 60 * 1000
+
+/** 回写孤儿命令时给手机看的原因：说清楚「不是命令本身失败」，可以直接重发。 */
+const ORPHAN_ERROR = '命令已中断：原来的执行进程不在了（bridge 重启 / 崩溃后没有接管）。可以重新下发。'
+
+/**
+ * 主动关闭 bridge 时回写给手机的原因。与 ORPHAN_ERROR 的区别：
+ * 孤儿是「进程没了才被发现」，这条是「我们知道要关，先停了它再说」。
+ */
+export function interruptionErrorText(reason) {
+  const why = String(reason ?? '').trim() || '未说明原因'
+  return `命令已中断：bridge 正在关闭（${why}），执行进程已被停止。这不是命令执行失败，可以直接重新下发。`
+}
+
+/** `Promise.race` 的定时器必须在原 promise 结束时清掉，否则超时后 reject 变成 unhandled。 */
+function withTimeout(promise, ms, label) {
+  let timer
+  return Promise.race([
+    promise.finally(() => clearTimeout(timer)),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timeout after ${ms}ms`)), ms)
+    })
+  ])
+}
 
 function truncate(text, limit = RESULT_LIMIT) {
   const value = String(text ?? '')
@@ -122,6 +164,12 @@ export function createCommandWorker({ cfg, logger }) {
     actArgs: toArgs(opts.cline?.actArgs, ['--auto-approve', 'true']),
     extraArgs: toArgs(opts.cline?.extraArgs, []),
     /**
+     * `--json`（默认开）：CLI 改用 NDJSON 输出结构化事件，终稿 / 失败原因 / 用量
+     * 都有明确字段（见 src/cline-json.js 与 ADR-38）。老版本 CLI 不支持时在
+     * `commands.cline.json=false` 退回原来的纯文本输出。
+     */
+    json: opts.cline?.json !== false,
+    /**
      * Cline CLI 3.0.74 没有 `--act`：`modeExplicitlySet` 只认 --plan/--yolo/--zen，
      * 其余情况模式取 `settings/global-settings.json` 的 `planActMode`（上一次 UI 停留的模式）。
      * 于是手机发 act、CLI 却按 plan 跑（2026-11-02 实测），关掉这个开关就退回旧行为。
@@ -155,7 +203,26 @@ export function createCommandWorker({ cfg, logger }) {
     : []
 
   const tmpDir = path.join(os.tmpdir(), 'cline-hub-cmd')
-  const state = { ticking: false, busy: false, warned: false, child: null, stopped: false }
+  /**
+   * `children`: commandId → { child, entry }。
+   * 以前只有一个 `state.child` 槽位，并发后 stop()/超时只能杀到最后一条；
+   * 现在按 commandId 精确对应，bridge 退出时能把所有子进程一起收掉（不流孤儿）。
+   */
+  const state = {
+    ticking: false,
+    busy: false,
+    warned: false,
+    stopped: false,
+    children: new Map(),
+    /** commandId → 中断原因：shutdown 已经回写 failed，handle() 别再抢着报一次。 */
+    interrupted: new Map(),
+    /** 防止 SIGINT 与 /admin/stop 同时进来跑两遍。 */
+    shuttingDown: false,
+    /** 上次对账时间 + 是否在跑：避免 tick 每 5 秒叠一次请求。 */
+    lastReconcileAt: 0,
+    reconciling: false
+  }
+  const registry = registryDir()
 
   async function request(method, pathname, body) {
     const headers = { 'content-type': 'application/json; charset=utf-8' }
@@ -179,6 +246,169 @@ export function createCommandWorker({ cfg, logger }) {
 
   function report(id, status, extra = {}) {
     return request('PATCH', `/api/v1/commands/${encodeURIComponent(id)}`, { status, ...extra })
+  }
+
+  /**
+   * Hub 上还是 `running` 的命令，本机是否还有对应进程 —— 没了的回写 `failed: orphaned`。
+   *
+   * 触发场景（2026-11-02 实测）：bridge 重启时把 in-flight 的 cline 子进程一起带走，
+   * 会话侧由 index.js 自己的状态跃迁翻成 failed，但 commands 表没人再写，
+   * 手机上的命令卡片就永远停在「执行中」。这不是命令失败、也不是会话失败，
+   * 而是「执行者没了」，所以单独给一条能看懂的原因。
+   *
+   * 安全边界：
+   * - 只改状态，**不杀任何进程**；存活只看 pid + 启动时间；
+   * - 本进程 children 里的命令一律跳过（正常运行中）；
+   * - 时间戳缺失 / 刚领取（< `ORPHAN_GRACE_MS`）一律留观，避免误判。
+   */
+  async function reconcile({ dryRun = false, limit = 50 } = {}) {
+    if (!enabled) return { ok: true, skipped: 'disabled', checked: 0, orphaned: 0 }
+    if (!cfg.hubUrl) return { ok: true, skipped: 'no_hub', checked: 0, orphaned: 0 }
+    if (state.reconciling) return { ok: true, skipped: 'busy', checked: 0, orphaned: 0 }
+
+    state.reconciling = true
+    try {
+      const query = `deviceId=${encodeURIComponent(cfg.deviceId)}&status=running&limit=${limit}`
+      const data = await request('GET', `/api/v1/commands?${query}`)
+      const items = Array.isArray(data?.items) ? data.items : []
+      const nowMs = Date.now()
+
+      // 一次 PowerShell 查询把所有相关 pid 取回来（逐条查会慢到秒级）。
+      const entries = new Map()
+      const pids = []
+      for (const item of items) {
+        if (state.children.has(item.id)) continue
+        const fromDisk = readEntry(registry, item.id)
+        // 登记文件可能被 %TEMP% 清理掉；Hub 上的 pid + pidStartedAt 是第二证据。
+        const fromHub = item.pid
+          ? { pid: item.pid, pidStartedAt: item.pidStartedAt ?? null }
+          : null
+        const entry = fromDisk ?? fromHub
+        entries.set(item.id, entry)
+        if (entry?.pid) pids.push(Number(entry.pid))
+      }
+      const processes = inspectProcesses(pids)
+
+      const orphans = []
+      for (const item of items) {
+        const entry = entries.get(item.id) ?? null
+        const owned = state.children.has(item.id)
+        const { alive, verified } = processLiveness(entry, processes)
+        const verdict = classifyRunningCommand({
+          command: { startedAt: item.startedAt, createdAt: item.createdAt },
+          entry,
+          alive,
+          verified,
+          owned,
+          nowMs
+        })
+        if (verdict === 'orphaned') orphans.push(item)
+      }
+
+      let cleaned = []
+      if (!dryRun) {
+        for (const item of orphans) {
+          try {
+            await report(item.id, 'failed', { errorText: ORPHAN_ERROR })
+            removeEntry(registry, item.id)
+            logger.warn('command orphaned', {
+              id: item.id,
+              startedAt: item.startedAt ?? item.createdAt ?? null,
+              pid: entries.get(item.id)?.pid ?? null
+            })
+          } catch (error) {
+            // 单条失败不影响其他命令：下一轮对账还会看到它。
+            logger.error('orphan report failed', { id: item.id, message: error.message })
+          }
+        }
+        cleaned = cleanStaleEntries()
+      }
+
+      return {
+        ok: true,
+        dryRun,
+        checked: items.length,
+        orphaned: orphans.length,
+        ids: orphans.map((item) => item.id),
+        cleaned
+      }
+    } finally {
+      state.reconciling = false
+      state.lastReconcileAt = Date.now()
+    }
+  }
+
+  /**
+   * 登记目录里进程已经不在（或 pid 被复用）的文件清掉，`npm run ps` 才不会显示假条目。
+   * 只碰不在 `children` 里的 —— 正在跑的命令登记必须保留。
+   */
+  function cleanStaleEntries() {
+    const entries = readEntries(registry).filter((entry) => !state.children.has(entry.commandId))
+    if (entries.length === 0) return []
+    const processes = inspectProcesses(entries.map((entry) => Number(entry.pid)))
+    const stale = entries.filter((entry) => {
+      const { alive, verified } = processLiveness(entry, processes)
+      return !(alive && verified)
+    })
+    for (const entry of stale) removeEntry(registry, entry.commandId)
+    return stale.map((entry) => entry.commandId)
+  }
+
+  /**
+   * spawn 成功那一刻把「这条命令 = 这个进程」记到三个地方：
+   *   1. 内存 Map：超时 / bridge 退出时按 commandId 精确杀，不再只有一个槽位；
+   *   2. `%TEMP%\cline-hub-cmd\running\<id>.json`：bridge 崩了也能用 `npm run ps` 找回孤儿；
+   *   3. Hub：pid + pidStartedAt 一起回写，手机上能直接看到进程身份。
+   *
+   * pidStartedAt 取 spawn 返回后的本地时间，与 Windows CreationDate 的误差在毫秒级；
+   * ps 侧留 5 秒容差，超过就当作 PID 已被复用，拒绝杀。
+   */
+  function registerChild(identity, child) {
+    const pidStartedAt = new Date().toISOString()
+    const entry = {
+      commandId: identity.id,
+      pid: child.pid ?? null,
+      pidStartedAt,
+      workspace: identity.workspace ?? null,
+      mode: identity.mode ?? null,
+      runner: identity.runner ?? null,
+      bridgePid: process.pid,
+      executable: identity.executable ?? null,
+      startedAt: pidStartedAt
+    }
+    state.children.set(identity.id, { child, entry })
+    try {
+      writeEntry(registry, entry)
+    } catch (error) {
+      logger.warn('command registry write failed', { id: identity.id, message: error.message })
+    }
+    logger.info('command process spawned', {
+      id: identity.id,
+      pid: entry.pid,
+      runner: entry.runner,
+      executable: entry.executable
+    })
+    if (!entry.pid) return entry
+    // 不 await：进程已经开跑，上报失败只影响手机上的 pid 展示，不能让命令卡住。
+    report(identity.id, 'running', {
+      pid: entry.pid,
+      pidStartedAt,
+      runner: entry.runner
+    })
+      .then(() => logger.info('command process reported', { id: identity.id, pid: entry.pid }))
+      .catch((error) => logger.error('command process report failed', {
+        id: identity.id,
+        message: error.message
+      }))
+    return entry
+  }
+
+  function unregisterChild(commandId) {
+    if (!state.children.has(commandId)) return
+    state.children.delete(commandId)
+    try {
+      removeEntry(registry, commandId)
+    } catch {}
   }
 
   /**
@@ -260,6 +490,7 @@ export function createCommandWorker({ cfg, logger }) {
 
   function runProcess(command, args, cwd, limitMs, options = {}) {
     const useShell = options.shell === true
+    const identity = options.identity ?? null
     return new Promise((resolve) => {
       const child = spawn(command, useShell ? args.map(quoteForCmd) : args, {
         cwd,
@@ -270,7 +501,8 @@ export function createCommandWorker({ cfg, logger }) {
         shell: useShell,
         env: { ...process.env, CLINE_HUB_COMMAND: '1', ...(options.env ?? {}) }
       })
-      state.child = child
+      // spawn 失败时没有 pid，不登记（否则 ps 会看到一条 pid=null 的假记录）。
+      if (identity && child.pid) registerChild(identity, child)
 
       let output = ''
       let timedOut = false
@@ -278,7 +510,13 @@ export function createCommandWorker({ cfg, logger }) {
         output += chunk.toString('utf8')
         if (output.length > RESULT_LIMIT * 2) output = output.slice(-RESULT_LIMIT)
       }
-      child.stdout?.on('data', collect)
+      child.stdout?.on('data', (chunk) => {
+        collect(chunk)
+        // 只把 stdout 喂给结构化解析器：stderr 里是 CLI 的告警，不参与 NDJSON。
+        try {
+          options.onStdout?.(chunk)
+        } catch {}
+      })
       child.stderr?.on('data', collect)
 
       const timer = setTimeout(() => {
@@ -288,8 +526,9 @@ export function createCommandWorker({ cfg, logger }) {
 
       const finish = (code, message) => {
         clearTimeout(timer)
-        state.child = null
-        resolve({ code, output, timedOut, message })
+        // 进程结束（正常/失败/被杀）就撤掉登记：`npm run ps` 只显示还活着的那几条。
+        if (identity) unregisterChild(identity.id)
+        resolve({ code, output, timedOut, message, pid: child.pid ?? null })
       }
 
       child.on('error', (error) => finish(-1, error.message))
@@ -297,11 +536,13 @@ export function createCommandWorker({ cfg, logger }) {
     })
   }
 
-  function runScript(script, cwd) {
+  function runScript(script, cwd, identity) {
     fs.mkdirSync(tmpDir, { recursive: true })
     const file = path.join(tmpDir, `cmd_${Date.now()}_${Math.random().toString(16).slice(2, 8)}${shell.ext}`)
     fs.writeFileSync(file, script, 'utf8')
-    return runProcess(shell.command, shell.args(file), cwd, timeoutMs).finally(() => {
+    return runProcess(shell.command, shell.args(file), cwd, timeoutMs, {
+      identity: { ...identity, executable: shell.command }
+    }).finally(() => {
       try {
         fs.unlinkSync(file)
       } catch {}
@@ -375,8 +616,11 @@ export function createCommandWorker({ cfg, logger }) {
    * "interactive mode requires a TTY"（见 ADR-18/19），bridge 是隐藏进程拿不到终端。
    * 模式：plan 走 `-p`（只读），act 走 `--auto-approve true`；yolo 由 allowModes 拦掉。
    */
-  function runCline({ prompt, mode, cwd, sessionId }) {
+  function runCline({ prompt, mode, cwd, sessionId, identity }) {
     const args = [...(mode === 'plan' ? clineOpts.planArgs : clineOpts.actArgs)]
+    // 结构化输出：终稿、失败原因、用量都在事件里，不必再解析终端装饰。
+    const jsonMode = clineOpts.json
+    if (jsonMode) args.push('--json')
     // provider / model 必须显式传：CLI 缺省时会用 providers.json 里的
     // `lastUsedProvider`（可能是已下线的免费模型），无头运行直接 exit 1。
     if (clineOpts.provider) args.push('-P', clineOpts.provider)
@@ -393,10 +637,18 @@ export function createCommandWorker({ cfg, logger }) {
     // 中文用户一句话经常不打空格，所以这里补一个尾随空格，对模型语义无影响。
     args.push(/\s/.test(prompt) ? prompt : `${prompt} `)
     const target = resolveClineTarget()
+    const parser = jsonMode ? createClineJsonParser({ maxTextChars: RESULT_LIMIT }) : null
     return runProcess(target.command, [...target.argv, ...args], cwd, clineOpts.timeoutMs, {
       shell: target.shell,
-      env: clineModeEnv(mode)
-    })
+      env: clineModeEnv(mode),
+      // cline 实际跑起来的是 node（JS 入口）或 cline.cmd；登记到 ps 里便于辨认。
+      identity: { ...identity, executable: [target.command, ...target.argv].join(' ') },
+      onStdout: parser ? (chunk) => parser.push(chunk) : undefined
+    }).then((result) => ({
+      ...result,
+      // end() 负责 flush 最后一行：CLI 的 run_result 不一定带结尾换行。
+      json: parser ? parser.end() : null
+    }))
   }
 
   /**
@@ -489,11 +741,14 @@ export function createCommandWorker({ cfg, logger }) {
     }
 
     const limitMs = runner === 'cline' ? clineOpts.timeoutMs : timeoutMs
+    // 进程身份：id/mode/runner/workspace 由 runProcess 在 spawn 成功时写成
+    // 本机登记 + 回写 Hub；手机端据此显示 pid 并复制排查命令。
+    const identity = { id: command.id, mode, runner, workspace: cwd }
     let result
     try {
       result = runner === 'cline'
-        ? await runCline({ prompt, mode, cwd, sessionId })
-        : await runScript(hardenScript(fillTemplate(template, { prompt, mode, workspace: cwd }), shell), cwd)
+        ? await runCline({ prompt, mode, cwd, sessionId, identity })
+        : await runScript(hardenScript(fillTemplate(template, { prompt, mode, workspace: cwd }), shell), cwd, identity)
     } finally {
       // 无论成功、失败还是抛异常，都要停掉会话轮询，否则定时器一直挂着。
       stopWatcher()
@@ -512,13 +767,28 @@ export function createCommandWorker({ cfg, logger }) {
       ? `\n\n[cline-hub] 注意：命令要求 ${mode} 模式，CLI 实际以 ${actualMode} 模式运行。`
       : ''
 
-    const ok = !result.timedOut && result.code === 0
+    /**
+     * `--json` 的终稿是干净文本（不带 `[thinking]`/ANSI/进度行）；只有在 CLI
+     * 完全没吐 JSON（老版本 / 启动就崩）时才退回原始输出。失败原因同理：
+     * 事件里的 error 比「stderr 第一行像错误的」准确。
+     */
+    const json = result.json ?? null
+    const outputText = json?.sawJson ? (json.text ?? '') : result.output
+    const jsonError = json?.errorMessage ? truncate(json.errorMessage, 300) : ''
+
+    const ok = !result.timedOut && result.code === 0 && !isClineJsonFailure(json)
+    // 主动关闭时 shutdown() 已经把这条命令回写成 failed（原因更准确），
+    // 这里再报一次会把「bridge 关闭」覆盖成「exit code -1」，所以直接让位。
+    if (state.interrupted.has(command.id)) {
+      logger.info('command result skipped: interrupted at shutdown', { id: command.id })
+      return
+    }
     const body = ok
-      ? { ...link, resultText: (truncate(result.output) || '(no output)') + modeWarning }
+      ? { ...link, resultText: (truncate(outputText) || '(no output)') + modeWarning }
       : {
           ...link,
-          resultText: truncate(result.output) + modeWarning,
-          errorText: failureReason(result, limitMs)
+          resultText: truncate(outputText) + modeWarning,
+          errorText: jsonError || failureReason(result, limitMs)
         }
 
     try {
@@ -528,9 +798,16 @@ export function createCommandWorker({ cfg, logger }) {
         runner,
         status: ok ? 'done' : 'failed',
         exit: result.code,
-        outChars: result.output.length,
+        pid: result.pid ?? null,
+        outChars: outputText.length,
         sessionId: createdSession ?? null,
-        actualMode: actualMode || null
+        actualMode: actualMode || null,
+        json: Boolean(json?.sawJson),
+        finishReason: json?.finishReason ?? null,
+        taskId: json?.taskId ?? null,
+        toolCalls: json?.toolCalls ?? null,
+        outputTokens: json?.usage?.outputTokens ?? null,
+        cost: json?.usage?.totalCost ?? null
       })
     } catch (error) {
       logger.error('command result report failed', { id: command.id, message: error.message })
@@ -547,6 +824,11 @@ export function createCommandWorker({ cfg, logger }) {
       return
     }
     if (state.ticking || state.busy || !cfg.hubUrl) return
+
+    // 对账不阻塞领取：每 60 秒顺手确认一次「Hub 上 running 的命令本机还活着吗」。
+    if (!state.reconciling && Date.now() - state.lastReconcileAt >= RECONCILE_INTERVAL_MS) {
+      reconcile().catch((error) => logger.warn('command reconcile failed', { message: error.message }))
+    }
 
     state.ticking = true
     try {
@@ -572,10 +854,75 @@ export function createCommandWorker({ cfg, logger }) {
     }
   }
 
-  function stop() {
+  /**
+   * 优雅退出：**先**把正在跑的命令回写成 failed 并说明原因，**再**杀进程树。
+   *
+   * 为什么顺序不能反（2026-11-02 的教训）：旧实现在 shutdown 里直接 killTree()
+   * 然后 process.exit(0)。进程确实停了，但「回写 failed」的那次 PATCH 还没发出去，
+   * 手机上的命令就永远停在「执行中」，直到下一次启动对账或人工 reconcile 才收尾
+   * （cmd_3ced4a851f4c 卡了 19 分钟）。
+   *
+   * 现在：并发 PATCH（每条 3 秒超时）→ 杀进程树 → 由 index.js 退出。
+   * 回写失败也不阻塞退出，下一次启动的 reconcile() 会兜底。
+   *
+   * `keepChildren`（`npm run restart -- --keep-session`）：同样先回写 failed，但**不杀**
+   * 子进程。只在「进程还要继续跑、结果不再需要 bridge 收」时用；**保不住会话**：
+   * bridge 一退出，子进程的 stdout/stderr 管道就断，cline 会自己 exit 1
+   * （2026-11-02 12:24 实测，见 docs/interruptions.md）。要重启又不掐断当前命令，
+   * 用 P18 的 `npm run restart -- --when-idle`。
+   */
+  async function shutdown({ reason = 'bridge shutdown', reportTimeoutMs = 3000, keepChildren = false } = {}) {
+    if (state.shuttingDown) return { interrupted: [], reported: [] }
+    state.shuttingDown = true
     state.stopped = true
-    if (state.child) killTree(state.child)
+
+    const inflight = [...state.children.entries()]
+    if (inflight.length === 0) return { interrupted: [], reported: [] }
+
+    const errorText = interruptionErrorText(reason)
+    logger.warn('interrupting in-flight commands before shutdown', {
+      reason,
+      ids: inflight.map(([id]) => id)
+    })
+
+    const results = await Promise.allSettled(inflight.map(([id]) => {
+      state.interrupted.set(id, reason)
+      return withTimeout(report(id, 'failed', { errorText }), reportTimeoutMs, `PATCH ${id}`)
+    }))
+
+    const reported = []
+    results.forEach((result, index) => {
+      const id = inflight[index][0]
+      if (result.status === 'fulfilled') reported.push(id)
+      else logger.error('command interrupt report failed', {
+        id,
+        message: result.reason?.message ?? String(result.reason)
+      })
+    })
+
+    if (keepChildren) {
+      logger.warn('in-flight commands left running (keepChildren)', {
+        reason,
+        interrupted: inflight.length,
+        reported: reported.length
+      })
+    } else {
+      for (const { child } of [...state.children.values()]) killTree(child)
+      logger.warn('in-flight commands stopped', {
+        reason,
+        interrupted: inflight.length,
+        reported: reported.length
+      })
+    }
+    return { interrupted: inflight.map(([id]) => id), reported, keptChildren: keepChildren }
   }
 
-  return { tick, stop, get enabled() { return enabled } }
+  function stop() {
+    state.stopped = true
+    // 应急路径：只杀进程、不写状态（正常停 bridge 请用 shutdown，见 npm run stop）。
+    // 先复制一份：killTree 会触发 close → unregisterChild 改动 Map。
+    for (const { child } of [...state.children.values()]) killTree(child)
+  }
+
+  return { tick, stop, shutdown, reconcile, get enabled() { return enabled } }
 }

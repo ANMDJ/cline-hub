@@ -25,7 +25,8 @@
    → bridge 轮询 `/api/v1/commands/pending` → 交给 `cline` CLI 真正进会话
      （带 `sessionId` 用 `--id` 接续，否则 `-c <workspace>` 新开；plan=`-p`，act=`--auto-approve true`）
    → `PATCH /api/v1/commands/:id` 回写 running/done/failed + 输出
-4. **下行通知**：手机保持一条 `GET /api/v1/events`（SSE），新会话/新命令即时到达；断线时退化为轮询
+4. **下行通知**：手机保持一条 `GET /api/v1/events`（SSE），新会话/新命令即时到达；断线时退化为轮询。
+   App 在前台（或刚回前台）时，命令完成/失败与会话终态还会弹系统通知；退到后台断流期间由 ntfy 兜底。
 
 
 ## 端口
@@ -102,7 +103,7 @@ cd app
 flutter pub get
 flutter run -d android          # 真机
 flutter run -d chrome           # 桌面预览
-flutter test                    # 42 个用例：模型 / 状态层 / 页面 / 格式化
+flutter test                    # 48 个用例：模型 / 状态层 / 页面 / 通知 / 格式化
 flutter build apk --release
 ```
 
@@ -127,7 +128,7 @@ flutter build apk --release
 | M0 | Hook 脚本 + ntfy 通知 | ✅ 完成 |
 | M1 | bridge 采集器 + Hub 服务 + 部署 | ✅ 完成（smoke 20/20；域名被备案拦截后改走 IP 前缀入口，见上节） |
 | M2a | 远程命令通道（bridge 执行器） | ✅ 完成（App→Hub→bridge→PowerShell→回写，实测 6s 闭环） |
-| M2b | Flutter App（会话列表/命令执行） | ✅ 完成（三 Tab + SSE 实时 + 下发命令；`flutter test` 42/42 通过，5 个真机用例默认跳过） |
+| M2b | Flutter App（会话列表/命令执行） | ✅ 完成（三 Tab + SSE 实时 + 下发命令 + 系统通知；`flutter test` 48/48 通过，5 个真机用例默认跳过） |
 
 
 ## 快速开始（本机）
@@ -187,6 +188,7 @@ bridge 每 `pollIntervalMs` 轮询 `/api/v1/commands/pending`（服务端 `FOR U
     "planArgs": ["-p"],
     "actArgs": ["--auto-approve", "true"],
     "extraArgs": [],
+    "json": true,
     "resume": true,
     "timeoutMs": 1800000
   }
@@ -202,12 +204,46 @@ bridge 每 `pollIntervalMs` 轮询 `/api/v1/commands/pending`（服务端 `FOR U
 | `cline.bin` | **必须绝对路径**：Windows 上 `cline` 通常不在 PATH 里（`%LOCALAPPDATA%\...\cline.cmd`） |
 | `cline.provider` / `cline.model` | **无头运行必须显式指定**，渲染成 `-P <provider> -m <model>`。不填就会吃 `~/.cline` 里 `providers.json` 的 `lastUsedProvider`，可能是已下线的免费模型（2026-11-01 踩坑，见 ADR-24） |
 | `cline.planArgs` / `actArgs` | plan 走 `-p`（只读），act 走 `--auto-approve true` |
+| `cline.json` | 默认 `true`：给 CLI 加 `--json`，用 NDJSON 事件取**干净终稿 / 失败原因 / 用量**（ADR-38）。老版本 CLI 不认这个参数时设 `false` 退回纯文本 |
 | `cline.resume` | **已停用（默认 false）**：`--id` 续会话要求 TTY，无头 bridge 用不了；一律 `-c <workspace>` 新开会话 |
 | `allowModes` | 模式白名单，`yolo` 默认不在内；被拒命令直接 `failed` 并写明原因。模板默认只留 `plan`，本机 2026-11-01 起放开 `plan` + `act` |
 | `workspaceWhitelist` | **同时约束远程执行的工作目录**（空数组 = 不限制）。条目是绝对路径按前缀比，是纯名字按目录名精确比；不命中直接 `failed`。自检：`npm run check:whitelist` |
 | `defaultWorkspace` | 命令未带 `workspace`（或路径不存在）时的默认工作目录 |
 | `timeoutMs` | 超时强杀进程树（`taskkill /t /f`），回写 `timeout after ...` |
 | `batchSize` | 单轮最多取几条，串行执行 |
+
+### 这条命令在电脑上是哪个进程？
+
+bridge 在 spawn 成功时把 `pid` + `pidStartedAt`（进程启动时间）回写 Hub，手机的命令详情
+能看到并复制排查命令。本机排查/收尾用：
+
+```powershell
+cd bridge
+npm run ps                             # commandId → pid，双校验 ✓/✗，是否孤儿
+npm run ps -- --json                   # 脚本读
+npm run ps -- --kill cmd_9f2c1a4b3d5e  # 双校验通过才杀（进程树）
+npm run ps -- --clean                  # 清掉已退出 / PID 被复用的登记
+npm run stop -- --reason "升级 bridge"   # 优雅停：先回写执行中的命令，再杀进程树，最后退出
+npm run restart -- --reason "换配置"     # 优雅停 + detached 重启
+npm run restart:idle -- --reason "升级 bridge"  # 等执行中的命令跑完再重启（P18，推荐在手机命令里发起重启时用）
+npm run reconcile -- --dry-run         # 看哪些 running 命令已经没有进程（不改状态）
+npm run reconcile                      # 立刻回写 failed: orphaned（bridge 自己每 60s 也会做）
+```
+
+- **不要按进程名杀**（`node.exe` / `cline`）：会误伤。要停某一条就用 `--kill <commandId>`。
+- `pid` 必须和启动时间一起看：Windows 会复用 PID，只凭 pid 杀可能打到无关进程。
+- **停 bridge 一律用 `npm run stop`**：它走本机 `POST /admin/stop`，先 PATCH 执行中的命令为
+  `failed`（原因写「bridge 正在关闭（你给的理由）」），再杀进程树。`Stop-Process` / `taskkill`
+  是硬杀，Node 收不到 `SIGTERM`，手机上的命令会卡在「执行中」（2026-11-02 踩过，卡了 19 分钟）。
+  每次主动中断都要在 [`docs/interruptions.md`](docs/interruptions.md) 追加一条记录。
+- **在手机命令里发起重启**：用 `npm run restart:idle`（等命令跑完再重启）。不要用
+  `--keep-session`：它只保住进程，bridge 一死子进程的 stdout 管道就断，cline 十几秒后
+  以 exit 1 结束，发起重启的那轮对话会断在半路（2026-11-02 实测，见 `docs/interruptions.md`）。
+- bridge 正常退出（含 `npm run stop`）会杀掉全部已登记的子进程；被硬杀/崩溃留下的孤儿，
+  `npm run ps` 会标「bridge 已退出 → 孤儿进程」，可以放心按上面的命令精确收掉。
+- 没有走优雅退出就重启了：会话会自己翻 `failed`，命令由 `npm run reconcile`
+  （以及 bridge 启动时 + 每 60s 的对账）回写 `failed: orphaned`，原因写在 `errorText` 里；
+  对账**只改状态，不杀进程**。
 
 两个 Windows 细节（都踩过）：`cline.cmd` 是批处理，Node 直接 `spawn` 会 `ENOENT`，必须过一层 `shell`；
 `spawn` 的 stdin 必须是 `'ignore'`，否则 cline 一直等终端输入，命令永远停在 `running`。
@@ -220,6 +256,11 @@ bridge 每 `pollIntervalMs` 轮询 `/api/v1/commands/pending`（服务端 `FOR U
 # 起（别用 bash 的 nohup，会把终端 shell 一起带走）
 Start-Process -WindowStyle Hidden node -ArgumentList 'src/index.js' `
   -WorkingDirectory 'C:\Users\alice\.cline\data\workspaces\chat\cline-hub\bridge'
+
+# 停 / 重启（先回写执行中的命令，再杀进程树；见 docs/interruptions.md）
+cd bridge
+npm run stop -- --reason "升级 bridge"
+npm run restart -- --reason "升级 bridge"
 ```
 
 开机自启用**启动文件夹**里的 VBS（不需要管理员权限）：

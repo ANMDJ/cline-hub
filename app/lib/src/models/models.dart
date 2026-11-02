@@ -261,6 +261,9 @@ class CommandItem {
     this.workspace,
     this.sessionId,
     this.requestedBy,
+    this.runner,
+    this.pid,
+    this.pidStartedAt,
     this.resultText,
     this.errorText,
     this.createdAt,
@@ -278,6 +281,9 @@ class CommandItem {
     workspace: _str(json['workspace']),
     sessionId: _str(json['sessionId']),
     requestedBy: _str(json['requestedBy']),
+    runner: _str(json['runner']),
+    pid: _int(json['pid']),
+    pidStartedAt: _dt(json['pidStartedAt']),
     resultText: _str(json['resultText']),
     errorText: _str(json['errorText']),
     createdAt: _dt(json['createdAt']),
@@ -296,6 +302,18 @@ class CommandItem {
   /// 有值时表示这条命令是「在某个已有会话里继续说」。
   final String? sessionId;
   final String? requestedBy;
+
+  /// bridge 实际上用的执行器：`cline` / `shell`。
+  final String? runner;
+
+  /// 执行这条命令的子进程 PID（bridge spawn 后上报）。
+  ///
+  /// **只用来看和核对**：Windows 会复用 PID，没有 [pidStartedAt] 时不得按它杀进程。
+  final int? pid;
+
+  /// 子进程启动时间（bridge 本地时钟），与 [pid] 成对用于防 PID 复用。
+  final DateTime? pidStartedAt;
+
   final String? resultText;
   final String? errorText;
   final DateTime? createdAt;
@@ -305,6 +323,22 @@ class CommandItem {
 
   bool get isActive =>
       status == 'pending' || status == 'delivered' || status == 'running';
+
+  /// 本机排障用的 PowerShell：先核对启动时间，再决定要不要杀。
+  ///
+  /// 直接 `taskkill /pid` 有误伤风险（PID 复用），所以把核对命令放在最前面。
+  /// 注意 `$pid` 在这里是 **Dart 插值**，会落成真实数字；PowerShell 里的 `$pid`
+  /// 是「当前 PowerShell 进程」，照抄过去会查到自己身上。
+  String get diagnosticsCommand {
+    if (pid == null) return '';
+    return <String>[
+      'Get-Process -Id $pid | Select-Object Id,StartTime,Path',
+      if (pidStartedAt != null)
+        '# 登记启动时间 ${pidStartedAt!.toIso8601String()}：StartTime 对不上就不要按 pid 杀',
+      '# 确认是这条命令后再执行（bridge 侧更稳：cd bridge; npm run ps）',
+      'taskkill /pid $pid /t /f',
+    ].join('\n');
+  }
 
   Duration? get duration {
     final start = startedAt ?? deliveredAt ?? createdAt;

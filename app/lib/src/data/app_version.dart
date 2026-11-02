@@ -3,8 +3,8 @@
 /// 为什么不引 `package_info_plus`：这个客户端刻意只保留 http / shared_preferences
 /// 两个依赖，版本号一年也就改几次，手工同步比多一个插件更划算。
 /// 发版脚本 `scripts/release-apk.mjs` 会读 `pubspec.yaml` 并校验这里是否一致。
-const String kAppVersion = '1.1.1';
-const int kAppBuild = 3;
+const String kAppVersion = '1.1.3';
+const int kAppBuild = 5;
 
 class ChangelogEntry {
   const ChangelogEntry(this.version, this.date, this.items);
@@ -15,6 +15,16 @@ class ChangelogEntry {
 }
 
 const List<ChangelogEntry> kChangelog = <ChangelogEntry>[
+  ChangelogEntry('1.1.3', '2026-11-02', <String>[
+    '新增：有新版本时可以直接「打开下载页」，用系统浏览器下载 APK，不用再复制链接',
+    '修复：命令一直显示「执行中」——bridge 主动重启前会先把执行中的命令标记为中断并说明原因',
+  ]),
+  ChangelogEntry('1.1.2', '2026-11-02', <String>[
+    '新增：远程命令完成 / 失败时弹系统通知（可在设置里关掉，Android 13+ 需授权）',
+    '新增：会话结束 / 失败时弹系统通知',
+    '修复：命令一直显示「执行中」——bridge 重启后会把没有进程接管的命令标记为失败并说明原因',
+    '优化：命令详情显示 pid / runner / 启动时间，可复制排查命令',
+  ]),
   ChangelogEntry('1.1.1', '2026-11-02', <String>[
     '修复：会话列表预览显示成 Markdown 源码（## / 代码围栏 / 表格竖线）',
     '修复：命令输出带终端颜色码，卡片和详情看起来像乱码；现在展示与复制都是纯文本',

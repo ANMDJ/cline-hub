@@ -264,8 +264,11 @@ POST /api/v1/commands
 ```json
 PATCH /api/v1/commands/cmd_9f2c1a4b3d5e
 {
-  "status": "done",
-  "resultText": "全部 42 个测试通过",
+  "status": "running",
+  "pid": 23724,
+  "pidStartedAt": "2026-11-02T03:44:27.827Z",
+  "runner": "cline",
+  "resultText": null,
   "errorText": null,
   "sessionId": "1793548380890_qij68"
 }
@@ -275,6 +278,11 @@ PATCH /api/v1/commands/cmd_9f2c1a4b3d5e
 - `running` 首次会写 `started_at`；终态写 `finished_at`。
 - `sessionId`：bridge 新开 cline 会话后回写（`coalesce` 只写一次，不会被后续上报清空），
   App 的命令详情据此直接跳进那条会话。
+- `pid` / `pidStartedAt` / `runner`：bridge spawn 成功立刻上报，同样 `coalesce` 只写一次。
+  `pid` 必须是正整数（非法值 400），`pidStartedAt` 接受 ISO 字符串或 epoch 毫秒。
+  三者会原样出现在命令对象里（`pid` / `pidStartedAt` / `runner`），供 App 展示与排障。
+- **不要只凭 `pid` 杀进程**：Windows 会复用 PID。本机用 `cd bridge; npm run ps` 双校验
+  （pid + 启动时间），要停就 `npm run ps -- --kill <commandId>`（ADR-33）。
 
 ## SSE 事件
 

@@ -1,10 +1,23 @@
 import crypto from 'node:crypto'
 
 import { HttpError } from '../http.js'
-import { requireString, optionalString, limitFrom } from '../util.js'
+import { requireString, optionalString, limitFrom, isoOrNull } from '../util.js'
 
 const MODES = new Set(['plan', 'act', 'yolo'])
 const REPORTABLE = new Set(['running', 'done', 'failed', 'cancelled'])
+
+/**
+ * `pid` 来自 bridge，必须是正整数。这里不信任客户端：
+ * 传 `"123"` 这种字符串也接受（JSON 里数字更常见），非法值直接 400。
+ */
+function optionalPid(value) {
+  if (value === undefined || value === null || value === '') return null
+  const num = Number(value)
+  if (!Number.isInteger(num) || num <= 0 || num > 2147483647) {
+    throw new HttpError(400, 'pid must be a positive integer', 'invalid_field')
+  }
+  return num
+}
 
 function toCommand(row) {
   return {
@@ -17,6 +30,10 @@ function toCommand(row) {
     sessionId: row.session_id ?? null,
     status: row.status,
     requestedBy: row.requested_by,
+    /** 执行器 + 进程身份（bridge 上报）：手机上可直接核对/复制排查命令。 */
+    runner: row.runner ?? null,
+    pid: row.pid ?? null,
+    pidStartedAt: row.pid_started_at ?? null,
     resultText: row.result_text,
     errorText: row.error_text,
     createdAt: row.created_at,
@@ -168,6 +185,11 @@ export function createCommandRoutes({ db, logger, sse }) {
         const errorText = optionalString(body.errorText, 'errorText', 4000)
         // bridge 新开会话后回写会话 ID；coalesce 保证只写一次，后续上报不会把它清掉。
         const sessionId = optionalString(body.sessionId, 'sessionId', 200)
+        // 进程身份：pid 与 pidStartedAt 成对上报。缺启动时间的 pid 在 App 里只做展示，
+        // 不得据此杀进程（Windows 会复用 PID，见 ADR-33）。
+        const pid = optionalPid(body.pid)
+        const pidStartedAt = isoOrNull(body.pidStartedAt)
+        const runner = optionalString(body.runner, 'runner', 20)
 
         const updated = await db.one(
           `update commands set
@@ -175,11 +197,14 @@ export function createCommandRoutes({ db, logger, sse }) {
              result_text = coalesce($3, result_text),
              error_text  = coalesce($4, error_text),
              session_id  = coalesce($5, session_id),
+             pid            = coalesce($6, pid),
+             pid_started_at = coalesce($7::timestamptz, pid_started_at),
+             runner         = coalesce($8, runner),
              started_at  = case when $2 = 'running' and started_at is null then now() else started_at end,
              finished_at = case when $2 in ('done', 'failed', 'cancelled') then now() else finished_at end
            where id = $1
            returning *`,
-          [params.id, status, resultText, errorText, sessionId]
+          [params.id, status, resultText, errorText, sessionId, pid, pidStartedAt, runner]
         )
 
         logger.info('command updated', { id: params.id, status })

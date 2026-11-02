@@ -33,6 +33,16 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     _store = HubStore(settings: widget.settings, apiFactory: widget.apiFactory);
     WidgetsBinding.instance.addObserver(this);
     _store.start();
+    _ensureNotificationPermission();
+  }
+
+  /// 首次进入确认一次通知权限（Android 13+ 才会弹系统框；已授权时是空操作）。
+  /// 延迟 600ms 等启动页让位，避免系统权限框挡住首屏。
+  Future<void> _ensureNotificationPermission() async {
+    if (!widget.settings.notificationsEnabled) return;
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    if (!mounted) return;
+    await _store.notifier.ensurePermission();
   }
 
   @override

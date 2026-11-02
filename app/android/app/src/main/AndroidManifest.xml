@@ -1,6 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- App 需要直连自建 Hub（当前是 http://IP/_h/<前缀> 的明文入口） -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Android 13+ 系统通知要运行时授权（MainActivity 里的 ensurePermission）。
+         振动权限给通知通道用；两个都不涉及隐私数据。 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.VIBRATE"/>
     <application
         android:label="Cline Console"
         android:name="${applicationName}"

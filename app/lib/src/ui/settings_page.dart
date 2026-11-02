@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../data/app_update.dart';
 import '../data/app_version.dart';
 import '../data/hub_api.dart';
+import '../data/link_launcher.dart';
 import '../data/settings_store.dart';
 import '../state/hub_store.dart';
 import 'theme.dart';
@@ -31,6 +33,39 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _checkedUpdate = false;
   AppRelease? _release;
   String? _updateError;
+
+  bool _requestingNotify = false;
+  String? _notifyStatus;
+
+  final LinkLauncher _links = const LinkLauncher();
+
+  /// 有新版本时直接交给系统浏览器下载，不用再「复制链接 → 打开浏览器 → 粘贴」。
+  /// 打不开（Web 预览 / 没有浏览器 / 地址不合法）就退回复制，至少不会卡住。
+  Future<void> _openDownload(AppRelease release) async {
+    final url = release.apkUrl ?? '';
+    final opened = await _links.open(url);
+    if (!mounted || opened) return;
+    await Clipboard.setData(ClipboardData(text: url));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('这个环境打不开浏览器，已复制下载地址'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Future<void> _requestNotifyPermission() async {
+    setState(() => _requestingNotify = true);
+    final granted = await widget.store.notifier.ensurePermission();
+    if (!mounted) return;
+    setState(() {
+      _requestingNotify = false;
+      _notifyStatus = widget.store.notifier.supported
+          ? (granted ? '已允许' : '未授予：通知不会出现，去系统设置里打开')
+          : '当前平台没有系统通知（Web 预览 / 测试）';
+    });
+  }
 
   @override
   void dispose() {
@@ -264,6 +299,67 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
           const SizedBox(height: 12),
           SectionCard(
+            title: '通知',
+            trailing: TextButton(
+              onPressed: _requestingNotify ? null : _requestNotifyPermission,
+              child: Text(
+                _requestingNotify ? '请求中…' : '请求权限',
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  title: const Text(
+                    '命令完成 / 失败',
+                    style: TextStyle(fontSize: 12.5),
+                  ),
+                  subtitle: const Text(
+                    '远程命令跑到终态时弹系统通知（含失败原因）',
+                    style: TextStyle(fontSize: 11, height: 1.5, color: kMuted),
+                  ),
+                  value: settings.notifyCommands,
+                  onChanged: (value) async {
+                    await settings.setNotifyCommands(value);
+                    if (mounted) setState(() {});
+                  },
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  title: const Text(
+                    '会话完成 / 失败',
+                    style: TextStyle(fontSize: 12.5),
+                  ),
+                  subtitle: const Text(
+                    'bridge 发现会话从「执行中」翻成终态时提醒',
+                    style: TextStyle(fontSize: 11, height: 1.5, color: kMuted),
+                  ),
+                  value: settings.notifySessions,
+                  onChanged: (value) async {
+                    await settings.setNotifySessions(value);
+                    if (mounted) setState(() {});
+                  },
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _notifyStatus ??
+                      'Android 13+ 需要授予通知权限；App 退到后台会主动断 SSE 省电，'
+                          '这期间由 ntfy 兜底，回到 App 后会补发后台期间结束的命令。',
+                  style: TextStyle(
+                    fontSize: 11,
+                    height: 1.6,
+                    color: _notifyStatus == null ? kMuted : kText,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          SectionCard(
             title: '默认执行设备',
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -382,13 +478,38 @@ class _SettingsPageState extends State<SettingsPage> {
                           style: const TextStyle(fontSize: 11.5, height: 1.6),
                         ),
                       ),
-                    const SizedBox(height: 6),
-                    if ((_release!.apkUrl ?? '').isNotEmpty)
-                      CopyButton(text: _release!.apkUrl!, label: '复制下载地址'),
-                    const Text(
-                      '下载后用系统安装器覆盖安装即可（同一签名）。',
-                      style: TextStyle(fontSize: 11, height: 1.6, color: kMuted),
-                    ),
+                    if ((_release!.apkUrl ?? '').isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 4,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          FilledButton.icon(
+                            onPressed: () => _openDownload(_release!),
+                            icon: const Icon(Icons.open_in_new_rounded, size: 15),
+                            label: const Text(
+                              '打开下载页',
+                              style: TextStyle(fontSize: 12.5),
+                            ),
+                            style: FilledButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 6,
+                              ),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                          ),
+                          CopyButton(text: _release!.apkUrl!, label: '复制链接'),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        '「打开下载页」会用系统浏览器打开 APK 地址，下载后用系统安装器覆盖安装即可（同一签名）。',
+                        style: TextStyle(fontSize: 11, height: 1.6, color: kMuted),
+                      ),
+                    ],
                   ] else
                     const Text(
                       '已是最新版本。',

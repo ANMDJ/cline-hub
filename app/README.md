@@ -10,7 +10,9 @@ app/
 │     ├─ app.dart                   MaterialApp + 主题
 │     ├─ models/models.dart         Hub v1 返回结构（全部容错解析）
 │     ├─ data/hub_api.dart          HubApi 接口 + HttpHubApi（REST + SSE）
-│     ├─ data/settings_store.dart   baseUrl / token / 默认设备 落盘
+│     ├─ data/notifier.dart         系统通知：HubNotifier 接口 + Android / Noop 实现
+│     ├─ data/link_launcher.dart    用系统浏览器打开下载地址（原生 MethodChannel）
+│     ├─ data/settings_store.dart   baseUrl / token / 默认设备 / 通知开关 落盘
 │     ├─ state/hub_store.dart       列表 + 分页游标 + 事件流 + 断线重连
 │     ├─ util/format.dart           相对时间、时长
 │     └─ ui/                        gate / setup / home_shell / 三个 Tab / 详情 / 工作区 / 设置
@@ -26,7 +28,7 @@ cd app
 flutter pub get
 flutter run -d android            # 真机 / 模拟器
 flutter run -d chrome             # 桌面预览（Web 下没有 SSE，见下文）
-flutter test                      # 19 个用例
+flutter test                      # 51 个用例（含通知去重 / 回前台补发 / 打开下载页）
 flutter build apk --release       # 产物 build/app/outputs/flutter-apk/
 
 # 可选：拿真实 Hub 跑一遍客户端（不设变量则这组自动跳过）
@@ -135,6 +137,22 @@ flutter build apk --release     # → build/app/outputs/flutter-apk/app-release.
 SSE 四种事件都用上了：`session`（去抖 900ms 后刷新列表）、`hook`（插到动态顶部，按 id 去重）、
 `command` / `command.update`（按 id 就地替换命令状态）。
 
+## 系统通知（1.1.2 起）
+
+| 触发 | 来源 | 说明 |
+|---|---|---|
+| 命令完成 / 失败 / 取消 | SSE `command.update` 的 active → 终态 | 正文优先 `errorText`，其次 `resultText`；去 ANSI 后截 160 字 |
+| 会话完成 / 失败 / 中断 | SSE `hook` 的 `session_done` / `session_failed` / `session_cancelled` | 只认 bridge 合成的三个；`agent_*` 不弹（ntfy 已覆盖） |
+| 后台期间结束的命令 | 回前台 `resume()` 后补拉 | 只补「退后台时还在跑」的那些，避免打开 App 刷屏 |
+
+实现：`MainActivity` 注册 `top.littlewish.cline_console/notify`（`ensurePermission` / `show`），
+通道 `cline_hub_events`，小图标 `ic_stat_hub`；Dart 侧是 `data/notifier.dart` 的 `HubNotifier`。
+**没有引入第三个 pub 依赖**（见 ADR-35）：原生系统 API 足够，也少一个 Gradle desugaring 的失败点。
+设置页「通知」卡片可分别关掉命令 / 会话通知，并手动请求 `POST_NOTIFICATIONS`（Android 13+）。
+
+边界：App 退到后台会断 SSE 省电，这期间收不到事件（可靠通道仍是 ntfy）；
+这里的通知是「App 还活着时的即时提醒」，不是推送。同一个 `commandId:status` / `hook:<id>` 只弹一次。
+
 ## 几个刻意的取舍
 
 - **零状态管理库**：`ChangeNotifier` + `ListenableBuilder`，没引 provider/riverpod。
@@ -174,7 +192,7 @@ SSE 四种事件都用上了：`session`（去抖 900ms 后刷新列表）、`ho
 | 截断提示 | 气泡 / 命令条 | `truncated=true` 时明确写「原文更长」，不假装完整 |
 | 选择题 | `_QuestionBubble` | `ask_question` 的选项渲染成按钮；点选 = 带上下文**新开一条命令**（无头 CLI 不能中途注入） |
 | 纯文本展示 | `util/format.dart` 的 `stripAnsi` / `inlinePreview` | 命令输出是终端回放，几乎每个词都被 `\u001b[2m` 包着；展示与复制前过滤（库里保留原字节）。会话列表预览由服务端 `plainPreview` 洗好 |
-| 版本与更新 | `ui/settings_page.dart` | 版本号来自 `data/app_version.dart`；「检查更新」读 `GET /api/v1/app/latest` |
+| 版本与更新 | `ui/settings_page.dart` | 版本号来自 `data/app_version.dart`；「检查更新」读 `GET /api/v1/app/latest`。有新版本时给两个入口：**「打开下载页」**（`data/link_launcher.dart` → 原生 `ACTION_VIEW`，直接用系统浏览器打开 APK 地址）与「复制链接」；打不开浏览器时自动退回复制 |
 
 ### 发版流程
 
