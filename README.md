@@ -283,7 +283,7 @@ npm run reconcile                      # 立刻回写 failed: orphaned（bridge 
 ```powershell
 # 起（别用 bash 的 nohup，会把终端 shell 一起带走）
 Start-Process -WindowStyle Hidden node -ArgumentList 'src/index.js' `
-  -WorkingDirectory 'C:\Users\alice\.cline\data\workspaces\chat\cline-hub\bridge'
+  -WorkingDirectory '<仓库>\bridge'
 
 # 停 / 重启（先回写执行中的命令，再杀进程树；见 docs/interruptions.md）
 cd bridge
@@ -295,16 +295,17 @@ npm run restart -- --reason "升级 bridge"
 
 ```vbscript
 ' %APPDATA%\Microsoft\Windows\Start Menu\Programs\StartUp\ClineBridge.vbs
+REPO = "C:\Users\you\projects\cline-hub"        ' ← 改成你的 clone 路径
 Set sh = CreateObject("WScript.Shell")
-sh.CurrentDirectory = "C:\Users\alice\.cline\data\workspaces\chat\cline-hub\bridge"
-sh.Run "node ""C:\Users\alice\.cline\data\workspaces\chat\cline-hub\bridge\src\index.js""", 0, False
+sh.CurrentDirectory = REPO & "\bridge"
+sh.Run "node """ & REPO & "\bridge\src\index.js""", 0, False
 ```
 
 > **当前状态（2026-11-01 起）**：本机这个 VBS 已被改名为 `ClineBridge.vbs.disabled`（bridge 不再开机自启）。
 > 恢复自启：把文件名改回 `ClineBridge.vbs`；或者只改 `config.json` 里的 `commands.enabled` 手动起一次。
 >
 > 想换成计划任务得用**管理员** PowerShell：
-> `schtasks /create /tn ClineBridge /sc onlogon /rl limited /f /tr "node C:\Users\alice\.cline\data\workspaces\chat\cline-hub\bridge\src\index.js"`
+> `schtasks /create /tn ClineBridge /sc onlogon /rl limited /f /tr "node <仓库>\bridge\src\index.js"`
 > （普通权限会 `ERROR: Access is denied.`）
 
 ### 手工重发（补旧会话 / 补项目名 / 补全文）

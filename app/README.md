@@ -52,7 +52,7 @@ HUB_LIVE_URL='http://82.157.153.22/_h/<前缀>' HUB_LIVE_TOKEN='clh_...' \
 命令行等价写法（不依赖 IDE）：
 
 ```bash
-$LOCALAPPDATA/Android/Sdk/emulator/emulator.exe -avd cline_pixel &
+"$LOCALAPPDATA/Android/Sdk/emulator/emulator.exe" -avd cline_pixel &
 flutter devices
 flutter run -d emulator-5554
 ```

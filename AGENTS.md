@@ -11,7 +11,7 @@ Cline Console：把 Windows 上 Cline（VS Code 插件 / CLI）的会话结果�
 
 | 项 | 值 |
 |---|---|
-| 仓库根 | `C:\Users\alice\.cline\data\workspaces\chat\cline-hub`（即当前目录） |
+| 仓库根 | 当前目录（下文用 `<仓库>`；示例 `%USERPROFILE%\.cline\data\workspaces\chat\cline-hub`） |
 | 分支 / 远端 | `master`；远端 `origin` = `git@github.com:ANMDJ/cline-hub.git`（**公开**；服务器 IP 本就在 DNS 里，未做脱敏） |
 | 线上入口 | `https://hub.littlewish.top:8443`（备案期的临时 HTTPS 端口） |
 | 服务器 | `ubuntu@82.157.153.22`（Ubuntu 22.04 / Caddy 反代 / Docker） |

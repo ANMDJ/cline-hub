@@ -101,7 +101,7 @@ topic 上收到的实际消息（中文无乱码）：
 ## 5. bridge 运行方式
 
 ```bash
-cd C:\Users\alice\.cline\data\workspaces\chat\cline-hub\bridge
+cd <仓库>\bridge
 node src/index.js          # 常驻
 node src/index.js --once   # 只跑一轮（调试）
 curl http://127.0.0.1:3210/health
@@ -119,12 +119,12 @@ Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
 
 ```powershell
 schtasks /create /tn "ClineBridge" ^
-  /tr "node C:\Users\alice\.cline\data\workspaces\chat\cline-hub\bridge\src\index.js" ^
+  /tr "node <仓库>\bridge\src\index.js" ^
   /sc onlogon /rl highest /f
 ```
 
 > 若 `node` 不在系统 PATH（nvm 装的常是用户级），把 `/tr` 换成绝对路径：
-> `C:\Users\alice\AppData\Local\Author Software\nvm\installs\v26.10.0\node.exe`
+> `%LOCALAPPDATA%\Author Software\nvm\installs\v26.10.0\node.exe`
 
 ## 6. 当前状态
 
@@ -152,7 +152,7 @@ schtasks /create /tn "ClineBridge" ^
 | WMI 持久化 `root\subscription` | 只有系统自带 `SCM Event Log Filter` |
 | Defender | 实时防护/篡改防护开，无任何威胁记录 |
 | PowerShell 4104 脚本块日志 | 6 小时内全部来自本机 Cline 会话执行的诊断命令 |
-| 本地账号 | 只有 `alice`；`Administrator` 禁用；⚠️ `Guest` 处于启用态（建议关） |
+| 本地账号 | 只有 `<你的账号>`；`Administrator` 禁用；⚠️ `Guest` 处于启用态（建议关） |
 
 ### 「自动打字」的真正来源
 
