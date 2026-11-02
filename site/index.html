@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cline Console · 把 Cline 的每一次执行装进口袋</title>
-<meta name="description" content="Cline Console 是自托管的 Cline 会话看板：Windows 端采集 VS Code Cline 与 CLI 的会话结果，经 Hub 落库后推送到 Android，并支持从手机下发命令回 Windows 执行。单机部署、零前端框架。">
+<meta name="description" content="Cline Console 是自托管的 Cline 会话看板：Windows 端采集 VS Code Cline 与 CLI 的会话结果，经 Hub 落库后推送到 Android，并支持从手机下发命令、取消命令回 Windows 执行。单机可跑、零前端框架、MIT 开源。">
 <meta name="theme-color" content="#0b0f14">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Cline Console · 自托管的 Cline 会话看板">
-<meta property="og:description" content="会话回溯 + 结果预览 + 手机远程下发命令。Windows 采集 → Ubuntu Hub → Android App，全链路自建。">
+<meta property="og:description" content="会话回溯 + 结果预览 + 手机远程下发/取消命令 + 多设备。Windows 采集 → Ubuntu Hub → Android App，全链路自建，MIT 开源。">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/styles.css">
 </head>
@@ -46,13 +46,14 @@
     </p>
     <div class="hero-actions">
       <a class="btn btn-primary" href="#start">五分钟自建</a>
-      <a class="btn btn-ghost" href="#arch">先看架构</a>
+      <a class="btn btn-ghost" href="/app/cline-console-1.1.5.apk">下载 App 1.1.5</a>
+      <a class="btn btn-ghost" href="https://github.com/ANMDJ/cline-hub">GitHub 源码</a>
     </div>
     <ul class="hero-facts">
-      <li><span>3</span>个部件：采集器 / Hub / App</li>
+      <li><span>1.1.5</span>App 当前版本</li>
+      <li><span>22/22</span>冒烟检查全绿</li>
       <li><span>0</span>个前端框架依赖</li>
       <li><span>1</span>台 Ubuntu 就能跑</li>
-      <li><span>20/20</span>冒烟检查全绿</li>
     </ul>
   </section>
 
@@ -93,24 +94,36 @@
         <p>一条 SSE 长连接 <code>GET /api/v1/events</code>，新会话、新命令即时到达；断线自动退化为轮询，不丢事件。</p>
       </article>
       <article class="feature">
-        <h3>远程命令</h3>
+        <h3>远程命令与取消</h3>
         <p>App 下发 → Hub 排队 → 采集器用 <code>FOR UPDATE SKIP LOCKED</code> 领取 → 本地执行 → 回写
-           <code>running / done / failed</code> 与完整输出。</p>
+           <code>running / done / failed / cancelled</code>；排队中可撤回，执行中按 <code>commandId</code> 杀进程树。</p>
       </article>
       <article class="feature">
-        <h3>模板化执行</h3>
+        <h3>模板化执行 · 并发池</h3>
         <p>命令不是一个裸 shell：由 <code>template</code> 决定怎么跑（<code>{prompt}</code> 直接当脚本，或
-           <code>cline --yolo "{prompt}"</code>），脚本先落临时文件，绕开引号转义地狱。</p>
+           <code>cline --yolo "{prompt}"</code>），脚本先落临时文件，绕开引号转义地狱；
+           <code>commands.concurrency</code> 让不同工作目录并行，同一目录强制串行。</p>
+      </article>
+      <article class="feature">
+        <h3>多设备</h3>
+        <p><code>GET /api/v1/devices</code> 列出每台电脑的在线状态、会话数与待执行 / 执行中命令；
+           <code>device</code> token 只能读自己（跨设备 <code>403 device_mismatch</code>），
+           App 里按设备筛选、也能设为默认。</p>
+      </article>
+      <article class="feature">
+        <h3>结构化输出</h3>
+        <p>给 <code>cline</code> 固定加 <code>--json</code>，增量解析终稿、失败原因与用量；会话正文在 App 里按
+           Markdown 渲染，命令输出仍保持终端原文。</p>
       </article>
       <article class="feature">
         <h3>零框架后端</h3>
-        <p>裸 <code>node:http</code> + <code>pg</code>，唯一依赖就是驱动；4 个 SQL 迁移幂等建表，
+        <p>裸 <code>node:http</code> + <code>pg</code>，唯一依赖就是驱动；8 个 SQL 迁移幂等建表，
            单文件 Docker 镜像，常驻内存个位数 MB。</p>
       </article>
       <article class="feature">
         <h3>可自证健康</h3>
-        <p>自带 <code>smoke</code> 脚本，20 项检查覆盖鉴权、分页、搜索、命令闭环、SSE，任何一项红就 <code>exit 1</code>，
-           可以直接当部署闸门。</p>
+        <p>自带 <code>smoke</code> 脚本，22 项检查覆盖鉴权、分页、搜索、命令闭环、设备列表、SSE，
+           任何一项红就 <code>exit 1</code>，可以直接当部署闸门。</p>
       </article>
     </div>
   </section>
@@ -125,9 +138,9 @@
         <p class="arch-sub">采集器 · 执行器</p>
         <ul>
           <li>Cline Hooks（结束 / 失败 / 中断）</li>
-          <li>增量读 <code>sessions.db</code></li>
+          <li>增量读 <code>sessions.db</code> + <code>messages.json</code></li>
           <li><code>127.0.0.1:3210</code> 本地 hook 服务</li>
-          <li>按模板执行远程命令</li>
+          <li>按模板执行、按 <code>pid</code> 登记与对账</li>
         </ul>
       </div>
       <div class="arch-arrow" aria-hidden="true">
@@ -139,8 +152,8 @@
         <p class="arch-sub">Ubuntu · Caddy · Docker</p>
         <ul>
           <li>REST + SSE（<code>node:http</code>）</li>
-          <li>Postgres：sessions / hooks / commands</li>
-          <li>SHA-256 token + 每 IP 限流</li>
+          <li>Postgres：devices / sessions / messages / hooks / commands</li>
+          <li>设备隔离 + SHA-256 token + 每 IP 限流</li>
           <li>只监听 <code>127.0.0.1</code>，Caddy 反代</li>
         </ul>
       </div>
@@ -152,10 +165,10 @@
         <h3>Android</h3>
         <p class="arch-sub">Flutter 客户端</p>
         <ul>
-          <li>会话列表（摘要 + 游标分页）</li>
-          <li>详情 / 搜索 / 命令历史</li>
-          <li>下发命令（高风险模式二次确认）</li>
-          <li>SSE 实时刷新</li>
+          <li>会话 / 项目聚合 / 逐条消息，Markdown 渲染</li>
+          <li>下发命令、排队撤回、完成通知</li>
+          <li>设备列表与筛选、执行中实时耗时</li>
+          <li>SSE 实时刷新（断线退化轮询）</li>
         </ul>
       </div>
     </div>
@@ -175,7 +188,7 @@
     <div class="steps">
       <div class="step">
         <h3><span>1</span>服务端：起 Hub</h3>
-<pre><code>git clone &lt;repo&gt; cline-hub &amp;&amp; cd cline-hub/server
+<pre><code>git clone https://github.com/ANMDJ/cline-hub.git &amp;&amp; cd cline-hub/server
 cp .env.example .env        # 填库地址、管理令牌
 docker compose build
 docker compose run --rm hub node src/migrate.js
@@ -211,13 +224,14 @@ curl http://127.0.0.1:3210/health</code></pre>
         <h3><span>4</span>验收：跑冒烟</h3>
 <pre><code>HUB_SMOKE_BASE=https://hub.example.com node server/scripts/smoke.mjs \
   --token-device &lt;device-token&gt; --token-app &lt;app-token&gt;
-# 20/20 checks passed</code></pre>
+# 22/22 checks passed</code></pre>
       </div>
     </div>
 
     <p class="note">
-      手机端（Flutter App）在 <code>app/</code> 下，<code>baseUrl</code> 与 token 通过 <code>--dart-define</code> 注入，
-      不写死在代码里。
+      手机端（Flutter App）在 <code>app/</code> 下：可以直接装
+      <a href="/app/cline-console-1.1.5.apk">1.1.5 的 APK</a>，也可以自己 <code>flutter build apk --release</code>；
+      Hub 地址与 token 走 App 内的向导，不写死在代码里。
     </p>
   </section>
 
@@ -289,13 +303,18 @@ curl http://127.0.0.1:3210/health</code></pre>
         </tr>
         <tr>
           <td>M2b</td>
-          <td>Flutter App：会话列表 / 详情 / 搜索 / 下发命令</td>
-          <td><span class="tag tag-wip">进行中</span></td>
+          <td>Flutter App：会话列表 / 详情 / 搜索 / 下发命令（1.1.5）</td>
+          <td><span class="tag tag-done">完成</span></td>
+        </tr>
+        <tr>
+          <td>M2c</td>
+          <td>逐条消息流、项目聚合、Markdown 渲染、命令取消、系统通知</td>
+          <td><span class="tag tag-done">完成</span></td>
         </tr>
         <tr>
           <td>M3</td>
-          <td>自建推送、多设备、命令取消与更细的审计视图</td>
-          <td><span class="tag">计划</span></td>
+          <td>多设备与设备列表已上线；剩后台推送（FCM / 常驻连接）与更细的审计视图</td>
+          <td><span class="tag tag-wip">进行中</span></td>
         </tr>
       </tbody>
     </table>
@@ -307,6 +326,13 @@ curl http://127.0.0.1:3210/health</code></pre>
       <details open>
         <summary>为什么不直接用 Cline 自带的历史记录？</summary>
         <p>自带的记录绑在这台机器上：换个设备看不到，任务跑完人不在也没提示，更没法从外面把下一条指令递进去。</p>
+      </details>
+      <details>
+        <summary>APK 在哪下载？跟仓库版本怎么对？</summary>
+        <p>当前是 <strong>1.1.5</strong>：<a href="/app/cline-console-1.1.5.apk">直接下 APK</a>（约 53 MB）。
+           也可以自己 <code>flutter build apk --release</code>。App 内「检查更新」读的是
+           <code>GET /api/v1/app/latest</code>，指向同一个文件；版本与改动见
+           <a href="https://github.com/ANMDJ/cline-hub/blob/master/CHANGELOG.md">CHANGELOG</a>。</p>
       </details>
       <details>
         <summary>必须有自己的服务器吗？</summary>
@@ -361,7 +387,10 @@ curl http://127.0.0.1:3210/health</code></pre>
     <a href="https://github.com/ANMDJ/cline-hub">GitHub</a>
   </nav>
   <p class="footer-note">
-    为自用而写，顺手开源。代码以 MIT 许可证发布，仓库地址见项目根目录。
+    为自用而写，顺手开源。代码以 MIT 许可证发布：
+    <a href="https://github.com/ANMDJ/cline-hub">github.com/ANMDJ/cline-hub</a> ·
+    当前版本 App 1.1.5 / Hub &amp; bridge 0.1.0 ·
+    <a href="https://github.com/ANMDJ/cline-hub/blob/master/CHANGELOG.md">更新日志</a>
   </p>
 </footer>
 

@@ -25,7 +25,8 @@ cd site && python3 -m http.server 8080   # 或  npx --yes serve .
 node site/check-site.mjs      # 标签配对 / CSS 括号 / 引用文件 / 锚点 id
 ```
 
-它会提示所有外链资源（目前只有 GitHub 仓库地址），确认可接受即可。
+它会提示所有外链资源（GitHub 仓库 / CHANGELOG），以及 `/app/*` 这类**由 Caddy 运行时直出**的资源
+（APK 与更新清单不在 `site/` 里，`check-site.mjs` 的 `RUNTIME_PREFIXES` 放行，只提示不报错）。
 
 ## 部署
 
@@ -76,6 +77,19 @@ sudo cp /tmp/Caddyfile.new /etc/caddy/Caddyfile && sudo systemctl reload caddy
 `index.html` 里 3 处外链（顶栏 GitHub、CTA「看源码」、页脚 GitHub）已指向
 `https://github.com/ANMDJ/cline-hub`；`app.js` 里 `[data-todo="repo"]` 的「地址还没填」提示保留，
 fork 后若改回 `https://github.com/` 占位，点击仍会提示而不是跳错地方。
+
+## 版本号与 APK 链接
+
+页面里写死了当前 App 版本 `1.1.5`（6 行 / 9 处）与 APK 路径 `/app/cline-console-1.1.5.apk`
+（3 处：Hero 的「下载 App」按钮、快速开始底部 note、FAQ「APK 在哪下载」）。发新版 APK 时一起改：
+
+```bash
+grep -n '1\.1\.5\|/app/cline-console' site/index.html     # 6 行，逐条替换
+```
+
+`/app/` 是 Caddy 从 `/var/www/cline-hub/app/` 直出的目录（`deploy/Caddyfile` 的 IP 站点同源），
+所以用相对路径就够了；换域名后也不用改。仓库侧的对应动作是 `app/scripts/release-apk.mjs`
+（把 APK 与 `latest.json` 推上去）与 `GET /api/v1/app/latest`。
 
 许可证已经定了：仓库根目录的 `LICENSE` 是 MIT，页脚文案与 `server/` / `bridge/` 的
 `package.json` 都已对齐，换协议时这几处要一起改。

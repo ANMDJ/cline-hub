@@ -28,8 +28,11 @@ const cb = (css.match(/}/g) || []).length
 if (ob !== cb) { console.log(`✗ CSS 括号不配对: ${ob} 开 / ${cb} 闭`); bad++ }
 
 const refs = [...new Set([...html.matchAll(/(?:href|src)="([^"#][^"]*)"/g)].map((m) => m[1]))]
+// /app/* 是 Caddy 在运行时提供的目录（APK 与更新清单不在 site/ 里），不算静态站文件
+const RUNTIME_PREFIXES = ['/app/']
 for (const r of refs) {
   if (/^https?:|^mailto:/.test(r)) { console.log(`! 外链资源（确认可接受）: ${r}`); continue }
+  if (RUNTIME_PREFIXES.some((p) => r.startsWith(p))) { console.log(`! 运行时资源（Caddy 直出）: ${r}`); continue }
   if (!existsSync(join(here, r.replace(/^\//, '')))) { console.log(`✗ 引用了不存在的文件: ${r}`); bad++ }
 }
 
