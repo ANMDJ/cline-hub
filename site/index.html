@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cline Console · 把 Cline 的每一次执行装进口袋</title>
-<meta name="description" content="Cline Console 是自托管的 Cline 会话看板：Windows 端采集 VS Code Cline 与 CLI 的会话结果，经 Hub 落库后推送到 Android，并支持从手机下发命令、取消命令回 Windows 执行。单机可跑、零前端框架、MIT 开源。">
+<title>ClineHub · 把 Cline 的每一次执行装进口袋</title>
+<meta name="description" content="ClineHub 是自托管的 Cline 会话看板：Windows 端采集 VS Code Cline 与 CLI 的会话结果，经 Hub 落库后推送到 Android，并支持从手机下发命令、取消命令回 Windows 执行。单机可跑、零前端框架、MIT 开源。">
 <meta name="theme-color" content="#0b0f14">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Cline Console · 自托管的 Cline 会话看板">
+<meta property="og:title" content="ClineHub · 自托管的 Cline 会话看板">
 <meta property="og:description" content="会话回溯 + 结果预览 + 手机远程下发/取消命令 + 多设备。Windows 采集 → Ubuntu Hub → Android App，全链路自建，MIT 开源。">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/styles.css">
@@ -21,7 +21,7 @@
       <path d="M10 20.5v-9l6 4.5 6-4.5v9" fill="none" stroke="currentColor" stroke-width="2"
             stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
-    <span>Cline<b>Console</b></span>
+    <span>Cline<b>Hub</b></span>
   </a>
   <nav class="nav-links" aria-label="主导航">
     <a href="#why">为什么</a>
@@ -42,15 +42,15 @@
     <p class="lede">
       在 Windows 上跑 Cline，人一走开就失联；<code>sessions.db</code> 里的结果散成一堆 JSON；
       想让它顺手跑个命令，还得回到电脑前。
-      <strong>Cline Console</strong> 把这三件事一次解决：采集 → 落库 → 手机上看，并且能从手机把命令发回去执行。
+      <strong>ClineHub</strong> 把这三件事一次解决：采集 → 落库 → 手机上看，并且能从手机把命令发回去执行。
     </p>
     <div class="hero-actions">
       <a class="btn btn-primary" href="#start">五分钟自建</a>
-      <a class="btn btn-ghost" href="/app/cline-console-1.1.9.apk">下载 App 1.1.9</a>
+      <a class="btn btn-ghost" href="/app/cline-console-1.2.0.apk">下载 App 1.2.0</a>
       <a class="btn btn-ghost" href="https://github.com/ANMDJ/cline-hub">GitHub 源码</a>
     </div>
     <ul class="hero-facts">
-      <li><span>1.1.9</span>App 当前版本</li>
+      <li><span>1.2.0</span>App 当前版本</li>
       <li><span>22/22</span>冒烟检查全绿</li>
       <li><span>0</span>个前端框架依赖</li>
       <li><span>1</span>台 Ubuntu 就能跑</li>
@@ -231,7 +231,7 @@ curl http://127.0.0.1:3210/health</code></pre>
 
     <p class="note">
       手机端（Flutter App）在 <code>app/</code> 下：可以直接装
-      <a href="/app/cline-console-1.1.9.apk">1.1.9 的 APK</a>，也可以自己 <code>flutter build apk --release</code>；
+      <a href="/app/cline-console-1.2.0.apk">1.2.0 的 APK</a>，也可以自己 <code>flutter build apk --release</code>；
       Hub 地址与 token 走 App 内的向导，不写死在代码里。
     </p>
   </section>
@@ -304,7 +304,7 @@ curl http://127.0.0.1:3210/health</code></pre>
         </tr>
         <tr>
           <td>M2b</td>
-          <td>Flutter App：会话列表 / 详情 / 搜索 / 下发命令（1.1.9）</td>
+          <td>Flutter App：会话列表 / 详情 / 搜索 / 下发命令（1.2.0）</td>
           <td><span class="tag tag-done">完成</span></td>
         </tr>
         <tr>
@@ -330,7 +330,7 @@ curl http://127.0.0.1:3210/health</code></pre>
       </details>
       <details>
         <summary>APK 在哪下载？跟仓库版本怎么对？</summary>
-        <p>当前是 <strong>1.1.9</strong>：<a href="/app/cline-console-1.1.9.apk">直接下 APK</a>（约 53 MB）。
+        <p>当前是 <strong>1.2.0</strong>：<a href="/app/cline-console-1.2.0.apk">直接下 APK</a>（约 53 MB）。
            也可以自己 <code>flutter build apk --release</code>。App 内「检查更新」读的是
            <code>GET /api/v1/app/latest</code>，指向同一个文件；版本与改动见
            <a href="https://github.com/ANMDJ/cline-hub/blob/master/CHANGELOG.md">CHANGELOG</a>。</p>
@@ -377,7 +377,7 @@ curl http://127.0.0.1:3210/health</code></pre>
 
 <footer class="footer">
   <div>
-    <strong>Cline Console</strong>
+    <strong>ClineHub</strong>
     <span>自托管 · Cline 会话看板与远程执行通道</span>
   </div>
   <nav aria-label="页脚导航">
@@ -390,7 +390,7 @@ curl http://127.0.0.1:3210/health</code></pre>
   <p class="footer-note">
     为自用而写，顺手开源。代码以 MIT 许可证发布：
     <a href="https://github.com/ANMDJ/cline-hub">github.com/ANMDJ/cline-hub</a> ·
-    当前版本 App 1.1.9 / Hub &amp; bridge 0.1.0 ·
+    当前版本 App 1.2.0 / Hub &amp; bridge 0.1.0 ·
     <a href="https://github.com/ANMDJ/cline-hub/blob/master/CHANGELOG.md">更新日志</a>
   </p>
 </footer>

@@ -383,7 +383,7 @@ curl -sI https://littlewish.top/ | head -1
 ### 验收（2026-10-31 实测）
 
 ```
-GET /                        -> 200   16896 B  <title>Cline Console · 把 Cline 的每一次执行装进口袋</title>
+GET /                        -> 200   16896 B  <title>ClineHub · 把 Cline 的每一次执行装进口袋</title>
 GET /styles.css              -> 200   14897 B
 GET /app.js /favicon.svg /robots.txt -> 200
 GET /_h/<前缀>/api/v1/health -> 200
@@ -391,6 +391,8 @@ GET /api/v1/health（无前缀）  -> 404
 GET /_h/<错误前缀>/...        -> 404
 GET /no-such-file            -> 404
 ```
+
+> 上面是 2026-10-31 的实测输出；页面标题里的品牌文案此后已更名为 ClineHub，字节数也会随站点改动变化。
 
 ### 坑
 

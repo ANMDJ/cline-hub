@@ -468,7 +468,7 @@ class _SettingsPageState extends State<SettingsPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Cline Console $kAppVersion（build $kAppBuild）',
+                  'ClineHub $kAppVersion（build $kAppBuild）',
                   style: const TextStyle(fontSize: 12.5, height: 1.7),
                 ),
                 const SizedBox(height: 4),

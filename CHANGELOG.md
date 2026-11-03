@@ -5,6 +5,18 @@
 > [`docs/interruptions.md`](docs/interruptions.md)，单条设计决策在
 > [`docs/decisions.md`](docs/decisions.md)。日期均为 +08。
 
+## 2026-11-04 · App 1.2.0+12 / Hub 0.1.0
+
+### 更名
+
+- **品牌定为 ClineHub（ADR-57 / ADR-58）**：App 标题 / 抽屉 / 引导页 / 设置页版本行 / 通知、
+  落地页与全部文档里的项目名统一为 **ClineHub**（原展示名 `Cline Console`）。
+- 随本次 `1.2.0+12` 发版生效：手机桌面图标名、通知标题、设置页版本行都显示 ClineHub；
+  线上落地页的 title / 导航 / hero / footer 同步更新。
+- 代码标识与部署契约一律不变（Flutter 包名 `cline_console`、Android `applicationId`、
+  数据库 `cline_hub`、`HUB_*` 环境变量、服务器目录、仓库名、APK 文件名），
+  老版本可以直接覆盖安装，token / 设置 / 历史数据都保留，Hub / bridge 不需要重新部署。
+
 ## 2026-11-03 · App 1.1.9+11 / Hub 0.1.0
 
 ### 新增

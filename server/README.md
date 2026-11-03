@@ -1,4 +1,4 @@
-# server · Cline Hub
+# server · ClineHub
 
 零框架 Node 服务（唯一依赖 `pg`）：REST + SSE + Postgres。
 接口契约见 [`../docs/api.md`](../docs/api.md)，服务器准备见 [`../docs/server-prep.md`](../docs/server-prep.md)。

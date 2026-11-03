@@ -1,4 +1,4 @@
-# Cline Console · 服务器准备清单
+# ClineHub · 服务器准备清单
 
 > 目标机：**Ubuntu 24.04 LTS**（域名 `littlewish.top`）
 > 记录时间：2026-10-31
@@ -25,7 +25,7 @@
 | 主机记录 | 类型 | 值 | 用途 |
 |---|---|---|---|
 | `kids` | A | 服务器公网 IPv4 | Flutter Web + `/api` 反代后端 |
-| `hub` | A | 服务器公网 IPv4 | Cline Hub（REST + WebSocket） |
+| `hub` | A | 服务器公网 IPv4 | ClineHub（REST + SSE） |
 | `ntfy` | A | 服务器公网 IPv4 | 自建推送 |
 
 > ⚠️ **备案**：服务器在中国大陆 ⇒ 80/443 必须完成 ICP 备案，否则被阻断。境外服务器无需备案但延迟高。

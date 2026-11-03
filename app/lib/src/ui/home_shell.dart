@@ -122,7 +122,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
                   ),
                 ),
                 const SizedBox(width: 9),
-                const Text('Cline Console'),
+                const Text('ClineHub'),
               ],
             ),
             actions: [

@@ -1419,3 +1419,72 @@ DeepSeek；UI 是右侧抽屉顶部的一张卡片。
 坏 payload）；`cd app; flutter analyze` 无告警、`flutter test` **97 通过 / 5 跳过**。
 线上部署（加 `DEEPSEEK_API_KEY` + 重建容器 + 发 APK）未执行，见 `status.md` P44。
 
+## 57. 品牌更名 CloudHub：只改展示层，不动标识符与部署契约（2026-11-03）
+
+**背景**：用户要求把项目里的「项目名」统一改成 CloudHub。原展示名是「Cline Console」，而代码里同时存在
+`cline_console`（Flutter 包 / Android `applicationId`）、`cline_hub`（Postgres 库与角色）、
+`HUB_*` / `CLINE_HUB_*` 环境变量、`/var/www/cline-hub`、`/srv/cline-hub/releases`、`ANMDJ/cline-hub`、
+`%TEMP%\cline-hub-cmd` 等标识符 —— 它们分属「展示」「代码」「运行时」「部署」四层，风险完全不同。
+
+**决定**：本轮只改**展示层**：`Cline Console` / `Cline Console Hub` / `Cline Hub` → `CloudHub`，
+覆盖文档、落地页、App 标题与通知、Hub / bridge 的 description 与源码注释。标识符与部署契约一律不动。
+
+**为什么**：
+
+- **`applicationId` 一改，手机就是另一个 App**：`top.littlewish.cline_console` → `top.littlewish.cloudhub`
+  会让新 APK 与已装版本并存，token / 设置 / 通知开关全部丢失，还得手动卸载。
+- **库名与目录是线上契约**：`cline_hub` 库被 Postgres 引用，`/var/www/cline-hub` 被 Caddy 引用，
+  `/srv/cline-hub/releases` 被 `docker-compose.yml` 挂载；改名要停机迁移 + 改 bridge 的 `config.json`。
+- **仓库名 / 工作目录被本机与文档同时引用**：改远端要动 GitHub，工作目录改名会让当前会话与
+  `deploy/windows/ClineBridge.vbs` 的 `REPO` 失效。
+- **展示名是唯一「改了不出事」的一层**：纯字符串，不影响协议、历史数据与升级路径。
+
+**边界**：
+
+- 保持原样的引用：`docs/security-review.md` 的「官方 Cline Hub」与 CVE 标题（指上游产品）、
+  ADR-21 里的「陈旧的 cline hub daemon」（指 cline CLI 自带的 hub 进程）。
+- `Cline` 作为**上游产品名**（VS Code 插件 / CLI）处处不改，包括 slogan「把 Cline 的每一次执行装进口袋」。
+- 保留的标识符：`ClineConsoleApp` 类名、`package:cline_console/...` 导入、`cline_hub_events` /
+  `cline_hub_keepalive` 通知通道、`CLINE_HUB_COMMAND`、`HUB_*` 环境变量、APK 文件名
+  `cline-console-x.y.z.apk`。
+- 继续做 B/C/D 层（包名、`applicationId`、库名、服务器目录、仓库名）属于独立的迁移任务，需要停机窗口
+  与手机端重装，不在本 ADR 范围。
+
+**验证**：`git grep -I 'Cline Console'` 归零、`git grep -I 'Cline Hub'` 只剩上游引用；
+`cd app; flutter analyze` 无告警 + `flutter test` 全绿；`cd server; npm test`、`cd bridge; npm test`、
+`node site/check-site.mjs` 全绿。
+
+## 58. 品牌定为 ClineHub：推翻 ADR-57 的 CloudHub 命名（2026-11-03）
+
+**背景**：ADR-57 把展示名统一成 `CloudHub` 之后，用户明确要求「改成 clinehub」—— 对外名字应跟随
+上游产品 `Cline` 与仓库名 `cline-hub`。这一轮改动仍然只有字符串，但品牌名会被截图、桌面图标名、
+文档标题长期引用，属于「改了很难回头」的展示契约，所以单独记一条，并明确它取代 ADR-57 的命名部分。
+
+**决定**：展示层品牌 **CloudHub → ClineHub**（统一写作 `ClineHub`，不以全小写出现）。
+ADR-57 的**层级边界继续有效**：只改展示字符串；`cline_console`（Flutter 包 / Android `applicationId`）、
+`cline_hub`（库 / 角色 / 通知通道 `cline_hub_events` / `cline_hub_keepalive`）、`HUB_*` / `CLINE_HUB_*`
+环境变量、`/var/www/cline-hub`、`/srv/cline-hub/releases`、`%TEMP%\cline-hub-cmd`、`ANMDJ/cline-hub`、
+APK 文件名 `cline-console-x.y.z.apk`、`ClineConsoleApp` 类名全部保持原样。
+
+**为什么**：
+
+- **和上游 / 仓库同名**：`Cline` 是用户每天在用的产品名，`cline-hub` 是仓库名；`ClineHub` 让
+  「手机上的 App 名 / 落地页标题 / 安装包说明」一眼对得上，不用再解释 CloudHub 是什么。
+- **此刻改成本最低**：`CloudHub` 是本轮刚改的中间态 —— 没重建 APK、没重新部署站点、没有截图外传；
+  等发版后再改就要连带处理升级提示与全部文档截图。
+- **标识符不动的前提没变**：ADR-57 的四层拆分（展示 / 代码 / 运行时 / 部署）仍然成立，
+  这次动的依旧只有第一层，协议、历史数据与升级路径都不受影响。
+
+**边界**：
+
+- 保留上游引用：`docs/security-review.md` 的「官方 Cline Hub」与 CVE 标题、ADR-21 的 cline CLI
+  hub daemon 仍指上游产品，不随品牌改。
+- `Cline` 作为上游产品名（VS Code 插件 / CLI）继续保留，slogan「把 Cline 的每一次执行装进口袋」不变。
+- **只改仓库文案**：本轮不重建 APK、不重新部署 Hub / 落地页，手机与线上页面要等下一次发版 /
+  部署才会显示 `ClineHub`。
+- ADR-57 正文保留原文（只追加、不改旧条目），当前有效的命名以本 ADR 为准。
+
+**验证**：`git grep -I 'CloudHub'` 只剩 ADR-57 / 本条与 `status.md` 变更日志里的历史说明；
+`git grep -I 'cloudhub'`（全小写）只剩 ADR-57 里的示例包名 `top.littlewish.cloudhub`；`node site/check-site.mjs` 通过；
+`cd app; flutter analyze` 无告警 + `flutter test` 全绿；`cd server; node --test`、`cd bridge; npm test` 全绿。
+

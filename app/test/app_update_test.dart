@@ -13,8 +13,11 @@ void main() {
   });
 
   test('AppRelease.isNewer 先比版本号再比 build', () {
+    // 不要硬编码具体版本：这里要验的是「版本号更高时，即使 build 更小也算新」，
+    // 硬编码会在发版把当前版本升到那个号之后自己失效（1.2.0 就撞过一次）。
+    final nextMajor = '${int.parse(kAppVersion.split('.').first) + 1}.0.0';
     expect(
-      const AppRelease(version: '1.2.0', build: 0).isNewer,
+      AppRelease(version: nextMajor, build: 0).isNewer,
       isTrue,
     );
     expect(

@@ -16,7 +16,7 @@ class ClineConsoleApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Cline Console',
+      title: 'ClineHub',
       debugShowCheckedModeBanner: false,
       theme: buildTheme(),
       home: Gate(settings: settings, apiFactory: apiFactory),

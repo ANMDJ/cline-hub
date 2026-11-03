@@ -84,7 +84,7 @@ class KeepAliveService : Service() {
 
         return builder
             .setSmallIcon(R.drawable.ic_stat_hub)
-            .setContentTitle("Cline Console")
+            .setContentTitle("ClineHub")
             .setContentText(text)
             // 不可划走、不重复提示：这是状态指示，不是一条要处理的消息。
             .setOngoing(true)

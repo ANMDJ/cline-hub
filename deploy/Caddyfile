@@ -13,7 +13,7 @@
 	email admin@littlewish.top
 }
 
-# ── Cline Hub：REST + SSE（域名，HTTPS）──────────────────────────────────
+# ── ClineHub：REST + SSE（域名，HTTPS）──────────────────────────────────
 hub.littlewish.top {
 	encode zstd gzip
 

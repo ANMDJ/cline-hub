@@ -1,4 +1,4 @@
-# Cline Console · App（M2b）
+# ClineHub · App（M2b）
 
 Android 客户端（Web 只作桌面预览）。三个 Tab：**会话 / 命令 / 动态**，顶栏常驻 SSE 连接状态。
 

@@ -1,6 +1,6 @@
 # 现状与待办（status）
 
-> 每次开工先读 §0；动手前核对 §1 的实测值。最后更新：**2026-11-03（+08）**。
+> 每次开工先读 §0；动手前核对 §1 的实测值。最后更新：**2026-11-04（+08）**。
 
 ## 0. 现在要做什么
 
@@ -43,11 +43,12 @@
 | 31 | P42 | 命令租约自动回收（`migrations/010` + 每 60s 扫描 → `failed: orphaned`） | ⏳ 未开工（`reconcile` 保留为手动兜底） |
 | 32 | P43 | SSE 纵深防御：Origin 白名单 + 单 token 连接上限 + 空闲超时 | ⏳ 未开工 |
 | 33 | P44 | **App 实时看 DeepSeek 余额**：Hub 新增 `GET /api/v1/deepseek/balance`（Key 只读 `server/.env` 的 `DEEPSEEK_API_KEY`；60 秒缓存、并发复用、失败退旧值并标 `stale`）；App 右侧抽屉顶部「DeepSeek 余额」卡片（总额 / 充值 / 赠金 / 更新时间 + 可用标记），启动、回前台、打开菜单、命令走到终态时自动刷新，右上角可强制刷新 | ✅ **已上线（2026-11-03 19:47）**：服务器 `.env` 写入 `DEEPSEEK_API_KEY` + 镜像重建（备份 `20261103-194741`，23 条路由）；App `1.1.9+11` 已发版（ADR-56） |
+| 34 | P45 | **品牌统一为 ClineHub（A 层）+ App 1.2.0+12 发版**：展示文案全部改成 ClineHub（ADR-57 / ADR-58），包名 / applicationId / 库名 / 目录 / 环境变量 / APK 文件名一律不动；版本号 1.1.9+11 → **1.2.0+12**，落地页六处版本引用同步 | ✅ **已上线（2026-11-04 04:26）**：APK 55,601,132 B / sha256 `fb543395…8901` / `versionCode=12` / `aapt2` label `ClineHub` |
 
 
 
 
-已完成并上线的：P0 / P1 / P3–P26 / P35–P39
+已完成并上线的：P0 / P1 / P3–P26 / P35–P45
 （P3、P9 已部署；P5、P10、P15、P17、P8、P22–P26、P35、P38 已发布到 App；P7/P14 已在 12:51 重启后生效）。
 **P39 已随 `1.1.8+10` 发版**（浏览入口收进右侧抽屉 + 设置页去重，ADR-54；
 `flutter analyze` 无告警、`flutter test` **88 通过 / 5 跳过**；APK 55,568,256 B /
@@ -100,7 +101,7 @@ app token 连 `GET /api/v1/events` 27 秒收到 `: connected` + 2 条 `event: me
 
 | # | 操作 | 期望 |
 |---|---|---|
-| 1 | 手机下发 `act` 命令 → 立刻息屏 | 命令结束时**锁屏收到本地通知**；期间通知栏有「Cline Console · 有 1 条命令正在执行」常驻通知 |
+| 1 | 手机下发 `act` 命令 → 立刻息屏 | 命令结束时**锁屏收到本地通知**；期间通知栏有「ClineHub · 有 1 条命令正在执行」常驻通知 |
 | 2 | 同上，同时看着 ntfy | 确认是否**双响**；双响就记成已知边界（两条通道独立，见 ADR-50），或让用户关掉设置里「会话完成 / 失败」 |
 | 3 | 命令跑到终态 | 常驻通知**自动消失**，普通完成通知仍在 |
 | 4 | 系统设置里撤销 `POST_NOTIFICATIONS` → 再下发命令 | 服务不崩、不弹通知，命令照常执行；回前台仍能看到结果 |
@@ -541,6 +542,8 @@ powershell -NoProfile -File deploy/windows/verify-hub.ps1
 | 2026-11-03 | **P37 推送 / 保活验证（不接厂商通道）**：`adb devices` 为空，把不依赖真机的部分全做了 —— ntfy 发布 `HTTP 200`（`id=dlyLaLiL8GFm`，0.76s，与 `hooks/_notify.ps1` 同一条路径）；app token 连 `GET /api/v1/events` 27 秒收到 `: connected` + 2 条 `event: messages` + 一次 `: ping`（鉴权 / 设备过滤 / 反代不缓冲）；`app/dist/cline-console-1.1.6.apk` 的 sha256 `4ecaf2f3…4173` / 55,256,496 B 与线上 `Content-Length` 一致，`aapt2` 确认 `KeepAliveService`（`foregroundServiceType=0x1`、`stopWithTask=true`）与 `POST_NOTIFICATIONS` / `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_DATA_SYNC` 都在；基线 bridge 53 / server 39 / app 78+5 / site ✓。P2 由用户在真机确认「两个按钮的对比没问题」，关闭；用户拍板**不接 FCM / 厂商推送**（ADR-51）；P34 真机 7 条仍待手机，排障入口写进 `app/README.md`；`site/index.html` 的 M3 进度把「剩真正的后台推送（FCM）」改成「明确不接 FCM / 厂商通道（ADR-51）」，但本机会话没有服务器 SSH 私钥（`Permission denied (publickey)`），**线上落地页未更新**，拿到权限后逐文件 `scp` + `sudo install` |
 | 2026-11-03 | **附件入库时间**：`toAttachment()` 增加 `createdAt`（= `attachments.created_at`），命令列表 / 详情的 `withAttachments()` 与上传 / 复用查询都带 `created_at`；App `AttachmentInfo.createdAt`（旧 Hub 缺字段时为 null）+ 命令详情「入库 MM-dd HH:mm:ss」；**保留策略按用户要求暂不做**（只记录、不清理），`docs/api.md` / ADR-52 写明以后按这一列算。验证：server **47** / bridge **59** / app `flutter analyze` 无告警 + `flutter test` **86 通过 / 5 跳过** / `node site/check-site.mjs` 通过 |
 | 2026-11-03 | **P38 部署 + App 1.1.7+9 发版**：`scp` 6 个文件 → 备份 `server.bak-20261103-122537` → `docker compose build` → 迁移 `009_attachments.sql`（`migration applied`）→ `up -d --force-recreate hub`（health 200 / `routes: 22`）；线上 app token `POST /api/v1/attachments`（`smoke-p38.txt` 9 B）返回 **`createdAt=2026-11-03T04:26:08.838Z`**（= 12:26 +08 入库），device token `GET /api/v1/attachments/:id` 200 / 9 B，`GET /commands` 多出 `attachment` 字段；APK `1.1.7+9`（55,568,256 B / sha256 `4261c8f2…ee25`）→ `/var/www/cline-hub/app/`（HEAD 200 / `application/vnd.android.package-archive`）与 `/srv/cline-hub/releases/latest.json`（`GET /api/v1/app/latest` → 1.1.7 / 9 / 3 notes）；落地页 `1.1.7`×9 / `1.1.6`×0（`http://82.157.153.22/` 200）；bridge 用 `npm run restart:idle` 排空闲重启（supervisor pid 3260，日志 `waiting for in-flight commands`；要等 `cmd_10e3f1f2394f`（kids_points_app）与当前会话两条都结束后才动手，超时 2 小时不动）（代码提交 `1e7a46e`） |
+| 2026-11-03 | **品牌定为 ClineHub（A 层 · 仅展示文案）**：`Cline Console` / `Cline Console Hub` / `Cline Hub` → **ClineHub**（同日先改 `CloudHub`，按用户要求再定为 `ClineHub`），覆盖根 README、`AGENTS.md` 与 `docs/README.md` 的 ADR 计数、`app/README.md`、`bridge/package.json` 与 `server/package.json` 的 description、server 三条迁移注释、站点（title / description / og:title / 导航 wordmark / hero / footer / `app.js` / `styles.css` 注释）、App（`MaterialApp.title`、顶栏、抽屉、引导页、设置页版本行、Web `index.html` + `manifest.json`、Android `android:label`、通知标题与默认标题、`KeepAliveService` 常驻通知）、`deploy`（Caddyfile 注释 / README 实测样例 / `verify-hub.ps1` 两处输出）。**未改任何标识符**：`cline_console` 包名与 `applicationId`、`cline_hub` 库 / 角色、`HUB_*` / `CLINE_HUB_*` 环境变量、`/var/www/cline-hub`、`/srv/cline-hub/releases`、`%TEMP%\cline-hub-cmd`、`ANMDJ/cline-hub`、APK 文件名、`ClineConsoleApp` 类名、通知通道 id；`docs/security-review.md` 的「官方 Cline Hub」与 CVE 标题、ADR-21 的 cline CLI hub daemon 引用保持原样。ADR-57 / ADR-58（本轮只改仓库文案，未重建 APK、未重新部署 Hub / 站点）|
+
 
 
 

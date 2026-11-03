@@ -4,7 +4,7 @@
   "private": true,
   "license": "MIT",
   "type": "module",
-  "description": "Cline Console Hub: receives bridge uploads, serves the mobile app, queues remote commands",
+  "description": "ClineHub: receives bridge uploads, serves the mobile app, queues remote commands",
   "engines": {
     "node": ">=20"
   },

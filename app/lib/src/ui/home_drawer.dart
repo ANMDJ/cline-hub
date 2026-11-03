@@ -115,7 +115,7 @@ class HomeDrawer extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                        'Cline Console',
+                        'ClineHub',
                         style: TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.w700,

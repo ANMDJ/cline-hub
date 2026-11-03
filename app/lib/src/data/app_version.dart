@@ -3,8 +3,8 @@
 /// 为什么不引 `package_info_plus`：这个客户端刻意只保留 http / shared_preferences
 /// 两个依赖，版本号一年也就改几次，手工同步比多一个插件更划算。
 /// 发版脚本 `scripts/release-apk.mjs` 会读 `pubspec.yaml` 并校验这里是否一致。
-const String kAppVersion = '1.1.9';
-const int kAppBuild = 11;
+const String kAppVersion = '1.2.0';
+const int kAppBuild = 12;
 
 class ChangelogEntry {
   const ChangelogEntry(this.version, this.date, this.items);
@@ -15,6 +15,11 @@ class ChangelogEntry {
 }
 
 const List<ChangelogEntry> kChangelog = <ChangelogEntry>[
+  ChangelogEntry('1.2.0', '2026-11-04', <String>[
+    '更名：App 标题、抽屉、引导页、设置页版本行与通知统一显示 ClineHub（原 Cline Console）',
+    '不变：包名与签名不变，可直接覆盖安装；Hub 地址、token、设置与历史数据都保留',
+    '更名只动展示文案，功能与上一版一致（DeepSeek 余额等都在）',
+  ]),
   ChangelogEntry('1.1.9', '2026-11-03', <String>[
     '新增：右侧菜单顶部显示 DeepSeek 余额——总额、充值 / 赠金明细、更新时间与「可用」标记',
     '新增：打开菜单、回到前台、命令跑完都会自动刷新余额；卡片右上角也能手动刷新（Hub 缓存 60 秒）',

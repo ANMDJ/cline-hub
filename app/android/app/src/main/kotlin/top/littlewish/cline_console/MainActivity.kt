@@ -180,7 +180,7 @@ class MainActivity : FlutterActivity() {
             "ensurePermission" -> ensurePermission(result)
             "show" -> {
                 val id = call.argument<Int>("id") ?: 0
-                val title = call.argument<String>("title") ?: "Cline Console"
+                val title = call.argument<String>("title") ?: "ClineHub"
                 val body = call.argument<String>("body") ?: ""
                 showNotification(id, title, body)
                 result.success(null)

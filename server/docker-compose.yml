@@ -1,4 +1,4 @@
-# Cline Hub on a single Ubuntu box.
+# ClineHub on a single Ubuntu box.
 #
 # host 网络：Caddy 在宿主机上直接反代 127.0.0.1:3100，
 # 同时容器内也能用 127.0.0.1:5432 连宿主机/其他容器发布的 Postgres。

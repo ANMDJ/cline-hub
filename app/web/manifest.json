@@ -1,11 +1,11 @@
 {
-    "name": "Cline Console",
-    "short_name": "Cline Console",
+    "name": "ClineHub",
+    "short_name": "ClineHub",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0A0E13",
     "theme_color": "#0A0E13",
-    "description": "Cline Console · 把 Cline 的每一次执行装进口袋",
+    "description": "ClineHub · 把 Cline 的每一次执行装进口袋",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

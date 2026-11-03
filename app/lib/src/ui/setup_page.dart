@@ -133,7 +133,7 @@ class _SetupPageState extends State<SetupPage> {
                 ),
                 const SizedBox(width: 12),
                 const Text(
-                  'Cline Console',
+                  'ClineHub',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
                 ),
               ],

@@ -1,7 +1,7 @@
 ﻿#requires -Version 5.1
 <#
 .SYNOPSIS
-  One-shot end-to-end check for the Cline Hub bridge on this machine.
+  One-shot end-to-end check for the ClineHub bridge on this machine.
 
 .DESCRIPTION
   Checks, in order:
@@ -67,7 +67,7 @@ if (-not $scriptDir) { $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.P
 $bridgeRoot = Join-Path (Split-Path -Parent (Split-Path -Parent $scriptDir)) 'bridge'
 $configPath = Join-Path $bridgeRoot 'config.json'
 
-Write-Host "Cline Hub - end-to-end self check" -ForegroundColor White
+Write-Host "ClineHub - end-to-end self check" -ForegroundColor White
 Write-Info ("bridge root : " + $bridgeRoot)
 
 if (-not (Test-Path -LiteralPath $configPath)) {

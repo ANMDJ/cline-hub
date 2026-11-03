@@ -1,4 +1,4 @@
--- Cline Console Hub · 初始表结构
+-- ClineHub · 初始表结构
 -- 幂等：可重复执行。所有时间列都用 timestamptz（bridge 上传 ISO8601 字符串）。
 
 create table if not exists clients (
