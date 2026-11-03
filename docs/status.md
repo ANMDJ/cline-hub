@@ -19,7 +19,7 @@
 | 7 | P14 | 手机取消命令：`POST /api/v1/commands/:id/cancel`，bridge 按 commandId 精确杀 | ✅ Hub 已上线（迁移 007/008）；bridge / App 待重启/安装 |
 | 8 | P8 | 详情页 Markdown 渲染（`flutter_markdown_plus`） | ✅ 已发布 `1.1.4+6`（ADR-42） |
 | 9 | P15 | 手机端系统通知：命令完成/失败 + 会话终态（原生 MethodChannel，设置页可开关/授权） | ✅ 已发布 `1.1.2+4`（装到手机后生效） |
-| 10 | P2 | PLAN/ACT 选中态真机核对对比度（需要手机，用户侧） | ⏳ 代码完成，待真机核对 |
+| 10 | P2 | PLAN/ACT 选中态真机核对对比度（需要手机，用户侧） | ✅ 2026-11-03 用户在真机确认两个按钮的对比没问题，不用再调配色 |
 | 11 | P16 | 停 bridge 前先停任务：`POST /admin/stop` + `commandWorker.shutdown()`（先回写 running，再杀进程树）+ `npm run stop` / `npm run restart` + `docs/interruptions.md` | ✅ 已上线（bridge 12:27 起为新版本；未在本会话里自杀验证） |
 | 12 | P17 | App 自动更新可直接「打开下载页」：原生 `ACTION_VIEW`（`link_launcher.dart` + `MainActivity`），复制链接保留 | ✅ 已发布 `1.1.4+6`（与 P8 一起发版） |
 | 13 | P19 | **读接口按设备隔离**：`device` token 只能读自己的会话 / 消息 / 命令 / hook（跨设备 403），SSE 按设备过滤；`app` / `admin` 不传即全量 | ✅ 已上线（2026-11-02 13:28 镜像重建；线上 device 跨设备读返回 `403 device_mismatch`） |
@@ -32,14 +32,20 @@
 | 20 | P26 | **App 1.1.5+7 发版**：设备列表 + 设备名 chip + 命令卡片项目目录 / 实时耗时 | ✅ APK 55,239,940 B / sha256 `53a64cd1…d5ac`，已上线 |
 | 21 | P32 | **同一条任务只弹一条通知**：命令终态与 bridge 合成的 `session_done` 用 `sessionId` 归并（15 分钟窗口），修「息屏回前台收到两条消息」 | ✅ 已随 `1.1.6+8` 发版 |
 | 22 | P33 | **会话分组显示来源机器**：分组键改成 `<设备>\|<项目键>`（两机的同名项目是两组），组头 + 卡片元信息显示设备名；设备过滤也作用于工作区页 | ✅ 已随 `1.1.6+8` 发版 |
-| 23 | P34 | **后台保活（形态 B）**：只在「有命令在跑」时挂 `dataSync` 前台服务（`KeepAliveService` + 静音常驻通知），锁屏期间 SSE 不断、命令跑完立刻弹通知；活跃数归 0 / 401 / 关开关 / 划掉任务即停。设置页「锁屏也提醒」默认开 | ✅ 已发版 `1.1.6+8`（2026-11-03 08:28）；待真机按清单核对 |
+| 23 | P34 | **后台保活（形态 B）**：只在「有命令在跑」时挂 `dataSync` 前台服务（`KeepAliveService` + 静音常驻通知），锁屏期间 SSE 不断、命令跑完立刻弹通知；活跃数归 0 / 401 / 关开关 / 划掉任务即停。设置页「锁屏也提醒」默认开 | ✅ 已发版 `1.1.6+8`（2026-11-03 08:28）；静态 + 自动化验证已完成（见 P37），真机 7 条仍待手机 |
 | 24 | P35 | **App 1.1.6+8 发版**：锁屏保活 + 通知归并 + 分组带设备一起上线（清单 `/srv/cline-hub/releases/latest.json`、APK `/app/cline-console-1.1.6.apk`），落地页对齐 1.1.6 | ✅ APK 55,256,496 B / sha256 `4ecaf2f3…4173`，已上线 |
+| 25 | P37 | **推送 / 保活验证（不接厂商通道）**：ntfy 直达通知栏 + Hub SSE 长连接 + 线上 1.1.6 APK 静态核验（保活 service / 权限 / sha256）+ 全量自检；真机 7 条仍需手机 | ✅ 2026-11-03 完成「不依赖真机」的全部验证（ADR-51） |
 
-已完成并上线的：P0 / P1 / P3–P26 / P35
+已完成并上线的：P0 / P1 / P3–P26 / P35–P37
 （P3、P9 已部署；P5、P10、P15、P17、P8、P22–P26、P35 已发布到 App；P7/P14 已在 12:51 重启后生效）。
 **P32 / P33 / P34 已随 `1.1.6+8` 发版**（`flutter test` 78 通过 / 5 真机用例跳过；
 APK 55,256,496 B / sha256 `4ecaf2f3…4173`，线上 APK HEAD 200、`GET /api/v1/app/latest` 返回 1.1.6 / build 8）。
 P34 仍需真机按 §0 的清单核对（锁屏收通知 / 常驻通知消失 / 划掉任务）。
+**P36 / P37（2026-11-03）已在工作区完成**：根 README 改成使用者视角（423 → 200 行）；
+推送 / 保活把「不依赖真机」的部分全验证了一遍 —— ntfy 发布 **HTTP 200**（`id=dlyLaLiL8GFm`，0.76s）、
+app token 连 `GET /api/v1/events` 27 秒收到 `: connected` + 2 条 `event: messages` + 一次 `: ping`
+（反代没缓冲）、线上 APK 里的 `KeepAliveService` 与三个权限都在。
+用户同时拍板：**不接 FCM / 厂商推送**（ADR-51）。P2 也由用户在真机确认「两个按钮的对比没问题」后关闭。
 **P19（读接口按设备隔离）已上线**（2026-11-02 13:28 镜像重建，迁移无变化）。
 **P20（路径归一化）已上线**（2026-11-02 13:50 镜像重建，备份后缀 `20261102-135023`）。
 **P21–P26 已上线/已发版**：重发脚本 / 命令卡片项目目录 + 动态耗时 / 多设备过滤 / 设备列表接口 /
@@ -75,6 +81,44 @@ P34 仍需真机按 §0 的清单核对（锁屏收通知 / 常驻通知消失 /
 | 5 | 命令运行期间从最近任务划掉 App | 常驻通知消失（`stopWithTask="true"`），bridge 侧命令继续执行 |
 | 6 | Android 15+ 跑一条正常命令 | `onTimeout` 不触发（`dataSync` 6h/24h 上限与分钟级命令无关） |
 | 7 | 国产 ROM（MIUI / EMUI 等）仍被冻结 | 设置里给 App「电池优化 → 无限制」后重试；仍不行就关「锁屏也提醒」（回退到回前台补发），并记进 `app/README.md` 排障 |
+
+### P37 推送 / 保活验证记录（2026-11-03）
+
+**背景**：本机 `adb devices` 为空（adb 用的是本机 Android SDK 的 platform-tools，但没有设备在线），
+P34 的 7 条真机项这一轮做不了。所以把「不依赖手机就能验证的部分」全部做掉，
+剩下的明确留给用户。用户同时拍板：**不接 FCM / 厂商推送通道**（ADR-51）。
+
+| # | 验证项 | 做法 | 结果 |
+|---|---|---|---|
+| 1 | ntfy 推送通道 | `POST https://ntfy.sh` 的 `~/.cline/notify.config.json` topic，body 与 `hooks/_notify.ps1` 完全一致 | ✅ **HTTP 200**，`id=dlyLaLiL8GFm`，0.76s（手机装了 ntfy 并订阅该 topic 即进通知栏） |
+| 2 | app token 有效性 | `GET /api/v1/sessions?limit=1` + `Authorization: Bearer` | ✅ 200 / 992 B |
+| 3 | Hub SSE 长连接 | `curl -N -m 27 "https://hub.littlewish.top:8443/api/v1/events?token=<app token>"` | ✅ `: connected` → 2 条 `event: messages` → `: ping`，说明鉴权、设备过滤、Caddy `flush_interval -1` 都正常（ADR-5） |
+| 4 | 线上 APK 是带保活的那个 | `Get-FileHash` + `aapt2 dump badging` / `dump xmltree` | ✅ sha256 `4ecaf2f3…4173` / 55,256,496 B，与线上 `Content-Length` 一致；`versionCode=8` / `1.1.6`；`KeepAliveService`（`foregroundServiceType=0x1` dataSync、`stopWithTask=true`）；权限含 `POST_NOTIFICATIONS` / `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_DATA_SYNC` |
+| 5 | 自动化基线 | bridge / server / app / site | ✅ `node --test` **53**、`npm test` **39**、`flutter analyze` 无告警 + `flutter test` **78 通过 / 5 跳过**、`node site/check-site.mjs` 通过 |
+| 6 | 真机 7 条 | 需要手机（锁屏收通知 / 常驻通知消失 / 划掉任务 / 撤权限 / Android 15 / 国产 ROM） | ⏳ 待用户装 `1.1.6` 后按上面的清单逐条核对 |
+
+**复现命令**（token / topic 现读现用，不要写进文档或提交）：
+
+```powershell
+# 1) ntfy：和 hooks/_notify.ps1 同一条路径
+$cfg = Get-Content "$env:USERPROFILE\.cline\notify.config.json" -Raw | ConvertFrom-Json
+$body = @{ topic=$cfg.topic; title='self-test'; message='hi'; priority=3 } | ConvertTo-Json -Compress
+$p = "$env:TEMP\ntfy.json"; [IO.File]::WriteAllText($p, $body, (New-Object Text.UTF8Encoding($false)))
+curl.exe -sS -m 20 -H 'Content-Type: application/json; charset=utf-8' --data-binary "@$p" $cfg.ntfyBase
+
+# 2) SSE：-m 27 正好覆盖一次 25 秒心跳；只看到 ": connected" 也算连上了
+$tok = (Get-Content .secrets\phone-token.txt -Raw).Trim()
+curl.exe -sS -N -m 27 "https://hub.littlewish.top:8443/api/v1/events?token=$tok"
+
+# 3) APK 里到底有没有保活（本机 SDK 不在默认位置就换成实际路径）
+& "$env:LOCALAPPDATA\Android\Sdk\build-tools\36.1.0\aapt2.exe" dump xmltree `
+    --file AndroidManifest.xml app\dist\cline-console-1.1.6.apk |
+  Select-String 'KeepAliveService|foregroundServiceType|stopWithTask'
+```
+
+**踩到的坑**：PowerShell 5.1 的 `Out-File -Encoding utf8` 会写 BOM，ntfy 直接回
+`40024 invalid request: request body must be valid JSON`；换 `UTF8Encoding($false)` 立刻 200。
+`hooks/_notify.ps1` 用的是 `Encoding.UTF8.GetBytes()`，不受影响。
 
 ### Step 1 + Step 2 落地记录（2026-11-02）
 
@@ -294,7 +338,7 @@ P34 仍需真机按 §0 的清单核对（锁屏收通知 / 常驻通知消失 /
   `cd server; node --test` 36 项、`cd app; flutter analyze` 无告警、
   `flutter test` 64 项通过（新增 `workspaceLabel` 2 项 + 设备过滤 1 项 + `ElapsedText` 3 项）。
 
-## 1. 基线快照（2026-11-02 09:15 实测；14:08 更新发布项）
+## 1. 基线快照（2026-11-02 09:15 实测；14:08 更新发布项；2026-11-03 复核 Hub / SSE / APK）
 | 项 | 实测 |
 |---|---|
 | 分支 / HEAD | `master`（P7 / P14 / P8 之后；当前哈希看 `git log -1`） |
@@ -405,7 +449,7 @@ powershell -NoProfile -File deploy/windows/verify-hub.ps1
 
 ## 7. 文档一致性
 
-- 改行为 → 同步模块 README + 根 README 对应段落。
+- 改行为 → 同步模块 README；用户能感知的能力变化 → 根 `README.md` 的「手机上能做什么」/「功能清单」。
 - 新的「为什么」→ `docs/decisions.md` 追加 ADR（编号递增，不改旧条目）。
 - 现状变化 → 本文件 §1 + §8。
 - 接口变化 → `docs/api.md` 先改契约再写码。
@@ -460,6 +504,8 @@ powershell -NoProfile -File deploy/windows/verify-hub.ps1
 | 2026-11-03 | **P34 锁屏保活（形态 B）**：新增 `KeepAliveService.kt`（`dataSync` 前台服务 + 静音常驻通知，通道 `cline_hub_keepalive` / id `7301`，`START_NOT_STICKY`、`stopWithTask`、Android 15 `onTimeout` 收工）；`AndroidManifest` 加 `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_DATA_SYNC` 与 service 声明；`MainActivity` 的 `…/notify` 通道加 `startKeepAlive` / `stopKeepAlive`（`IllegalStateException` / `SecurityException` 一律降级为 false）；`HubNotifier` 加两个默认空实现的方法，`SettingsStore.keepAliveEnabled`（`notify.keepAlive`，默认开）；`HubStore._syncKeepAlive()` 在活跃命令 0→1 开、归 0 / 401 / 关开关 / `dispose` 停（回前台不主动停，避开 Android 11+ 后台启动限制），设置页「通知」卡片加「锁屏也提醒」开关；版本 `1.1.6+8`；`flutter analyze` 无告警、`flutter test` **78 通过 / 5 跳过**（新增 7 条保活用例）；ADR-50。**待真机验证**（锁屏收通知 / 常驻通知消失 / 划掉任务） |
 | 2026-11-02 | **重写历史清掉本机路径（P31）**：用 `git-filter-repo`（单文件脚本，不装进系统环境）对全部提交做 blob 级替换 —— Windows 用户目录（含 JSON 里 4 层反斜杠变体）→ `C:\Users\alice`，全大写变体单独映射成 `ALICE`；Git Bash 的 `/c/Users/<账号>/...`（两种旧目录形态 `~/.cline/...` 与 `~/projects/...`）→ `<仓库>`；`D:\Android\Sdk` / `D:\android\.gradle` / `D:\Program Files\java\jdk-17` / `D:/android/sdk` → 环境变量写法；反引号包着的账号名 → `alice`。`LICENSE` / `README` 的版权署名保留（作者名不是路径）。重写前 `git bundle` 备份到仓外临时目录；重写后 HEAD tree 与重写前**逐字节一致**（`6e4eca45`），即只改了历史、当前内容未变。随后按 `commit-map` 把 `docs/status.md` 里 8 处旧短哈希回填成新哈希（例：`a20abe1`→`c3ee1da`），`git log -S'<旧用户目录>'` 全历史 **0 命中**。⚠️ 实测 GitHub 仍能按 SHA 直接访问强推前的旧提交（HTTP 200 且内容含旧路径），彻底清掉必须删仓重建 —— `delete_repo` scope 待授权 |
 | 2026-11-03 | **P35 App 1.1.6+8 发版 + 落地页对齐**：`cd app; node scripts/release-apk.mjs --skip-build`（复用已构建的 `app-release.apk`，先用 `output-metadata.json` 核对 versionName `1.1.6` / versionCode `8`）生成 `dist/cline-console-1.1.6.apk` + `dist/latest.json`（sha256 `4ecaf2f3…4173`）；`scp` 后 `sudo install` 到 `/var/www/cline-hub/app/`（HEAD 200 / `application/vnd.android.package-archive` / 55,256,496 B）与 `/srv/cline-hub/releases/latest.json`（`GET /api/v1/app/latest` 返回 1.1.6 / build 8 / 三条 notes，Hub 不用重启）；`site/index.html` 9 处版本号 + M3 进度 + 「实时下行」补锁屏保活说明、`site/README.md` 同步；`node site/check-site.mjs` 通过，逐文件 `scp` + `sudo install` 发布（本机 `tar.exe` 被系统拒绝 `Access denied`，改用单文件 scp；旧页面备份 `/tmp/site-backup-20261103-082841.tgz`），线上 `http://82.157.153.22/` 200 / 19351 B、`1.1.6`×9、`1.1.5`×0；`adb devices` 为空，手机走 App 内「检查更新」 |
+| 2026-11-03 | **P36 根 README 改成使用者视角**：开源首页原来按开发过程写（端口表 / 备案与 8443 入口 / 证书续期 / 安全基线复盘 / 里程碑 / bridge 脚本细节），第一次看到项目的人信息过载。重写为「它做什么 → 怎么做的（上行 / 下行 + 实时性三层）→ 手机上怎么用（三个 Tab + 设置 + 多设备）→ 功能清单（采集 / 远程命令 / App / Hub / 安全边界）→ 自己跑一套（指向 self-host / new-device / api）→ 已知边界」，**423 行 → 201 行**；运维事实留在原地（`docs/status.md` §1/§3/§5、`deploy/README.md` §11、ADR-11 / 20、`bridge/README.md`、`docs/self-host.md` §9），没有删除任何独占信息；同步 `docs/README.md` / `AGENTS.md` 的文档地图、`deploy/README.md` 的交叉引用、本文件 §7 的文档一致性规则 |
+| 2026-11-03 | **P37 推送 / 保活验证（不接厂商通道）**：`adb devices` 为空，把不依赖真机的部分全做了 —— ntfy 发布 `HTTP 200`（`id=dlyLaLiL8GFm`，0.76s，与 `hooks/_notify.ps1` 同一条路径）；app token 连 `GET /api/v1/events` 27 秒收到 `: connected` + 2 条 `event: messages` + 一次 `: ping`（鉴权 / 设备过滤 / 反代不缓冲）；`app/dist/cline-console-1.1.6.apk` 的 sha256 `4ecaf2f3…4173` / 55,256,496 B 与线上 `Content-Length` 一致，`aapt2` 确认 `KeepAliveService`（`foregroundServiceType=0x1`、`stopWithTask=true`）与 `POST_NOTIFICATIONS` / `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_DATA_SYNC` 都在；基线 bridge 53 / server 39 / app 78+5 / site ✓。P2 由用户在真机确认「两个按钮的对比没问题」，关闭；用户拍板**不接 FCM / 厂商推送**（ADR-51）；P34 真机 7 条仍待手机，排障入口写进 `app/README.md` |
 
 
 

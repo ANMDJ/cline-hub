@@ -1211,3 +1211,43 @@ App 的去重键分别是 `cmd_x:done` 与 `hook:185`（ADR-35），两者互不
 （新增 7 条保活用例：拉起 + 幂等 / 终态收起 / 取消收起 / 关开关不拉起 / 平台不支持不碰 /
 切换开关即时生效 / 后台保活期间不断流）。真机清单见 `docs/status.md` §0 的 P34。
 
+## 51. 不接 FCM / 厂商推送：保活 + ntfy + 回前台补齐就够（2026-11-03）
+
+**决策**：不引入 FCM、也不接华为 / 小米 / OPPO / vivo 等厂商通道和社交 App 的推送 SDK。
+手机端的提醒只有三条路：App 活着（含命令运行期间的前台服务，ADR-50）时的本地通知、
+Windows hook 发的 ntfy、回前台补拉补发。
+
+**为什么**：
+
+- **自托管单租户**：一个 app token 看全部设备，没有「服务端主动推给很多用户」的需求。
+  FCM 那套「服务端持 service account 密钥 → Google 通道 → 设备」要多保管一份云凭据，
+  而且国产 ROM 普遍没有 GMS，装了也收不到。
+- **厂商通道的接入成本远大于收益**：每家都要注册开发者账号、实名、上架应用商店，
+  每个 SDK 都会给 `flutter build apk` 添一个新的失败点。当前客户端刻意只保留
+  `http` / `shared_preferences` / `flutter_markdown_plus` 三个依赖（ADR-31 / 42）。
+- **真正要求「秒级」的场景已经被覆盖**：「手机上下了命令，锁屏等结果」最多几分钟，
+  `dataSync` 前台服务（ADR-50）在这段时间里保证进程不被冻结、SSE 不断。
+  其余场景（电脑上自己开的会话）晚几分钟可以接受 —— 这是 ADR-35 的省电取舍。
+- **保活只在命令运行期间存在**：不是长期后台常驻，功耗与合规成本都可控，
+  也不会出现「一个自建工具常年占着推送通道」的怪状态。
+
+**代价（写进已知边界，不装作没有）**：
+
+- ROM 冻结进程时通知会晚到，直到用户打开 App，或者 ntfy 那条先到；
+- 没有「App 被彻底杀掉后仍能收到」的能力；
+- 同一条任务可能响两次（ntfy 一条 + 本地通知一条，两条通道独立，ADR-50）。
+
+**什么时候该推翻**：真要做团队版 / 多用户，或者要求「App 不在也能秒收」，
+就得走 FCM（海外）或厂商通道 + 服务端 token 管理。那已经超出「自托管单机」的边界，
+应该当成另一个项目，而不是给现在的客户端加 SDK。
+
+**依据的实测**（2026-11-03，细节见 `docs/status.md` §0 P37）：
+
+- ntfy 发布 `HTTP 200`（`id=dlyLaLiL8GFm`，0.76s），与 `hooks/_notify.ps1` 同一条路径；
+- app token 连 `GET /api/v1/events` 27 秒内收到 `: connected`、2 条 `event: messages`、一次 `: ping`；
+- 线上 APK（sha256 `4ecaf2f3…4173` / 55,256,496 B）里 `KeepAliveService` 的
+  `foregroundServiceType=0x1`（dataSync）、`stopWithTask=true`，权限含
+  `POST_NOTIFICATIONS` / `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_DATA_SYNC`。
+
+**验证边界**：以上都是「不依赖真机」的部分；锁屏收通知 / 常驻通知消失 / 划掉任务
+仍按 `docs/status.md` §0 的 P34 清单在手机上核对。

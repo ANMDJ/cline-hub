@@ -42,4 +42,4 @@
 | [`interruptions.md`](interruptions.md) | 主动中断记录：为什么杀 bridge / 影响了谁 / 怎么恢复 |
 | [`server-prep.md`](server-prep.md) | 服务器从零准备 |
 | [`../AGENTS.md`](../AGENTS.md) | 给新会话的入口页（30 秒看懂 + 开工三条命令） |
-| [`../README.md`](../README.md) | 项目总览、里程碑、安全基线 |
+| [`../README.md`](../README.md) | 项目介绍、手机端用法、功能清单 |

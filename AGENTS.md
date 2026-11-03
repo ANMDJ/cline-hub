@@ -163,7 +163,7 @@ Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
 | [`docs/README.md`](docs/README.md) | 文档索引与阅读路径 | 第一次来 |
 | [`docs/status.md`](docs/status.md) | 现状快照、待办、验收清单、变更日志 | **每次开工** |
 | [`CHANGELOG.md`](CHANGELOG.md) | 版本更新日志（按版本；按日期的开发过程在 `status.md` §8） | 想知道「哪个版本改了什么」 |
-| [`README.md`](README.md) | 项目总览、里程碑、安全基线、快速开始 | 需要全貌 |
+| [`README.md`](README.md) | 项目介绍、手机端用法、功能清单 | 第一次了解 / 对外介绍 |
 | [`docs/api.md`](docs/api.md) | Hub v1 接口契约（鉴权 / 错误码 / 请求响应） | 改接口、写客户端 |
 | [`docs/self-host.md`](docs/self-host.md) | 从零自托管：服务器 → 电脑 → 手机的完整闭环 | 第一次部署、教别人部署 |
 | [`docs/new-device.md`](docs/new-device.md) | 接入第二台 Windows（device token / bridge / 多机边界） | 加电脑、排查设备不上线 |

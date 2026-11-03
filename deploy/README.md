@@ -277,7 +277,7 @@ docker compose up -d --build
 - bridge 切线上后 `--once` 三轮把 59 条历史会话全部补传：`sessions=59 / hooks=1`
 - 本机跑 `HUB_SMOKE_BASE=https://hub.littlewish.top node scripts/smoke.mjs ...` → **20/20 通过**（含 SSE 推送）
 - 手机 → Windows 远程命令闭环实测：`POST /commands`（app token）→ 6 秒内 bridge 执行 → `status=done`，
-  `resultText` 为 PowerShell 输出（详见根目录 `README.md` 的「远程命令（bridge 执行器）」一节）
+  `resultText` 为 PowerShell 输出（命令怎么落地见 `../bridge/README.md` 的「配置」一节）
 
 尚未启用（后续里程碑）：`ntfy.littlewish.top`、`kids.littlewish.top` 两个反代段落，以及 Flutter App。
 
