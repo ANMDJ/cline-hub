@@ -91,6 +91,18 @@ class HubStore extends ChangeNotifier {
   bool loadingDevices = false;
   String? devicesError;
 
+  // -------------------------------------------------------- deepseek 余额（P44）
+  /// Hub 代查的 DeepSeek 余额；null = 还没查到（或查询失败且没有旧数据）。
+  ///
+  /// API Key 在 Hub 上，App 只保存这份结果；[DeepSeekBalance.configured] 为 false
+  /// 时表示服务器没配 Key，不是网络错误。
+  DeepSeekBalance? balance;
+  bool loadingBalance = false;
+  String? balanceError;
+
+  /// 同一时刻只跑一条余额请求：打开菜单 + 命令结束 + 下拉刷新可能撞在一起。
+  Future<void>? _balanceInFlight;
+
   // ---------------------------------------------------------------- commands
   List<CommandItem> commands = <CommandItem>[];
   bool loadingCommands = false;
@@ -385,7 +397,8 @@ class HubStore extends ChangeNotifier {
   /// Android 11+ 会直接拒绝。命令跑的这几分钟留着常驻通知，顺便当状态指示。
   void _syncKeepAlive() {
     if (_disposed) return;
-    final want = settings.keepAliveEnabled &&
+    final want =
+        settings.keepAliveEnabled &&
         notifier.supported &&
         activeCommandCount > 0 &&
         link != LinkState.offline;
@@ -522,6 +535,54 @@ class HubStore extends ChangeNotifier {
     } finally {
       if (!_disposed) {
         loadingDevices = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  // -------------------------------------------------------- deepseek 余额 API
+  /// 查一次 DeepSeek 余额。
+  ///
+  /// 触发点：启动 / 回前台（`refreshAll`）、打开右侧菜单、手动刷新，以及每条远程
+  /// 命令走到终态之后 —— 刚消耗过 token，余额最可能变。Hub 侧有 60 秒缓存，
+  /// 重复触发不会放大上游请求；[force] 会要求 Hub 跳过缓存。
+  Future<void> refreshBalance({bool force = false}) async {
+    if (_disposed) return;
+    final running = _balanceInFlight;
+    if (running != null) return running;
+    loadingBalance = true;
+    balanceError = null;
+    notifyListeners();
+    final task = _loadBalance(force);
+    _balanceInFlight = task;
+    try {
+      await task;
+    } finally {
+      _balanceInFlight = null;
+    }
+  }
+
+  Future<void> _loadBalance(bool force) async {
+    try {
+      balance = await api.deepseekBalance(refresh: force);
+      balanceError = null;
+    } on ApiException catch (error) {
+      // 旧 Hub 没有这条路由：按「未配置」显示，别把 404 画成红色错误。
+      if (error.code == 'not_found' || error.code == 'http_404') {
+        balance = const DeepSeekBalance(
+          configured: false,
+          hint: 'Hub 还没有 /api/v1/deepseek/balance：先部署新版 Hub',
+        );
+        balanceError = null;
+        return;
+      }
+      // 查失败时保留上一份数字：比整块变红有用，卡片上会标「上次的」。
+      balanceError = error.friendly;
+    } catch (error) {
+      balanceError = '$error';
+    } finally {
+      if (!_disposed) {
+        loadingBalance = false;
         notifyListeners();
       }
     }
@@ -859,6 +920,8 @@ class HubStore extends ChangeNotifier {
   /// 命令从「执行中」走到终态才弹：首次加载的一堆历史命令不该刷屏。
   void _maybeNotifyCommand(CommandItem? previous, CommandItem next) {
     if (previous == null || !previous.isActive) return;
+    // 一条命令刚跑完 = 大概率刚消耗过 token：顺手刷新余额（Hub 侧有 TTL 兜底）。
+    if (_terminalStatuses.contains(next.status)) unawaited(refreshBalance());
     _notifyCommandResult(next);
   }
 
@@ -976,6 +1039,7 @@ class HubStore extends ChangeNotifier {
       refreshSessions(),
       refreshCommands(),
       refreshHooks(),
+      refreshBalance(),
     ]);
   }
 }

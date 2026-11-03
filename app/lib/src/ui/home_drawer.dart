@@ -132,6 +132,11 @@ class HomeDrawer extends StatelessWidget {
             ),
             const SizedBox(height: 18),
 
+            // DeepSeek 余额（P44）：Hub 代查，Key 只在服务器上（server/.env）。
+            // 放在最上面：打开菜单先看「还剩多少钱、电脑还在不在」，再看别的。
+            _BalanceCard(store: store),
+            const SizedBox(height: 14),
+
             // 浏览：进工作区二级页 + 只看哪台机器（P39，原来在会话页顶栏）。
             _SectionTitle(
               title: '浏览',
@@ -303,6 +308,185 @@ class HomeDrawer extends StatelessWidget {
   }
 }
 
+/// 抽屉顶部的 DeepSeek 余额卡片（P44）。
+///
+/// 数据来自 `GET /api/v1/deepseek/balance`：Hub 用 `server/.env` 里的 Key 代查，
+/// 手机只拿到「已脱敏」的余额。四种状态要分清，别都画成红字：
+/// 未配置（灰，提示去服务器配 Key）/ 查询中 / 查询失败 / 有数字（可能带「上次的」）。
+class _BalanceCard extends StatelessWidget {
+  const _BalanceCard({required this.store});
+
+  final HubStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final balance = store.balance;
+    final error = store.balanceError;
+    final loading = store.loadingBalance;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 8, 8, 11),
+      decoration: BoxDecoration(
+        color: kPanel,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: kLine),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.account_balance_wallet_outlined,
+                size: 15,
+                color: kMuted,
+              ),
+              const SizedBox(width: 6),
+              const Expanded(
+                child: Text(
+                  'DeepSeek 余额',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.3,
+                    color: kMuted,
+                  ),
+                ),
+              ),
+              if (loading)
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 6),
+                  child: SizedBox(
+                    width: 13,
+                    height: 13,
+                    child: CircularProgressIndicator(strokeWidth: 1.6),
+                  ),
+                )
+              else
+                IconButton(
+                  onPressed: () => store.refreshBalance(force: true),
+                  tooltip: '刷新余额',
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 28,
+                    minHeight: 28,
+                  ),
+                  icon: const Icon(
+                    Icons.refresh_rounded,
+                    size: 16,
+                    color: kMuted,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          ..._body(balance, error, loading),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _body(DeepSeekBalance? balance, String? error, bool loading) {
+    if (balance == null) {
+      return <Widget>[
+        Text(
+          loading ? '正在查询…' : (error ?? '还没有余额数据，点右上角刷新'),
+          style: TextStyle(
+            fontSize: 11.5,
+            height: 1.5,
+            color: error == null ? kMuted : kDanger,
+          ),
+        ),
+      ];
+    }
+
+    if (!balance.configured) {
+      return <Widget>[
+        const Text(
+          'Hub 未配置 DEEPSEEK_API_KEY',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: kWarn,
+          ),
+        ),
+        if ((balance.hint ?? '').isNotEmpty)
+          Text(
+            balance.hint!,
+            style: const TextStyle(fontSize: 10.5, height: 1.6, color: kMuted),
+          ),
+      ];
+    }
+
+    if (!balance.hasBalance) {
+      return <Widget>[
+        const Text(
+          'DeepSeek 没有返回余额档位',
+          style: TextStyle(fontSize: 11.5, height: 1.5, color: kMuted),
+        ),
+        if (error != null) _errorLine(error),
+      ];
+    }
+
+    final meta = <String>[
+      balance.fetchedAt == null
+          ? '时间未知'
+          : '${relativeTime(balance.fetchedAt)}更新',
+      if (balance.cached) '缓存',
+      if (balance.stale) '上次的',
+    ].join(' · ');
+
+    return <Widget>[
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(
+            balance.totalText,
+            style: kMono.copyWith(
+              fontSize: 20,
+              height: 1.2,
+              fontWeight: FontWeight.w700,
+              color: kText,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 2),
+            child: Pill(
+              label: balance.isAvailable ? '可用' : '余额不足',
+              color: balance.isAvailable ? kAccent : kDanger,
+            ),
+          ),
+        ],
+      ),
+      if ((balance.breakdownText ?? '').isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(top: 3),
+          child: Text(
+            balance.breakdownText!,
+            style: const TextStyle(fontSize: 10.5, color: kMuted),
+          ),
+        ),
+      Text(
+        meta,
+        style: const TextStyle(fontSize: 10, height: 1.6, color: kMuted),
+      ),
+      // 刷新失败但有旧数字：不整块变红，只在下面补一行说明。
+      if (error != null) _errorLine(error),
+    ];
+  }
+
+  Widget _errorLine(String error) => Padding(
+    padding: const EdgeInsets.only(top: 2),
+    child: Text(
+      error,
+      style: const TextStyle(fontSize: 10, height: 1.5, color: kWarn),
+    ),
+  );
+}
+
 /// 抽屉一行放不下：设备名来自 `clients.name`，长度不受控，太长就截断。
 String _shortLabel(String label) {
   final trimmed = label.trim();
@@ -331,7 +515,10 @@ class _SectionTitle extends StatelessWidget {
         ),
         const Spacer(),
         if (trailing != null)
-          Text(trailing!, style: const TextStyle(fontSize: 10.5, color: kMuted)),
+          Text(
+            trailing!,
+            style: const TextStyle(fontSize: 10.5, color: kMuted),
+          ),
       ],
     );
   }
@@ -366,9 +553,12 @@ class _ActionTile extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 10.5, color: kMuted),
             ),
-      trailing: const Icon(Icons.chevron_right_rounded, size: 18, color: kMuted),
+      trailing: const Icon(
+        Icons.chevron_right_rounded,
+        size: 18,
+        color: kMuted,
+      ),
       onTap: onTap,
     );
   }
 }
-

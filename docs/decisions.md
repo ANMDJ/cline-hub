@@ -1381,3 +1381,41 @@ P42 命令租约自动回收 / P43 SSE 纵深防御），其余明确不做；�
 `flutter analyze` 无告警 + `flutter test` 88 通过 / 5 跳过）。本轮改动只落在 `docs/` 与
 `AGENTS.md`（工作区里另有 P39 的未提交 App 改动，属于上一轮、与本轮无关）。
 
+---
+
+## 56. DeepSeek 余额由 Hub 代查：Key 只落服务器，App 只拿脱敏结果（2026-11-03）
+
+**背景**：用户希望手机上随时看到 DeepSeek 账户还剩多少钱（`bridge/config.json` 里
+`commands.cline.provider=deepseek`，远程命令消耗的也是这份余额）。官方接口是
+`GET https://api.deepseek.com/user/balance`，返回 `is_available` 与按币种的
+`total_balance` / `granted_balance` / `topped_up_balance`，金额都是字符串。
+
+**决定**：新增 `GET /api/v1/deepseek/balance`（`auth: app`），由 Hub 用
+`server/.env` 的 `DEEPSEEK_API_KEY` 代查后转成 App 的结构。App 不保存 Key、也不直连
+DeepSeek；UI 是右侧抽屉顶部的一张卡片。
+
+**为什么**：
+
+- **Key 只落一处**：直连方案要把 Key 存进 APK / `SharedPreferences`，手机丢了或被人翻到
+  就等于余额被刷；Hub 上是 `.env`（gitignore）+ 进程内读取，日志里也不打印。
+- **Web 预览直连不了**：`flutter run -d chrome` 走浏览器，DeepSeek 没给余额接口声明
+  CORS，直连只会得到一条 CORS 报错；经 Hub 转发后三端行为一致。
+- **省一次往返、扛住连点**：Hub 侧 60 秒缓存 + 同一个 `inflight` 复用，打开菜单、命令结束、
+  手动刷新撞在一起时上游也只会被打一次；`refresh=1` 给「我就要现在这个数」留出口。
+- **401 不能透传**：`ApiException.isAuth` 会把 401/403 当成「Hub token 失效」并直接断 SSE，
+  所以上游拒绝 Key 必须翻成 `502 deepseek_auth_failed`，让 App 显示「去改服务器配置」。
+- **余额不是交易凭证**：刷新失败时退回上一次结果 + `stale:true` 比整张卡片变红有用；
+  没配 Key 也不是错误，用 `configured:false` + `hint` 引导去服务器配。
+
+**边界**：
+
+- 只做「读余额」：不做充值、账单明细、用量曲线；不落 Postgres（进程重启后重新查一次）。
+- 金额字符串原样透传：服务端不 `parseFloat`，App 也不重算，避免把 `99.999` 显示成 `100.00`。
+- `device` token 调这个接口仍是 `403 forbidden`：余额是账户级信息，bridge 不需要它。
+- 多账号 / 多 Key 不做：单租户自托管，一个 Hub 对应一个 DeepSeek 账号。
+
+**验证**：`cd server; node --test` **56 通过**（`server/test/deepseek.test.mjs` 覆盖未配置、
+正常解析与「响应里不出现 Key」、TTL 缓存与 `refresh=1`、并发复用、401/429/网络、退旧值、
+坏 payload）；`cd app; flutter analyze` 无告警、`flutter test` **97 通过 / 5 跳过**。
+线上部署（加 `DEEPSEEK_API_KEY` + 重建容器 + 发 APK）未执行，见 `status.md` P44。
+

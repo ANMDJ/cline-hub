@@ -12,6 +12,8 @@ class FakeHubApi implements HubApi {
     this.hookItems = const <HookItem>[],
     this.messageItems = const <SessionMessage>[],
     this.deviceItems = const <DeviceItem>[],
+    this.deepseekBalanceItem,
+    this.deepseekError,
     this.nextCursor,
     this.detail,
   });
@@ -21,6 +23,12 @@ class FakeHubApi implements HubApi {
   List<HookItem> hookItems;
   List<SessionMessage> messageItems;
   List<DeviceItem> deviceItems;
+
+  /// DeepSeek 余额（P44）：null = 用「未配置」的默认返回；[deepseekError] 用来模拟失败。
+  DeepSeekBalance? deepseekBalanceItem;
+  Object? deepseekError;
+  int deepseekBalanceCalls = 0;
+  bool lastBalanceRefresh = false;
   String? nextCursor;
   SessionDetail? detail;
 
@@ -35,7 +43,8 @@ class FakeHubApi implements HubApi {
   final List<String> cancelledCommands = <String>[];
 
   /// 上传过的附件（P38）：测试断言「先上传再下发」的先后与参数。
-  final List<Map<String, Object?>> uploadedAttachments = <Map<String, Object?>>[];
+  final List<Map<String, Object?>> uploadedAttachments =
+      <Map<String, Object?>>[];
   String? sessionQuery;
   bool closed = false;
 
@@ -96,7 +105,9 @@ class FakeHubApi implements HubApi {
     if (before != null) {
       if (ignoreBefore) return const <SessionMessage>[];
       final older = all.where((item) => item.seq < before).toList();
-      return older.skip(older.length > limit ? older.length - limit : 0).toList();
+      return older
+          .skip(older.length > limit ? older.length - limit : 0)
+          .toList();
     }
     return all.skip(all.length > limit ? all.length - limit : 0).toList();
   }
@@ -110,6 +121,19 @@ class FakeHubApi implements HubApi {
 
   @override
   Future<List<DeviceItem>> devices() async => deviceItems;
+
+  @override
+  Future<DeepSeekBalance> deepseekBalance({bool refresh = false}) async {
+    deepseekBalanceCalls += 1;
+    lastBalanceRefresh = refresh;
+    final error = deepseekError;
+    if (error != null) throw error;
+    return deepseekBalanceItem ??
+        const DeepSeekBalance(
+          configured: false,
+          hint: '在 Hub 的 server/.env 里配置 DEEPSEEK_API_KEY 后重启容器',
+        );
+  }
 
   @override
   Future<CommandItem> sendCommand({
@@ -205,7 +229,8 @@ class FakeHubApi implements HubApi {
       cancelRequestedAt: DateTime.now(),
     );
     commandItems = <CommandItem>[
-      for (final item in commandItems) if (item.id == id) updated else item,
+      for (final item in commandItems)
+        if (item.id == id) updated else item,
     ];
     return updated;
   }

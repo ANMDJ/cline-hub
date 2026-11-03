@@ -49,6 +49,15 @@ export const config = {
    */
   maxAttachmentBytes: readInt('HUB_MAX_ATTACHMENT_BYTES', 8 * 1024 * 1024),
   sseHeartbeatMs: readInt('HUB_SSE_HEARTBEAT_MS', 25000),
+  /**
+   * DeepSeek 余额（P44）：Key 只配在 Hub 上，App 永远看不到明文。
+   * 留空时 `/api/v1/deepseek/balance` 返回 `configured:false`，App 显示配置提示。
+   */
+  deepseekApiKey: read('DEEPSEEK_API_KEY', ''),
+  deepseekBaseUrl: read('DEEPSEEK_BASE_URL', 'https://api.deepseek.com'),
+  /** 余额短缓存：默认 60 秒，手机连点刷新也不会把上游打爆。 */
+  deepseekBalanceTtlSec: readInt('DEEPSEEK_BALANCE_TTL_SEC', 60),
+  deepseekTimeoutMs: readInt('DEEPSEEK_TIMEOUT_MS', 8000),
   // 兜底防护：每 IP 令牌桶 + 可选 CIDR 白名单（白名单为空 = 不限 IP）
   rateLimitPerSec: readInt('HUB_RATE_LIMIT_PER_SEC', 5),
   rateLimitBurst: readInt('HUB_RATE_LIMIT_BURST', 120),

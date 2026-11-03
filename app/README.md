@@ -31,7 +31,7 @@ cd app
 flutter pub get
 flutter run -d android            # 真机 / 模拟器
 flutter run -d chrome             # 桌面预览（Web 下没有 SSE，见下文）
-flutter test                      # 88 项通过（5 项真机用例跳过；含通知去重 / 同任务合并 / 回前台补发 / 保活 / 附件上传与右侧菜单）
+flutter test                      # 97 项通过（5 项真机用例跳过；含通知去重 / 同任务合并 / 回前台补发 / 保活 / 附件上传 / 右侧菜单 / DeepSeek 余额）
 flutter build apk --release       # 产物 build/app/outputs/flutter-apk/
 
 # 可选：拿真实 Hub 跑一遍客户端（不设变量则这组自动跳过）
@@ -260,6 +260,7 @@ SSE 四种事件都用上了：`session`（去抖 900ms 后刷新列表）、`ho
 | 取消命令 | `ui/commands_page.dart` 的 `_CancelCommandButton` | 只有 `pending/delivered/running/cancelling` 显示；二次确认后 `POST /commands/:id/cancel`；排队中立即 `cancelled`，执行中先 `cancelling`，终态由 SSE 推回 |
 | 版本与更新 | `ui/settings_page.dart` | 版本号来自 `data/app_version.dart`；「检查更新」读 `GET /api/v1/app/latest`。有新版本时给两个入口：**「打开下载页」**（`data/link_launcher.dart` → 原生 `ACTION_VIEW`，直接用系统浏览器打开 APK 地址）与「复制链接」；打不开浏览器时自动退回复制 |
 | 设备列表 / 浏览筛选 | `ui/home_drawer.dart` | 读 `GET /api/v1/devices`：在线（2 分钟内有 `lastSeenAt`）/ 离线（附多久没上报）、会话数、待执行 / 执行中；点一行设为默认；≥2 台时「浏览」区给设备 chip（只筛列表，不改下发目标） |
+| DeepSeek 余额（P44） | `ui/home_drawer.dart` 的 `_BalanceCard` | 抽屉顶部：总额 / 充值 / 赠金 / 更新时间 + 「可用 / 余额不足」。数据走 `GET /api/v1/deepseek/balance`（Hub 代查，`DEEPSEEK_API_KEY` 只在服务器上）。刷新时机：启动、回前台、打开菜单、命令走到终态、卡片右上角手动刷新（`refresh=1` 跳过 Hub 的 60 秒缓存）；失败时保留上一份数字并标注「上次的」 |
 
 ### 发版流程
 

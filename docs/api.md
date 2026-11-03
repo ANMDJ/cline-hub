@@ -45,6 +45,7 @@ SSE 例外：`GET /api/v1/events?token=<token>`（EventSource 不能设置请求
 |---|---|---|---|
 | GET | `/api/v1/health` | 匿名 | 存活 + DB 延迟 |
 | GET | `/api/v1/devices` | any | 电脑端（bridge）列表：在线时间 / 会话数 / 命令计数 |
+| GET | `/api/v1/deepseek/balance` | app | DeepSeek 账户余额（Hub 代查，Key 只在服务器上） |
 | GET | `/api/v1/clients` | admin | 设备列表（含会话数、待执行命令数） |
 | POST | `/api/v1/clients` | admin | 创建设备，返回一次性 token |
 | DELETE | `/api/v1/clients/:id?confirm=1` | admin | 删除设备（级联删数据） |
@@ -121,6 +122,67 @@ SSE 例外：`GET /api/v1/events?token=<token>`（EventSource 不能设置请求
 - `app` / `admin`：返回全部电脑端；`device` token：只返回自己（与 ADR-43 一致）。
 - 没有这个接口时 App 会退回「从已加载数据里猜设备」；升级 Hub 后设备列表更完整
   （新接入、还没产生数据的电脑也会出现）。
+
+## DeepSeek 余额（`GET /api/v1/deepseek/balance`，P44）
+
+App 右侧菜单顶部的「DeepSeek 余额」卡片用它。**API Key 只存在 Hub 上**
+（`server/.env` 的 `DEEPSEEK_API_KEY`，已 gitignore），App 只拿代查结果，
+响应里任何字段都不包含 Key。
+
+| 参数 | 说明 |
+|---|---|
+| `refresh=1` | 跳过 Hub 的 60 秒短缓存，立刻打一次上游（手动刷新按钮用） |
+
+```json
+{
+  "ok": true,
+  "configured": true,
+  "isAvailable": true,
+  "balances": [
+    {
+      "currency": "CNY",
+      "totalBalance": "110.00",
+      "grantedBalance": "10.00",
+      "toppedUpBalance": "100.00"
+    }
+  ],
+  "fetchedAt": "2026-11-03T04:00:00.000Z",
+  "latencyMs": 180,
+  "cached": false
+}
+```
+
+| 字段 | 含义 |
+|---|---|
+| `configured` | Hub 上有没有配 Key。`false` 时其余字段是空壳 + `hint`，**不是错误**（200） |
+| `isAvailable` | DeepSeek 的 `is_available`：余额够不够继续调 API |
+| `balances` | 按币种一行；金额是**字符串**（上游原样，服务端不做浮点运算） |
+| `fetchedAt` | Hub 拿到这份数据的时间（不是 App 请求时间） |
+| `cached` | 是否来自 Hub 的短缓存（Hub 未配置 Key 时不适用） |
+| `stale` | 上游刷新失败、退回上一次结果时为 `true`，同时带 `warning` / `ageMs` |
+
+未配置时：
+
+```json
+{ "ok": true, "configured": false, "isAvailable": false, "balances": [],
+  "fetchedAt": null, "cached": false,
+  "hint": "在 Hub 的 server/.env 里配置 DEEPSEEK_API_KEY 后重启容器" }
+```
+
+| 状态码 | `code` | 含义 |
+|---|---|---|
+| 502 | `deepseek_auth_failed` | DeepSeek 拒绝了这个 Key（上游 401/403）——**不能透传 401**，否则 App 会误判自己的 Hub token 失效 |
+| 502 | `deepseek_rate_limited` | 上游 429 |
+| 502 | `deepseek_error` / `deepseek_bad_response` | 上游非 2xx 或返回的不是余额 JSON |
+| 503 | `deepseek_unreachable` | Hub 出网失败（DNS / 连接 / 代理） |
+| 504 | `deepseek_timeout` | 超过 `DEEPSEEK_TIMEOUT_MS`（默认 8 秒） |
+
+行为约定：
+
+- 角色 `app`（`admin` 也可）；`device` token 调它返回 `403 forbidden`。
+- Hub 进程内缓存 60 秒（`DEEPSEEK_BALANCE_TTL_SEC`）；同一时刻只打一次上游，
+  手机连点刷新不会放大请求。
+- 刷新失败但手里有旧数据时返回旧数据 + `stale: true`，不让整张卡片变红。
 
 ## 会话上报（bridge 用）
 

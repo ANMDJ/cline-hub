@@ -109,9 +109,11 @@ class SessionItem {
   final String sessionId;
   final String? workspace;
   final String? workspaceRoot;
+
   /// 项目名（bridge 从工作目录向上找到 .git / 构建标记的目录名）。
   final String? project;
   final String? projectRoot;
+
   /// project = 识别到项目根；loose = 家目录等散会话。
   final String? projectKind;
   final String? source;
@@ -557,7 +559,10 @@ class DeviceItem {
   }
 
   /// 2 分钟内有上报就算在线——bridge 默认 5 秒轮询一次命令。
-  bool isOnlineAt(DateTime now, {Duration window = const Duration(minutes: 2)}) {
+  bool isOnlineAt(
+    DateTime now, {
+    Duration window = const Duration(minutes: 2),
+  }) {
     final seen = lastSeenAt;
     if (seen == null) return false;
     final diff = now.difference(seen);
@@ -565,6 +570,119 @@ class DeviceItem {
   }
 
   bool get isOnline => isOnlineAt(DateTime.now());
+}
+
+/// 一档 DeepSeek 余额（按币种一行；目前官方只返回 CNY 或 USD 一档）。
+///
+/// 金额是**字符串**：DeepSeek 返回 `"110.00"`，直接展示不经过 double，
+/// 避免 `99.999` 这种浮点误差把余额显示成 `100.00`。
+class DeepSeekBalanceInfo {
+  const DeepSeekBalanceInfo({
+    required this.currency,
+    this.totalBalance,
+    this.grantedBalance,
+    this.toppedUpBalance,
+  });
+
+  factory DeepSeekBalanceInfo.fromJson(Map<String, dynamic> json) =>
+      DeepSeekBalanceInfo(
+        currency: (_str(json['currency']) ?? '').toUpperCase(),
+        totalBalance: _str(json['totalBalance']),
+        grantedBalance: _str(json['grantedBalance']),
+        toppedUpBalance: _str(json['toppedUpBalance']),
+      );
+
+  /// `CNY` / `USD`（服务端已大写，这里再兜一次）。
+  final String currency;
+
+  /// 总可用余额（充值 + 未过期赠金）。
+  final String? totalBalance;
+
+  /// 未过期的赠金余额。
+  final String? grantedBalance;
+
+  /// 充值余额。
+  final String? toppedUpBalance;
+
+  String get symbol => switch (currency) {
+    'CNY' => '¥',
+    'USD' => r'$',
+    _ => '',
+  };
+
+  String get totalText =>
+      totalBalance == null ? '—' : '$symbol${totalBalance!}';
+
+  /// `充值 100.00 · 赠金 10.00`；两项都缺时返回 null。
+  String? get breakdownText {
+    final parts = <String>[
+      if (toppedUpBalance != null) '充值 ${toppedUpBalance!}',
+      if (grantedBalance != null) '赠金 ${grantedBalance!}',
+    ];
+    return parts.isEmpty ? null : parts.join(' · ');
+  }
+}
+
+/// DeepSeek 账户余额（`GET /api/v1/deepseek/balance`）。
+///
+/// API Key 只存在 Hub 上，这里拿到的永远是代查结果：
+/// `configured=false` = Hub 没配 Key（不是错误），[stale] = 上游挂了但还有旧数字。
+class DeepSeekBalance {
+  const DeepSeekBalance({
+    this.configured = true,
+    this.isAvailable = false,
+    this.balances = const <DeepSeekBalanceInfo>[],
+    this.fetchedAt,
+    this.cached = false,
+    this.stale = false,
+    this.hint,
+  });
+
+  factory DeepSeekBalance.fromJson(Map<String, dynamic> json) {
+    final balances = _maps(json['balances'])
+        .map(DeepSeekBalanceInfo.fromJson)
+        .toList(growable: false);
+    return DeepSeekBalance(
+      // 老 Hub 不会带这个字段：有余额就按「已配置」处理，别把正常数据显示成未配置。
+      configured: _bool(json['configured'], fallback: balances.isNotEmpty),
+      isAvailable: _bool(json['isAvailable']),
+      balances: balances,
+      fetchedAt: _dt(json['fetchedAt']),
+      cached: _bool(json['cached']),
+      stale: _bool(json['stale']),
+      hint: _str(json['hint']),
+    );
+  }
+
+  /// Hub 上是否配了 `DEEPSEEK_API_KEY`。false 时除了 [hint] 没有别的可用信息。
+  final bool configured;
+
+  /// DeepSeek 认为「余额够不够用」；余额为 0 时官方会给 false。
+  final bool isAvailable;
+
+  final List<DeepSeekBalanceInfo> balances;
+
+  /// Hub 拿到这份余额的时间（不是 App 请求的时间）。
+  final DateTime? fetchedAt;
+
+  /// 本次是不是从 Hub 的短缓存里拿的。
+  final bool cached;
+
+  /// 上游刷新失败、退回了上一次的结果。
+  final bool stale;
+
+  /// 未配置时的提示文案（由 Hub 下发）。
+  final String? hint;
+
+  bool get hasBalance => balances.isNotEmpty;
+
+  DeepSeekBalanceInfo? get primary => balances.isEmpty ? null : balances.first;
+
+  /// 主余额展示：`¥110.00`。
+  String get totalText => primary?.totalText ?? '—';
+
+  /// 明细：`充值 100.00 · 赠金 10.00`。
+  String? get breakdownText => primary?.breakdownText;
 }
 
 class HealthInfo {

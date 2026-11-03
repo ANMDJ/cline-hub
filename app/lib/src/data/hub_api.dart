@@ -22,14 +22,22 @@ class ApiException implements Exception {
     'network' => '连不上 Hub：检查地址、网络，以及 baseUrl 是否带了 /_h/<前缀>',
     'timeout' => '请求超时：服务器没响应，稍后再试',
     'unauthorized' => 'token 无效或已失效（401）——用 create-device 重新签发一个',
-    'forbidden' => 'token 角色不对（403）：手机发命令要用 app token，device token 只给 bridge 上报用',
+    'forbidden' =>
+      'token 角色不对（403）：手机发命令要用 app token，device token 只给 bridge 上报用',
     'ip_not_allowed' => '服务器 IP 白名单拒绝了本机（403）',
     'rate_limited' => '触发限流（429），等一两秒再试',
     'not_found' || 'http_404' => '404：路径不存在，检查 baseUrl 是否包含 /_h/<前缀>',
     'http_502' || 'http_503' || 'http_504' => '网关后面的服务没起来（$code），去服务器看 Hub 进程',
     'unknown_device' => '设备不存在：先在 Hub 上创建设备客户端',
     'auth_unavailable' => 'Hub 连不上数据库（503）',
-    'attachment_too_large' => '附件太大：Hub 上限是 8 MB（可用 HUB_MAX_ATTACHMENT_BYTES 调大）',
+    'attachment_too_large' =>
+      '附件太大：Hub 上限是 8 MB（可用 HUB_MAX_ATTACHMENT_BYTES 调大）',
+    'deepseek_auth_failed' =>
+      'DeepSeek 拒绝了 Hub 上的 API Key：检查 server/.env 的 DEEPSEEK_API_KEY',
+    'deepseek_rate_limited' => 'DeepSeek 余额接口被限流（429），过一会儿再刷新',
+    'deepseek_timeout' => 'DeepSeek 余额接口超时，过一会儿再刷新',
+    'deepseek_unreachable' => 'Hub 连不上 api.deepseek.com（服务器网络 / 出口问题）',
+    'deepseek_bad_response' || 'deepseek_error' => 'DeepSeek 余额接口返回异常（$code）',
     'invalid_field' => '参数不合法：$message',
     _ => status == 0 ? message : '$message（$status $code）',
   };
@@ -79,6 +87,11 @@ abstract class HubApi {
   /// Hub 上所有电脑端（bridge）的概览：名字、在线时间、会话 / 命令计数。
   /// device token 只会拿到自己，app/admin 拿全部（见 docs/api.md）。
   Future<List<DeviceItem>> devices();
+
+  /// DeepSeek 账户余额。API Key 只存在 Hub 上，App 只拿代查结果。
+  ///
+  /// [refresh] 要求 Hub 跳过它的短缓存（手动刷新按钮用）。
+  Future<DeepSeekBalance> deepseekBalance({bool refresh = false});
 
   Future<CommandItem> sendCommand({
     required String deviceId,
@@ -286,6 +299,16 @@ class HttpHubApi implements HubApi {
   Future<List<DeviceItem>> devices() async {
     final json = await _request('GET', '/api/v1/devices');
     return _items(json).map(DeviceItem.fromJson).toList(growable: false);
+  }
+
+  @override
+  Future<DeepSeekBalance> deepseekBalance({bool refresh = false}) async {
+    final json = await _request(
+      'GET',
+      '/api/v1/deepseek/balance',
+      query: {if (refresh) 'refresh': '1'},
+    );
+    return DeepSeekBalance.fromJson(json);
   }
 
   @override

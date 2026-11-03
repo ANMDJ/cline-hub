@@ -3,8 +3,8 @@
 /// 为什么不引 `package_info_plus`：这个客户端刻意只保留 http / shared_preferences
 /// 两个依赖，版本号一年也就改几次，手工同步比多一个插件更划算。
 /// 发版脚本 `scripts/release-apk.mjs` 会读 `pubspec.yaml` 并校验这里是否一致。
-const String kAppVersion = '1.1.8';
-const int kAppBuild = 10;
+const String kAppVersion = '1.1.9';
+const int kAppBuild = 11;
 
 class ChangelogEntry {
   const ChangelogEntry(this.version, this.date, this.items);
@@ -15,6 +15,11 @@ class ChangelogEntry {
 }
 
 const List<ChangelogEntry> kChangelog = <ChangelogEntry>[
+  ChangelogEntry('1.1.9', '2026-11-03', <String>[
+    '新增：右侧菜单顶部显示 DeepSeek 余额——总额、充值 / 赠金明细、更新时间与「可用」标记',
+    '新增：打开菜单、回到前台、命令跑完都会自动刷新余额；卡片右上角也能手动刷新（Hub 缓存 60 秒）',
+    '新增：余额查询失败时保留上一次的数字并标注「上次的」，不会整块变红；Hub 没配 Key 时提示去服务器配置',
+  ]),
   ChangelogEntry('1.1.8', '2026-11-03', <String>[
     '优化：按工作区浏览、只看哪台电脑都收进右侧菜单，抽屉里一划就能切（原来散在会话页顶栏）',
     '优化：设置页去掉与右侧菜单重复的「已接入设备」列表，只留「手填兜底」的设备 id',

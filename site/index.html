@@ -46,11 +46,11 @@
     </p>
     <div class="hero-actions">
       <a class="btn btn-primary" href="#start">五分钟自建</a>
-      <a class="btn btn-ghost" href="/app/cline-console-1.1.8.apk">下载 App 1.1.8</a>
+      <a class="btn btn-ghost" href="/app/cline-console-1.1.9.apk">下载 App 1.1.9</a>
       <a class="btn btn-ghost" href="https://github.com/ANMDJ/cline-hub">GitHub 源码</a>
     </div>
     <ul class="hero-facts">
-      <li><span>1.1.8</span>App 当前版本</li>
+      <li><span>1.1.9</span>App 当前版本</li>
       <li><span>22/22</span>冒烟检查全绿</li>
       <li><span>0</span>个前端框架依赖</li>
       <li><span>1</span>台 Ubuntu 就能跑</li>
@@ -231,7 +231,7 @@ curl http://127.0.0.1:3210/health</code></pre>
 
     <p class="note">
       手机端（Flutter App）在 <code>app/</code> 下：可以直接装
-      <a href="/app/cline-console-1.1.8.apk">1.1.8 的 APK</a>，也可以自己 <code>flutter build apk --release</code>；
+      <a href="/app/cline-console-1.1.9.apk">1.1.9 的 APK</a>，也可以自己 <code>flutter build apk --release</code>；
       Hub 地址与 token 走 App 内的向导，不写死在代码里。
     </p>
   </section>
@@ -304,7 +304,7 @@ curl http://127.0.0.1:3210/health</code></pre>
         </tr>
         <tr>
           <td>M2b</td>
-          <td>Flutter App：会话列表 / 详情 / 搜索 / 下发命令（1.1.8）</td>
+          <td>Flutter App：会话列表 / 详情 / 搜索 / 下发命令（1.1.9）</td>
           <td><span class="tag tag-done">完成</span></td>
         </tr>
         <tr>
@@ -314,7 +314,7 @@ curl http://127.0.0.1:3210/health</code></pre>
         </tr>
         <tr>
           <td>M3</td>
-          <td>多设备、设备列表、锁屏保活与通知归并、手机发文件 / 图片已上线；后台推送明确不接 FCM / 厂商通道（ADR-51），剩更细的审计视图</td>
+          <td>多设备、设备列表、锁屏保活与通知归并、手机发文件 / 图片、DeepSeek 余额已上线；后台推送明确不接 FCM / 厂商通道（ADR-51），剩更细的审计视图</td>
           <td><span class="tag tag-wip">进行中</span></td>
         </tr>
       </tbody>
@@ -330,7 +330,7 @@ curl http://127.0.0.1:3210/health</code></pre>
       </details>
       <details>
         <summary>APK 在哪下载？跟仓库版本怎么对？</summary>
-        <p>当前是 <strong>1.1.8</strong>：<a href="/app/cline-console-1.1.8.apk">直接下 APK</a>（约 53 MB）。
+        <p>当前是 <strong>1.1.9</strong>：<a href="/app/cline-console-1.1.9.apk">直接下 APK</a>（约 53 MB）。
            也可以自己 <code>flutter build apk --release</code>。App 内「检查更新」读的是
            <code>GET /api/v1/app/latest</code>，指向同一个文件；版本与改动见
            <a href="https://github.com/ANMDJ/cline-hub/blob/master/CHANGELOG.md">CHANGELOG</a>。</p>
@@ -390,7 +390,7 @@ curl http://127.0.0.1:3210/health</code></pre>
   <p class="footer-note">
     为自用而写，顺手开源。代码以 MIT 许可证发布：
     <a href="https://github.com/ANMDJ/cline-hub">github.com/ANMDJ/cline-hub</a> ·
-    当前版本 App 1.1.8 / Hub &amp; bridge 0.1.0 ·
+    当前版本 App 1.1.9 / Hub &amp; bridge 0.1.0 ·
     <a href="https://github.com/ANMDJ/cline-hub/blob/master/CHANGELOG.md">更新日志</a>
   </p>
 </footer>

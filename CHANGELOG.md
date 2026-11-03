@@ -5,6 +5,18 @@
 > [`docs/interruptions.md`](docs/interruptions.md)，单条设计决策在
 > [`docs/decisions.md`](docs/decisions.md)。日期均为 +08。
 
+## 2026-11-03 · App 1.1.9+11 / Hub 0.1.0
+
+### 新增
+
+- **手机上实时看 DeepSeek 余额（P44，ADR-56）**：右侧菜单顶部新增「DeepSeek 余额」卡片
+  （总额 / 充值 / 赠金 / 更新时间 + 可用标记，可手动刷新）。Hub 新增
+  `GET /api/v1/deepseek/balance` 代查官方 `GET /user/balance`，API Key 只存在
+  `server/.env` 的 `DEEPSEEK_API_KEY`，不会进 APK / 手机存储。
+- 打开菜单、App 回前台、命令跑完都会自动刷新；Hub 侧 60 秒缓存，连点也不会打爆上游；
+  查询失败时保留上一份数字并标注「上次的」。
+- Hub 没配 Key 时不报错：卡片显示「Hub 未配置 DEEPSEEK_API_KEY」并给出配置提示。
+
 ## 2026-11-02 · Hub 0.1.0 / bridge 0.1.0
 
 ### 新增

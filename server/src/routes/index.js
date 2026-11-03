@@ -2,6 +2,7 @@ import { createAppRoutes } from './app.js'
 import { createAttachmentRoutes } from './attachments.js'
 import { createClientRoutes } from './clients.js'
 import { createCommandRoutes } from './commands.js'
+import { createDeepSeekRoutes } from './deepseek.js'
 import { createHookRoutes } from './hooks.js'
 import { createSessionRoutes } from './sessions.js'
 
@@ -49,6 +50,7 @@ export function createRoutes({ db, logger, sse, config, startedAt }) {
     ...createSessionRoutes({ db, logger, sse }),
     ...createHookRoutes({ db, logger, sse }),
     ...createAttachmentRoutes({ db, logger, config }),
-    ...createCommandRoutes({ db, logger, sse })
+    ...createCommandRoutes({ db, logger, sse }),
+    ...createDeepSeekRoutes({ logger, config })
   ]
 }

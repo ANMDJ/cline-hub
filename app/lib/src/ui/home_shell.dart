@@ -90,6 +90,8 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   void _openMenu() {
     _scaffoldKey.currentState?.openEndDrawer();
     unawaited(_store.refreshDevices());
+    // 余额也顺手刷一次：打开菜单通常就是想确认「电脑还在不在、还剩多少钱」。
+    unawaited(_store.refreshBalance());
   }
 
   @override

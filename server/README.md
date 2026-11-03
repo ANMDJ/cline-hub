@@ -43,6 +43,10 @@ curl http://127.0.0.1:3100/api/v1/health
 | `HUB_RATE_LIMIT_PER_SEC` | | `5` | 每 IP 令牌桶恢复速率（请求/秒） |
 | `HUB_RATE_LIMIT_BURST` | | `120` | 每 IP 瞬时突发上限，超过返回 `429` + `retry-after` |
 | `HUB_ALLOW_IPS` | | 空 | 逗号分隔的 IP / CIDR 白名单；空 = 不限 IP，本机回环永远放行 |
+| `DEEPSEEK_API_KEY` | | 空 | App「DeepSeek 余额」卡片用。Key 只在 Hub 上，留空时接口返回 `configured:false` |
+| `DEEPSEEK_BASE_URL` | | `https://api.deepseek.com` | 上游地址（一般不用改） |
+| `DEEPSEEK_BALANCE_TTL_SEC` | | `60` | 余额短缓存秒数：窗口内重复请求不重复打上游 |
+| `DEEPSEEK_TIMEOUT_MS` | | `8000` | 上游超时；超时返回 `504 deepseek_timeout` |
 
 ## 数据模型要点
 
@@ -61,6 +65,20 @@ curl http://127.0.0.1:3100/api/v1/health
 `GET /api/v1/devices`（`auth: any`）给 App 用：只返回 `role='device'`，`device` token 只看自己，
 `app` / `admin` 看全部。字段与口径见 [`../docs/api.md`](../docs/api.md)「设备列表」。
 `GET /api/v1/clients` 仍是 admin 专属（含 `app` client 与创建 / 删除）。
+
+## DeepSeek 余额（P44）
+
+`GET /api/v1/deepseek/balance`（`auth: app`）由 Hub 代查 DeepSeek 的 `GET /user/balance`：
+Key 从 `DEEPSEEK_API_KEY` 读，**不下发给 App**，日志里也不打印。
+
+- 进程内缓存 `DEEPSEEK_BALANCE_TTL_SEC`（默认 60 秒）；`?refresh=1` 强制绕过。
+- 上游 401/403 **不能透传**（App 会误判成自己的 Hub token 失效），统一转
+  `502 deepseek_auth_failed`。
+- 刷新失败但手里有旧数据时返回旧数据 + `stale: true`，卡片只多一行说明。
+- 没配 Key 时返回 200 + `configured:false` + `hint`：卡片显示「去服务器配置」而不是报错。
+
+配置：`server/.env` 加 `DEEPSEEK_API_KEY=sk-...` 后重启容器（`docker compose up -d hub`）。
+字段与错误码见 [`../docs/api.md`](../docs/api.md)。
 
 ## 读接口的设备范围
 

@@ -42,6 +42,8 @@
 | 30 | P41 | SSE 短期 ticket（`POST /api/v1/sse-ticket`）替代 URL 里的 token，App 跟着改 | ⏳ 未开工（含 App 发版） |
 | 31 | P42 | 命令租约自动回收（`migrations/010` + 每 60s 扫描 → `failed: orphaned`） | ⏳ 未开工（`reconcile` 保留为手动兜底） |
 | 32 | P43 | SSE 纵深防御：Origin 白名单 + 单 token 连接上限 + 空闲超时 | ⏳ 未开工 |
+| 33 | P44 | **App 实时看 DeepSeek 余额**：Hub 新增 `GET /api/v1/deepseek/balance`（Key 只读 `server/.env` 的 `DEEPSEEK_API_KEY`；60 秒缓存、并发复用、失败退旧值并标 `stale`）；App 右侧抽屉顶部「DeepSeek 余额」卡片（总额 / 充值 / 赠金 / 更新时间 + 可用标记），启动、回前台、打开菜单、命令走到终态时自动刷新，右上角可强制刷新 | ✅ **已上线（2026-11-03 19:47）**：服务器 `.env` 写入 `DEEPSEEK_API_KEY` + 镜像重建（备份 `20261103-194741`，23 条路由）；App `1.1.9+11` 已发版（ADR-56） |
+
 
 
 
@@ -50,6 +52,13 @@
 **P39 已随 `1.1.8+10` 发版**（浏览入口收进右侧抽屉 + 设置页去重，ADR-54；
 `flutter analyze` 无告警、`flutter test` **88 通过 / 5 跳过**；APK 55,568,256 B /
 sha256 `a17a2ca0…a314`，线上 HEAD 200、`GET /api/v1/app/latest` 返回 1.1.8 / build 10）。
+**P44（DeepSeek 余额）已上线（2026-11-03 19:47）**：Hub 代查 `api.deepseek.com/user/balance`，
+Key 只存在服务器 `/srv/cline-hub/server/.env`（`600`；App 与日志都看不到，响应体实测无 token）；
+线上 `GET /api/v1/deepseek/balance` 返回 `configured:true` / `CNY 14.37` / `isAvailable:true`，
+第二次请求 `cached:true`、`?refresh=1` 重新打上游（84ms）。
+验证：`cd server; node --test` **56 通过**、`cd app; flutter analyze` 无告警 +
+`flutter test` **97 通过 / 5 跳过**（新增 3 条模型 + 4 条 store + 2 条抽屉用例）。
+App 发版 `1.1.9+11`（右侧抽屉顶部卡片），装到手机即可看到（ADR-56）。
 **安全审计复核（2026-11-03）已完成文档部分**：`cline-hub 安全审计与加固建议.docx` 的
 7 条说对、4 条说错/夸大（SSE 心跳其实有、CVE-2026-59723 实为 8.8/AV:A 且本机 `cline 3.0.74` 已修、
 XFF 是「取段错」不是「条件错」、Origin 该降级）、4 条它漏掉（其中 SSE token 在 URL 里最该修）。
@@ -369,7 +378,7 @@ curl.exe -sS -N -m 27 "https://hub.littlewish.top:8443/api/v1/events?token=$tok"
 | Flutter / Dart | `3.47.5` / `13.4` |
 | Android 工具链 | SDK `%LOCALAPPDATA%\Android\Sdk`（platforms 33–37 / build-tools 30–37）；JDK 17 与 21 在 `<JDK 目录>\`；`GRADLE_USER_HOME=%USERPROFILE%\.gradle` 已缓存 gradle-9.3.1。**`JAVA_HOME` 为空**，默认 PATH 上是 zulu-8，打包前必须设成 JDK 17 |
 | 已跟踪会话 | 109 个（`GET /api/v1/devices` 的 `sessionCount`，2026-11-02 14:19） |
-| App 发布版本 | `1.1.8+10`（`GET /api/v1/app/latest` 实测；APK 55,568,256 B，sha256 `a17a2ca0…a314`；2026-11-03 14:02 发布） |
+| App 发布版本 | `1.1.9+11`（`GET /api/v1/app/latest` 实测；APK 55,601,136 B，sha256 `17f49c12…a13c`；2026-11-03 19:52 发布） |
 
 ## 2. 里程碑与最近提交
 
@@ -540,4 +549,8 @@ powershell -NoProfile -File deploy/windows/verify-hub.ps1
 | 2026-11-03 | **P39 浏览入口收进右侧抽屉 + 设置页去重**：`ui/home_drawer.dart` 新增「浏览」区 —— 「按工作区浏览」（`onOpenWorkspaces` 由 `HomeShell` push，先 pop 抽屉）+ ≥2 台设备时的 chip（「全部设备 / 每台」，只改 `HubStore.deviceFilter`，不动 `settings.deviceId`）；设备行离线时补「X 小时前上报」；`ui/widgets.dart` 的 `DeviceFilterBar` 换成 `ActiveDeviceFilterBar`（`deviceFilter == null` 时零高度，筛选生效才出现「只看 X + 看全部设备」）；`sessions_page.dart` 删掉顶部工作区按钮，会话 / 命令 / 动态三页只保留提示条；`settings_page.dart` 删掉与抽屉重复的「已接入设备」卡片及 `_devicesBody` / `_deviceRow` / `_refreshDevices` / `_loadingDevices`，「默认执行设备」改名「手填兜底」（设备没上报过时仍可填）；「安全提示」按线上 `https://hub.littlewish.top:8443` 现状改写（原文还写着「IP + 随机前缀的明文 HTTP / 等备案」）；`SectionCard` 内容补一层透明 `Material`，消掉卡片里 `SwitchListTile` 触发的 debug 断言（水波纹不可见）；ADR-54。验证：`cd app; flutter analyze` 无告警、`flutter test` **88 通过 / 5 跳过**（抽屉用例扩到 chip 筛选 / 工作区入口 / 离线多久没上报；新增「提示条只在筛选时出现」「设置页不再放设备列表」2 条） |
 | 2026-11-03 | **App 1.1.8+10 发版（P39 上线）**：`pubspec.yaml` / `app_version.dart` 1.1.7+9 → 1.1.8+10（`kChangelog` 补 1.1.8 四条）；`JAVA_HOME=<JDK 17 路径>` + `ANDROID_HOME/ANDROID_SDK_ROOT=<Android SDK>` 后台构建（`assembleRelease` 57.8s）→ `aapt2` 核对 `versionCode=10` / `versionName=1.1.8`；`release-apk.mjs --skip-build` 出清单（sha256 `a17a2ca0…a314`，55,568,256 B）；`ssh -i ~/.ssh/kids.pem` 上传 APK 到 `/var/www/cline-hub/app/cline-console-1.1.8.apk`（`caddy:caddy 644`）、清单到 `/srv/cline-hub/releases/latest.json`；落地页 `site/index.html` 六处版本引用改 1.1.8（`node site/check-site.mjs` 通过、无 BOM）并 install 到 `/var/www/cline-hub/index.html`。线上验证：`GET /api/v1/app/latest` → 1.1.8 / 10 / sha 一致；`HEAD /app/cline-console-1.1.8.apk` → 200 / `application/vnd.android.package-archive` / 55,568,256 B；`http://82.157.153.22/` 显示 1.1.8 ×9、APK 链接 200。bridge（3210）与 Hub（health 200 / db 1ms）本来就在跑，无需重启（代码提交 `7a75eb1`） |
 | 2026-11-03 | **安全审计复核（只写文档）**：手机发来的 `cline-hub 安全审计与加固建议.docx` 逐条回代码核对 —— 说对 7 条（SKIP LOCKED 短事务 / token 只存哈希 / 单租户 / 线上只监听回环 / 无租约…），说错或夸大 4 条（**SSE 其实有 25s 心跳**；CVE-2026-59723 实为 8.8 / `AV:A`、影响 `cline dashboard` 且本机 `cline 3.0.74` 已修；XFF 是「取第一段」错而非「采信条件」错；Origin 该从 🔴 降到低/中 —— 凭据是 bearer 没有 cookie 可被自动携带），漏掉 4 条（**SSE 的 token 在 URL 里会进 access log**、命令回写是无条件 UPDATE、附件无配额、health 泄露 `sseClients`）。新增 `docs/security-review.md` + ADR-55，`status.md` 登记 P40–P43（**均未开工**）；按用户拍板**不动行为代码**。验证：`flutter analyze` 无告警、`flutter test` **88 通过 / 5 跳过**；另打了 P39 预览包 `app/dist/cline-console-1.1.7-preview-p39.apk`（55,568,256 B / sha256 `bc1dc4c0…b762` / `versionCode=10`），**未能上传服务器**（本机无 SSH 私钥） |
+
+| 2026-11-03 | **P44 DeepSeek 余额（代码 + 测试，未上线）**：新增 `server/src/routes/deepseek.js` —— `GET /api/v1/deepseek/balance`（`auth: app`）代查 `GET https://api.deepseek.com/user/balance`，Key 只读 `DEEPSEEK_API_KEY`，**不下发、不写日志**；进程内 60 秒缓存 + `inflight` 并发复用 + `?refresh=1` 绕过；上游 401/403 转 `502 deepseek_auth_failed`（不能透传 401，否则 App 会把它当成自己的 Hub token 失效）、429 → `deepseek_rate_limited`、超时 → `504 deepseek_timeout`、出网失败 → `503 deepseek_unreachable`；没配 Key 返回 200 + `configured:false` + `hint`；刷新失败但有旧数据时返回旧数据 + `stale:true`；金额保持字符串，服务端不做浮点运算。App：`models.dart` 新增 `DeepSeekBalance` / `DeepSeekBalanceInfo`（`¥` / `$` 按币种、`充值 x · 赠金 y`）、`HubApi.deepseekBalance()`、`HubStore.balance / loadingBalance / balanceError / refreshBalance({force})`（并发只跑一条）、`HomeDrawer` 顶部 `_BalanceCard`（未配置 / 查询中 / 失败 / 有数字四种状态）；刷新时机 = 启动与回前台（`refreshAll`）、打开右侧菜单、命令走到终态（`_maybeNotifyCommand`）、卡片右上角手动刷新。契约见 `docs/api.md`，环境变量见 `server/.env.example` / `server/README.md`，ADR-56。验证：`cd server; node --test` **56 通过**（新增 10 条：未配置 / 解析与脱敏 / 缓存与 `refresh=1` / 并发复用 / 401 / 429 / 网络 / 退旧值 / 坏 payload）；`cd app; flutter analyze` 无告警、`flutter test` **97 通过 / 5 跳过**（新增 9 条） |
+
+| 2026-11-03 | **P44 上线 + App 1.1.9+11 发版**：服务器 `/srv/cline-hub/server/.env` 写入 `DEEPSEEK_API_KEY`（`600`，Key 不进仓库 / 不进 APK / 不进日志）；上传 `src/env.js`、`src/routes/index.js`、新增 `src/routes/deepseek.js`（备份后缀 `20261103-194741`）→ `docker compose build` + `up -d --force-recreate hub`（23 条路由，容器内 `printenv DEEPSEEK_API_KEY` 有值，容器与宿主机 `deepseek.js` sha256 一致）。线上实测：`GET /api/v1/deepseek/balance` → `configured:true` / `CNY 14.37` / `isAvailable:true`（首次 196ms；60 秒内第二次 `cached:true`；`?refresh=1` 84ms 重新打上游；响应体不含任何 token）。App：`pubspec.yaml` / `app_version.dart` 1.1.8+10 → **1.1.9+11**（`kChangelog` 补 1.1.9 三条），`JAVA_HOME=<JDK 17>` 后台构建（`assembleRelease` 127.2s）→ `aapt2` 核对 `versionCode=11` / `versionName=1.1.9`；`release-apk.mjs --skip-build` 出清单（sha256 `17f49c12…a13c`，55,601,136 B）；上传 APK 到 `/var/www/cline-hub/app/cline-console-1.1.9.apk`（`caddy:caddy 644`）、清单到 `/srv/cline-hub/releases/latest.json`（4 条 notes，Hub 现读不用重启）；落地页 `site/index.html` 六处版本引用改 1.1.9 + M3 里程碑补「DeepSeek 余额已上线」（`node site/check-site.mjs` 通过、无 BOM）并 install 到 `/var/www/cline-hub/index.html`。线上验证：`GET /api/v1/app/latest` → 1.1.9 / 11 / sha 一致；`HEAD /app/cline-console-1.1.9.apk` → 200 / `application/vnd.android.package-archive` / 55,601,136 B；`http://82.157.153.22/` 显示 1.1.9 ×9、无 1.1.8 残留。测试基线：`cd server; node --test` **56 通过**、`cd app; flutter analyze` 无告警、`flutter test` **97 通过 / 5 跳过**。剩余：手机装 1.1.9 后确认抽屉卡片显示 ¥14.37 |
 
