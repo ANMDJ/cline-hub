@@ -41,7 +41,7 @@
 **P32 / P33 / P34 已随 `1.1.6+8` 发版**（`flutter test` 78 通过 / 5 真机用例跳过；
 APK 55,256,496 B / sha256 `4ecaf2f3…4173`，线上 APK HEAD 200、`GET /api/v1/app/latest` 返回 1.1.6 / build 8）。
 P34 仍需真机按 §0 的清单核对（锁屏收通知 / 常驻通知消失 / 划掉任务）。
-**P36 / P37（2026-11-03）已在工作区完成**：根 README 改成使用者视角（423 → 200 行）；
+**P36 / P37（2026-11-03）已完成并提交**（`c9de875`）：根 README 改成使用者视角（423 → 200 行）；
 推送 / 保活把「不依赖真机」的部分全验证了一遍 —— ntfy 发布 **HTTP 200**（`id=dlyLaLiL8GFm`，0.76s）、
 app token 连 `GET /api/v1/events` 27 秒收到 `: connected` + 2 条 `event: messages` + 一次 `: ping`
 （反代没缓冲）、线上 APK 里的 `KeepAliveService` 与三个权限都在。
