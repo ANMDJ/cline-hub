@@ -50,6 +50,14 @@ export const config = {
   maxAttachmentBytes: readInt('HUB_MAX_ATTACHMENT_BYTES', 8 * 1024 * 1024),
   sseHeartbeatMs: readInt('HUB_SSE_HEARTBEAT_MS', 25000),
   /**
+   * 命令租约（P42）：bridge 认领后必须在这个时间内续租，否则 Hub 判定执行侧失联。
+   * 120 秒 = 默认 30 秒心跳的 4 倍，允许丢一两次请求；扫描间隔 60 秒。
+   * 这两个值只影响「多久把失联命令收成 failed」，不影响真正在跑的命令
+   * （只要 bridge 活着就会持续续租）。
+   */
+  commandLeaseSec: readInt('HUB_COMMAND_LEASE_SEC', 120),
+  commandLeaseSweepMs: readInt('HUB_COMMAND_LEASE_SWEEP_SEC', 60) * 1000,
+  /**
    * DeepSeek 余额（P44）：Key 只配在 Hub 上，App 永远看不到明文。
    * 留空时 `/api/v1/deepseek/balance` 返回 `configured:false`，App 显示配置提示。
    */

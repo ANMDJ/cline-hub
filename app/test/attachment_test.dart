@@ -136,7 +136,7 @@ void main() {
     expect(await const AttachmentPicker().pick(), isNull);
   });
 
-  testWidgets('下发面板：有「发送文件 / 发送图片」，空指令要点出提示', (tester) async {
+  testWidgets('下发面板：「+」展开图片 / 文件，空指令要点出提示', (tester) async {
     tester.view.physicalSize = const Size(411, 914);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -151,8 +151,17 @@ void main() {
     await tester.tap(find.text('下发第一条'));
     await tester.pumpAndSettle();
 
-    expect(find.text('发送文件'), findsOneWidget);
-    expect(find.text('发送图片'), findsOneWidget);
+    // P46：入口收进输入条左侧的「+」，不再并排两个大按钮。
+    expect(find.text('图片'), findsNothing);
+    await tester.tap(find.byTooltip('发送文件 / 图片'));
+    await tester.pumpAndSettle();
+    expect(find.text('图片'), findsOneWidget);
+    expect(find.text('文件'), findsOneWidget);
+
+    // 再点一次收起（展开后按钮的提示语变成「收起附件」）。
+    await tester.tap(find.byTooltip('收起附件'));
+    await tester.pumpAndSettle();
+    expect(find.text('图片'), findsNothing);
 
     // 指令和附件都空：不能静默失败，要明确告诉用户缺什么。
     await tester.tap(find.text('下发'));

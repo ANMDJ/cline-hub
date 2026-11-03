@@ -44,6 +44,22 @@ Start-Process -WindowStyle Hidden node -ArgumentList 'src/index.js' -WorkingDire
 | `commands.cline.bin` | 空（用 PATH） | Windows 上填 `cline.cmd` 绝对路径 |
 | `commands.cline.provider` / `model` | 空 | 无头执行必须显式给 |
 | `commands.cline.resume` | `true`（示例为 `false`） | 无头进程接不上 `--id` 续会话，保持 false |
+| `commands.leaseHeartbeatMs` | `30000` | 租约心跳间隔（P42）：本机还拿着命令时周期 `POST /commands/:id/heartbeat`，空闲不发 |
+
+## 租约心跳（P42）
+
+Hub 给每条被认领的命令记一个租约（默认 120 秒）。bridge 在「本机还拿着命令」时
+（跑着的 + 占着槽位的 + 排队等槽位的）每 `commands.leaseHeartbeatMs`（默认 30 秒）续一次：
+
+```
+POST /api/v1/commands/<id>/heartbeat   {}
+```
+
+- 只写 `lease_expires_at` 一列，**不改状态、不推 SSE**（不会把手机上的列表刷来刷去）；
+- 单条失败只记 `command heartbeat failed` 日志，下一轮自动重试；
+- 心跳断了、租约过期时由 Hub 收成 `failed: orphaned`（`cancelling` 收成 `cancelled`），
+  与本机的 `npm run reconcile`（看得到进程）形成两道兜底。
+
 
 ## 附件（手机发来的文件 / 图片，P38）
 

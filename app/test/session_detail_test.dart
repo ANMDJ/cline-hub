@@ -104,6 +104,7 @@ void main() {
 
     // 默认 plan：只读，不会悄悄改文件
     await tester.enterText(find.byType(TextField), '继续把测试补全');
+    await tester.pump(); // 让发送键从「灰」变成可点（P46 空内容禁用）
     await tester.tap(find.byIcon(Icons.send_rounded));
     await tester.pumpAndSettle();
 
@@ -118,6 +119,7 @@ void main() {
     await tester.tap(find.text('ACT'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), '把测试补全并跑一遍');
+    await tester.pump();
     await tester.tap(find.byIcon(Icons.send_rounded));
     await tester.pumpAndSettle();
 

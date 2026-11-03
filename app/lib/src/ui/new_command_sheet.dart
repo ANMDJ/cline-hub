@@ -4,6 +4,7 @@ import '../data/file_picker.dart';
 import '../data/hub_api.dart';
 import '../state/hub_store.dart';
 import 'attachment_bar.dart';
+import 'chat_composer.dart';
 import 'theme.dart';
 
 Future<void> showNewCommandSheet(BuildContext context, HubStore store) {
@@ -212,27 +213,21 @@ class _NewCommandSheetState extends State<_NewCommandSheet> {
             style: const TextStyle(fontSize: 11.5, color: kMuted, height: 1.6),
           ),
           const SizedBox(height: 16),
-          TextField(
+          // 微信式输入条（P46）：输入框 + 左侧「+」展开「图片 / 文件」；
+          // 下发动作仍然由底部「下发」按钮统一提交（这里不重复放发送键）。
+          ChatComposer(
             controller: _promptCtrl,
-            minLines: 4,
-            maxLines: 8,
-            textInputAction: TextInputAction.newline,
+            attachment: _attachment,
+            picking: _picking,
+            sending: _sending,
             autofocus: true,
-            style: const TextStyle(fontSize: 13.5, height: 1.5),
-            decoration: const InputDecoration(
-              hintText: '要 Windows 上做什么？例如：跑一遍 kids_points_app 的测试并总结失败项',
-            ),
-          ),
-          const SizedBox(height: 10),
-          AttachmentBar(
-            picked: _attachment,
-            busy: _picking || _sending,
+            showSendButton: false,
+            hintText: '要 Windows 上做什么？例如：跑一遍 kids_points_app 的测试并总结失败项',
+            helper: '在输入框里写一句要对这个文件做什么；留空就只让它读一遍并总结。',
             onPickFile: () => _pick(false),
             onPickImage: () => _pick(true),
-            onClear: () => setState(() => _attachment = null),
-            hint: _attachment == null
-                ? null
-                : '在输入框里写一句要对这个文件做什么；留空就只让它读一遍并总结。',
+            onClearAttachment: () => setState(() => _attachment = null),
+            onSend: _submit,
           ),
           const SizedBox(height: 16),
           const Text('执行设备', style: TextStyle(fontSize: 12, color: kMuted)),

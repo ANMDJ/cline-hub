@@ -33,7 +33,7 @@ function optionalPid(value) {
   return num
 }
 
-function toCommand(row) {
+export function toCommand(row) {
   return {
     id: row.id,
     deviceId: row.device_id,
@@ -57,6 +57,11 @@ function toCommand(row) {
     /** 手机端点「取消」的时间；null 表示没人取消过。 */
     cancelRequestedAt: row.cancel_requested_at ?? null,
     /**
+     * 租约到期时间（P42）：bridge 每 30 秒续一次。手机上不直接展示，
+     * 但排查「为什么命令自己变成 failed」时一眼能看到是不是执行侧失联。
+     */
+    leaseExpiresAt: row.lease_expires_at ?? null,
+    /**
      * 随命令带过去的附件（文件 / 图片）：只有元数据，内容由 bridge 按 id 下载。
      * 列表与详情都返回它 —— 体积很小，不违反 ADR-2「列表不带大字段」。
      */
@@ -64,32 +69,50 @@ function toCommand(row) {
   }
 }
 
-export function createCommandRoutes({ db, logger, sse }) {
+/**
+ * 把 `attachment_id` 换成附件元数据。
+ *
+ * 为什么不直接 join：`/commands/pending` 用 `for update skip locked` 认领，
+ * 外连接（`left join`）在 Postgres 里不能配 `for update`（要写 `of c`，容易写错），
+ * 一条朴素的两段查询更不容易出事故，而且附件数量远小于命令行数。
+ *
+ * 导出给 `src/lease.js` 复用：租约回收也要广播**带附件信息**的 command.update，
+ * 否则手机上的附件卡片会在命令失败时凭空消失。
+ */
+export async function attachMetadata(db, rows) {
+  const list = Array.isArray(rows) ? rows : [rows]
+  const ids = [...new Set(list.map((row) => row?.attachment_id).filter(Boolean))]
+  if (ids.length === 0) return list.map((row) => (row ? { ...row, attachment: null } : row))
+  const found = await db.many(
+    'select id, name, mime_type, byte_size, created_at from attachments where id = any($1::text[])',
+    [ids]
+  )
+  const byId = new Map(found.map((item) => [item.id, item]))
+  return list.map((row) =>
+    row ? { ...row, attachment: byId.get(row.attachment_id) ?? null } : row
+  )
+}
+
+
+export function createCommandRoutes({ db, logger, sse, config = {} }) {
+  /**
+   * 租约时长（P42）：认领 / 心跳 / 回写 running 都用同一个值，
+   * 否则「续租一次能撑多久」在三个地方各说一套，排查时对不上。
+   */
+  const leaseSec =
+    Number.isInteger(config.commandLeaseSec) && config.commandLeaseSec > 0
+      ? config.commandLeaseSec
+      : 120
+
   async function assertDevice(deviceId) {
     const row = await db.one(`select id from clients where id = $1 and role = 'device'`, [deviceId])
     if (!row) throw new HttpError(400, `unknown device: ${deviceId}`, 'unknown_device')
     return row.id
   }
 
-  /**
-   * 把 `attachment_id` 换成附件元数据。
-   *
-   * 为什么不直接 join：`/commands/pending` 用 `for update skip locked` 认领，
-   * 外连接（`left join`）在 Postgres 里不能配 `for update`（要写 `of c`，容易写错），
-   * 一条朴素的两段查询更不容易出事故，而且附件数量远小于命令行数。
-   */
-  async function withAttachments(rows) {
-    const list = Array.isArray(rows) ? rows : [rows]
-    const ids = [...new Set(list.map((row) => row?.attachment_id).filter(Boolean))]
-    if (ids.length === 0) return list.map((row) => (row ? { ...row, attachment: null } : row))
-    const found = await db.many(
-      'select id, name, mime_type, byte_size, created_at from attachments where id = any($1::text[])',
-      [ids]
-    )
-    const byId = new Map(found.map((item) => [item.id, item]))
-    return list.map((row) =>
-      row ? { ...row, attachment: byId.get(row.attachment_id) ?? null } : row
-    )
+  /** 本模块统一走模块级 `attachMetadata`：租约回收也用它，形状必须一致。 */
+  function withAttachments(rows) {
+    return attachMetadata(db, rows)
   }
 
   function deviceScope(client, source) {
@@ -213,9 +236,11 @@ export function createCommandRoutes({ db, logger, sse }) {
           const ids = picked.rows.map((row) => row.id)
           await connection.query(
             `update commands
-             set status = 'delivered', delivered_at = now()
+             set status = 'delivered', delivered_at = now(),
+                 -- 租约从认领这一刻开始算：bridge 崩在 spawn 之前也能被回收（P42）
+                 lease_expires_at = now() + make_interval(secs => $2::int)
              where id = any($1::text[])`,
-            [ids]
+            [ids, leaseSec]
           )
           return picked.rows.map((row) => ({ ...row, status: 'delivered' }))
         })
@@ -280,7 +305,13 @@ export function createCommandRoutes({ db, logger, sse }) {
              finished_at = case
                              when status in ('pending', 'delivered') then now()
                              else finished_at
-                           end
+                           end,
+             -- 直接取消（还没开跑）就不用再等心跳了；cancelling 保留租约，
+             -- 等 bridge 杀完进程回写 cancelled，或租约过期由 Hub 收尾（P42）。
+             lease_expires_at = case
+                                  when status in ('pending', 'delivered') then null
+                                  else lease_expires_at
+                                end
            where id = $1
            returning *`,
           [params.id]
@@ -330,6 +361,21 @@ export function createCommandRoutes({ db, logger, sse }) {
           throw new HttpError(400, `status must be one of ${[...REPORTABLE].join(', ')}`, 'invalid_field')
         }
         /**
+         * 租约回收（P42）把失联命令置成 failed 之后，原来的 bridge 可能又活过来补报
+         * running（机器休眠醒来 / 网络恢复）。**终态不再接受 running**：
+         * 否则手机上「失败」会被翻回「执行中」，而结果永远不会再回来。
+         * 真正的重试是用户重新下发一条新命令，不是复活旧命令。
+         */
+        if (status === 'running' && FINISHED.has(existing.status)) {
+          logger.info('command update ignored: already finished', {
+            id: params.id,
+            was: existing.status,
+            reported: status
+          })
+          const [ignored] = await withAttachments([existing])
+          return { ok: true, command: toCommand(ignored), ignored: true }
+        }
+        /**
          * bridge 的 pid / sessionId 是「running」时补报的；如果用户已经取消
          * （cancelling），这次补报不能把状态覆盖回 running，否则取消信号就丢了。
          */
@@ -354,17 +400,62 @@ export function createCommandRoutes({ db, logger, sse }) {
              pid            = coalesce($6, pid),
              pid_started_at = coalesce($7::timestamptz, pid_started_at),
              runner         = coalesce($8, runner),
+             -- 租约（P42）：running 时续期，终态清空；否则心跳一断就会被误回收
+             lease_expires_at = case
+                                  when $2 in ('done', 'failed', 'cancelled') then null
+                                  else now() + make_interval(secs => $9::int)
+                                end,
              started_at  = case when $2 = 'running' and started_at is null then now() else started_at end,
              finished_at = case when $2 in ('done', 'failed', 'cancelled') then now() else finished_at end
            where id = $1
            returning *`,
-          [params.id, effectiveStatus, resultText, errorText, sessionId, pid, pidStartedAt, runner]
+          [params.id, effectiveStatus, resultText, errorText, sessionId, pid, pidStartedAt, runner, leaseSec]
         )
 
         logger.info('command updated', { id: params.id, status: effectiveStatus })
         const [item] = await withAttachments([updated])
         sse.broadcast('command.update', toCommand(item))
         return { ok: true, command: toCommand(item) }
+      }
+    },
+
+    {
+      /**
+       * bridge 续租（P42）。语义是「我还在负责这条命令」，所以：
+       *   * 只续 delivered / running / cancelling，**不改状态、不推 SSE**
+       *     —— 每 30 秒一条心跳都广播的话，手机上会被无意义的 command.update 刷屏；
+       *   * 已经结束的命令返回 `finished: true`（迟到的心跳不该报错）；
+       *   * 只认自己设备的命令，跨设备一律 403（与其它写接口一致）。
+       */
+      method: 'POST',
+      pattern: '/api/v1/commands/:id/heartbeat',
+      auth: 'device',
+      async handler({ params, client }) {
+        const existing = await db.one(
+          'select id, device_id, status from commands where id = $1',
+          [params.id]
+        )
+        if (!existing) throw new HttpError(404, 'command not found', 'not_found')
+        if (existing.device_id !== client.id) {
+          throw new HttpError(403, 'command belongs to another device', 'forbidden')
+        }
+        if (FINISHED.has(existing.status)) {
+          return { ok: true, finished: true, status: existing.status }
+        }
+
+        const updated = await db.one(
+          `update commands
+             set lease_expires_at = now() + make_interval(secs => $2::int)
+           where id = $1 and status in ('delivered', 'running', 'cancelling')
+           returning lease_expires_at`,
+          [params.id, leaseSec]
+        )
+        // 心跳与终态回写撞车时这里会拿不到行：结果是「已结束」，不是错误。
+        return {
+          ok: true,
+          finished: !updated,
+          leaseExpiresAt: updated?.lease_expires_at ?? null
+        }
       }
     }
   ]

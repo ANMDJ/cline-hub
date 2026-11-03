@@ -88,7 +88,8 @@ test('PATCH 接收 pid / pidStartedAt / runner 并写进 update 参数', async (
     null,
     4242,
     '2026-11-02T03:00:05.000Z',
-    'cline'
+    'cline',
+    120 // 租约秒数（P42）：认领 / running 都用同一个默认值
   ])
   assert.equal(result.command.pid, 4242)
   assert.equal(result.command.runner, 'cline')
@@ -125,7 +126,7 @@ test('没有进程字段时全部写 null，旧 bridge 仍然兼容', async () =
     body: { status: 'done', resultText: 'ok' },
     client: device
   })
-  assert.deepEqual(calls[1].params, [baseRow.id, 'done', 'ok', null, null, null, null, null])
+  assert.deepEqual(calls[1].params, [baseRow.id, 'done', 'ok', null, null, null, null, null, 120])
 })
 
 test('取消排队中的命令：直接 cancelled，不再等 bridge', async () => {
@@ -200,4 +201,79 @@ test('cancelling 期间 bridge 补报 running（pid / sessionId）不会把状�
 
   assert.equal(calls[1].params[1], 'cancelling')
   assert.equal(calls[1].params[5], 99)
+})
+
+/** 心跳路由的假 db：select 走 existing，update 走 updated。 */
+function heartbeatHarness(existing, updated = null, leaseSec = 60) {
+  const calls = []
+  const db = {
+    async one(sql, params) {
+      calls.push({ sql, params })
+      return String(sql).trimStart().startsWith('select') ? existing : updated
+    }
+  }
+  const routes = createCommandRoutes({
+    db,
+    logger: { info() {}, warn() {}, error() {} },
+    sse: { broadcast() {} },
+    config: { commandLeaseSec: leaseSec }
+  })
+  return {
+    route: routes.find((item) => item.pattern === '/api/v1/commands/:id/heartbeat'),
+    calls
+  }
+}
+
+test('心跳：running 命令续租，返回新的到期时间', async () => {
+  const existing = { ...baseRow, status: 'running' }
+  const expires = new Date('2026-11-02T03:02:00.000Z')
+  const { route, calls } = heartbeatHarness(existing, { lease_expires_at: expires })
+
+  const result = await route.handler({ params: { id: baseRow.id }, client: device })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.finished, false)
+  assert.equal(result.leaseExpiresAt.toISOString(), '2026-11-02T03:02:00.000Z')
+  // 第二个参数是配置里的租约秒数：Hub 与 bridge 用同一份配置说话
+  assert.deepEqual(calls[1].params, [baseRow.id, 60])
+})
+
+test('心跳：已结束的命令不报错，也不改任何东西', async () => {
+  const existing = { ...baseRow, status: 'failed' }
+  const { route, calls } = heartbeatHarness(existing)
+
+  const result = await route.handler({ params: { id: baseRow.id }, client: device })
+
+  assert.equal(result.finished, true)
+  assert.equal(result.status, 'failed')
+  assert.equal(calls.length, 1)
+})
+
+test('心跳：跨设备 403，不存在的命令 404', async () => {
+  const other = heartbeatHarness({ ...baseRow, device_id: 'localtwo', status: 'running' })
+  await assert.rejects(
+    other.route.handler({ params: { id: baseRow.id }, client: device }),
+    (error) => error instanceof HttpError && error.status === 403
+  )
+
+  const missing = heartbeatHarness(null)
+  await assert.rejects(
+    missing.route.handler({ params: { id: 'cmd_none' }, client: device }),
+    (error) => error instanceof HttpError && error.status === 404
+  )
+})
+
+test('租约回收后 bridge 补报 running 被忽略（不复活已结束的命令）', async () => {
+  const existing = { ...baseRow, status: 'failed', error_text: '租约过期' }
+  const { route, calls } = patchHarness(existing, existing)
+
+  const result = await route.handler({
+    params: { id: baseRow.id },
+    body: { status: 'running', pid: 777 },
+    client: device
+  })
+
+  assert.equal(result.ignored, true)
+  assert.equal(result.command.status, 'failed')
+  assert.equal(calls.length, 1) // 只 select，没有 update
 })

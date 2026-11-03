@@ -5,6 +5,7 @@ import { runMigrations } from './migrate.js'
 import { createAuth } from './auth.js'
 import { createApp, createHttpServer, createSseChannel } from './http.js'
 import { createRoutes } from './routes/index.js'
+import { createCommandLease } from './lease.js'
 
 const startedAt = Date.now()
 const logger = createLogger({ file: config.logFile, level: config.logLevel })
@@ -12,6 +13,7 @@ const logger = createLogger({ file: config.logFile, level: config.logLevel })
 let db = null
 let sse = null
 let server = null
+let lease = null
 let shuttingDown = false
 
 function describeDatabase(url) {
@@ -27,6 +29,9 @@ async function shutdown(reason) {
   if (shuttingDown) return
   shuttingDown = true
   logger.info('shutting down', { reason })
+  try {
+    lease?.stop()
+  } catch {}
   try {
     sse?.closeAll()
   } catch {}
@@ -77,6 +82,10 @@ async function main() {
     server.listen(config.port, config.host, resolve)
   })
 
+  // 租约扫描（P42）：放在 listen 之后 —— 迁移已经跑完，`lease_expires_at` 一定存在。
+  lease = createCommandLease({ db, logger, sse, config })
+  lease.start()
+
   logger.info('hub listening', {
     url: `http://${config.host}:${config.port}`,
     db: describeDatabase(config.databaseUrl),
@@ -84,6 +93,7 @@ async function main() {
     autoMigrate: config.autoMigrate,
     rateLimit: `${config.rateLimitPerSec}/s burst ${config.rateLimitBurst}`,
     allowIps: config.allowIps.length,
+    commandLease: `${config.commandLeaseSec}s / sweep ${Math.round(config.commandLeaseSweepMs / 1000)}s`,
     version: config.version
   })
 }

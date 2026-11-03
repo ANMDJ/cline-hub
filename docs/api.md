@@ -63,6 +63,7 @@ SSE 例外：`GET /api/v1/events?token=<token>`（EventSource 不能设置请求
 | GET | `/api/v1/commands/pending` | device | 领取待执行命令（自动置为 `delivered`） |
 | GET | `/api/v1/commands/:id` | any | 命令详情 |
 | POST | `/api/v1/commands/:id/cancel` | app | 取消命令（排队中直接 `cancelled`，执行中先 `cancelling`） |
+| POST | `/api/v1/commands/:id/heartbeat` | device | 续租（P42）：bridge 每 30 秒一次，不改状态、不推 SSE |
 | PATCH | `/api/v1/commands/:id` | device | 回报 `running` / `done` / `failed` / `cancelled` |
 | GET | `/api/v1/events` | any | SSE 实时事件 |
 
@@ -396,6 +397,34 @@ POST /api/v1/commands
 
 - `createdAt` 是**入库时间**（附件落进 Hub 的时刻，不是命令下发时间）。目前只记录、
   不自动清理 —— 保留策略（按年龄清理）还没做，后续会直接按这个字段算。
+
+### 租约与心跳（P42）
+
+命令状态只有 bridge 会写；bridge 硬崩 / 断网 / 机器休眠时，Hub 原来只能靠人工
+`npm run reconcile` 收尾。现在 Hub 给每条**已被认领**的命令记一个租约：
+
+| 时机 | 行为 |
+|---|---|
+| `GET /commands/pending` 认领 | `lease_expires_at = now() + HUB_COMMAND_LEASE_SEC`（默认 120 秒） |
+| `POST /commands/:id/heartbeat` | bridge 每 30 秒续一次；**不改状态、不广播 SSE** |
+| `PATCH` 回写 `running` | 顺带续租（第一次上报就能把租约撑住） |
+| `PATCH` 回写终态 | 清空租约 |
+| 过期（Hub 每 60 秒扫一次） | `delivered` / `running` → `failed`；`cancelling` → `cancelled`，都广播 `command.update` |
+
+```json
+POST /api/v1/commands/cmd_1a2b3c4d5e6f/heartbeat
+{}   // 空 body；成功返回：
+{ "ok": true, "finished": false, "leaseExpiresAt": "2026-11-04T06:40:12.000Z" }
+```
+
+- 只能续**自己设备**的命令：跨设备 `403 forbidden`；命令不存在 `404 not_found`。
+- 已经结束的命令返回 `{ ok: true, finished: true, status }`，不报错
+  （bridge 收尾时的迟到心跳很常见）。
+- 终态命令**不再接受 `running`**：租约回收后旧 bridge 醒来补报 `running` 会被忽略
+  （响应里 `ignored: true`），避免手机上「失败」被翻回「执行中」。
+- 命令对象多一个 `leaseExpiresAt`（只为排查，客户端可以忽略）。
+- 时间可用 `HUB_COMMAND_LEASE_SEC`（默认 120）/ `HUB_COMMAND_LEASE_SWEEP_SEC`（默认 60）调整；
+  bridge 侧心跳间隔是 `commands.leaseHeartbeatMs`（默认 30000 毫秒）。
 
 ## 附件（发送文件 / 图片）
 

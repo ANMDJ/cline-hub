@@ -1488,3 +1488,85 @@ APK 文件名 `cline-console-x.y.z.apk`、`ClineConsoleApp` 类名全部保持�
 `git grep -I 'cloudhub'`（全小写）只剩 ADR-57 里的示例包名 `top.littlewish.cloudhub`；`node site/check-site.mjs` 通过；
 `cd app; flutter analyze` 无告警 + `flutter test` 全绿；`cd server; node --test`、`cd bridge; npm test` 全绿。
 
+
+## 59. 输入区改成微信式：「+」展开图片 / 文件，发送在输入条右侧（2026-11-04）
+
+**决策**：会话详情与下发面板的「发送文件」「发送图片」两个并排大按钮删掉，
+换成同一个组件 `app/lib/src/ui/chat_composer.dart`：
+
+```
+[ 已选附件：缩略图 / 名字 · 大小 · × ]   ← 只在有附件时出现
+[ + ] [ 圆角输入框                ] [发送]  ← 空内容时发送键是灰的
+[  图片 ]   [  文件 ]                      ← 点「+」就地展开，再点一次收起
+```
+
+- `attachment_bar.dart` 只剩两件事：`pickAttachmentForCommand()`（平台/大小/读失败的提示）
+  与 `attachmentSummary()`（`名字 · 大小`），选文件与展示文案各只有一份。
+- 会话详情 `showSendButton: true`；下发面板 `showSendButton: false`（底部已有「下发」）。
+- 点「+」时收起键盘、点回输入框自动收起面板；图片直接给缩略图（`Image.memory`，解码失败退回图标）。
+
+**为什么**：
+
+- 两个大按钮每个页面各占一行，实际使用频率远低于输入框；微信式的「+」把低频动作收进一格，
+  留下屏幕高度给对话（会话详情本来就在抢高度）。
+- 之前两处各写一套 UI，改文案要改两遍、行为还容易漂；现在两处共用一个组件，
+  测试也只需要覆盖一份交互契约。
+- 附件必须能在发送前确认（名字 / 大小 / 缩略图 / 可移除），否则「发错文件」在手机上无法挽回 ——
+  这一点比「按钮好看」重要，所以预览卡片保留。
+
+**边界**：
+
+- 不引 `file_picker` / `image_picker`：原生 `ACTION_OPEN_DOCUMENT` 已经够（ADR-31 / 42 / 52）。
+- 输入框长度上限仍由 Hub 管（prompt 4000 字），App 不额外截断；发送键的禁用只看
+  「有没有文字 / 附件」，不猜 Hub 的校验。
+- 面板只有「图片」「文件」两格：拍照需要 `ACTION_IMAGE_CAPTURE` + 临时 FileProvider，
+  当前没有真实需求，先不做；以后加格子不需要改输入条本身。
+
+**验证**：`cd app; flutter analyze` 无告警；`flutter test` 新增 `test/chat_composer_test.dart` 4 项
+（空内容禁用、`+` 展开 / 选择后收起、附件预览与只发文件、`showSendButton=false`）；
+`attachment_test` 的下发面板用例改成「先点 `+` 再断言图片 / 文件」。
+`session_detail_test` 在 `enterText` 之后补一次 `pump()`：发送键从灰变亮需要一帧。
+
+---
+
+## 60. 命令租约：Hub 只认「还在续租」这一个信号，三层兜底不重叠（2026-11-04）
+
+**决策**：`commands` 加 `lease_expires_at`（migration 010）：
+
+| 时机 | 行为 |
+|---|---|
+| `GET /commands/pending` 认领 | `lease_expires_at = now() + HUB_COMMAND_LEASE_SEC`（默认 120s） |
+| `POST /commands/:id/heartbeat` | bridge 每 30s 续一次；**不改状态、不推 SSE** |
+| `PATCH` 回写 `running` | 顺带续租 |
+| `PATCH` 回写终态 | 清空租约 |
+| Hub 每 60s 扫描 | `delivered` / `running` → `failed`；`cancelling` → `cancelled`，并广播 `command.update` |
+
+终态命令**不再接受 `running`**（返回 `ignored: true`），防止回收后旧 bridge 醒来把「失败」翻回「执行中」。
+
+**为什么**：
+
+- 命令状态只有 bridge 会写。bridge 被硬杀 / 断网 / 机器休眠时，`running` 会永远留着，
+  手机上只能人工 `npm run reconcile` 收尾（外部审计点名的那条，`security-review.md` §5 P42）。
+- 租约是**唯一一个不依赖进程号**的存活信号：bridge 整个消失（换 IP、重装系统、断电）时，
+  Hub 仍然能判断「执行侧没了」。而 `pid` 只能在同一台机器上读（Windows 还会复用 PID，ADR-33）。
+- 心跳单独成一个端点而不是复用 `PATCH running`：PATCH 会写 `started_at`、推 SSE、刷日志，
+  每 30 秒来一次只会把手机上的命令列表无意义地重绘。心跳只写一列，是最小副作用。
+- 排队中的命令也要续租：Hub 一次最多发 `batchSize` 条，槽位可能只放得下 1 条；
+  只靠认领时那一份租约，队列里的命令还没轮到就会被回收。
+
+**边界**：
+
+- **不替代** bridge 的 `reconcile()`（每 60s）：那一层看得到本机进程，能区分「还活着」与
+  「真的没了」，仍然是第一道；租约是「bridge 整体失联」的兜底；`npm run reconcile` 留作人工排障。
+- `pending` 没有租约（还没人认领，不存在失联）；`cancelling` 过期按**取消**收尾，
+  因为用户已经表达过「不要了」，显示失败会误导。
+- 轮询语义不变：Hub 没有主动下发通道，bridge 仍然每 `pollIntervalMs`（5s）拉一次；
+  心跳只在「本机还拿着命令」时发（跑着的 + 占槽位的 + 排队的），空闲零请求。
+- 时间常量两处：Hub `HUB_COMMAND_LEASE_SEC` / `HUB_COMMAND_LEASE_SWEEP_SEC`，
+  bridge `commands.leaseHeartbeatMs`。默认 120 / 60 / 30 秒，满足「bridge 硬崩后 3 分钟内自动收尾」。
+
+**验证**：`cd server; node --test` **65 通过**（新增 9 条：续租参数 / 心跳四态 / 终态不接受 running /
+回收的 SQL 映射与广播形状 / 附件保留 / 并发扫描跳过）；`cd bridge; node --test` **61 通过**
+（新增 2 条：命令在跑时定期续租、空闲零心跳）。真实 Postgres 上的迁移与回收在部署时验证
+（`docs/status.md` §0 P47）。
+

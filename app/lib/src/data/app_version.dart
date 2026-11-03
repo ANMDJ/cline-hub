@@ -3,8 +3,8 @@
 /// 为什么不引 `package_info_plus`：这个客户端刻意只保留 http / shared_preferences
 /// 两个依赖，版本号一年也就改几次，手工同步比多一个插件更划算。
 /// 发版脚本 `scripts/release-apk.mjs` 会读 `pubspec.yaml` 并校验这里是否一致。
-const String kAppVersion = '1.2.0';
-const int kAppBuild = 12;
+const String kAppVersion = '1.3.0';
+const int kAppBuild = 13;
 
 class ChangelogEntry {
   const ChangelogEntry(this.version, this.date, this.items);
@@ -15,6 +15,11 @@ class ChangelogEntry {
 }
 
 const List<ChangelogEntry> kChangelog = <ChangelogEntry>[
+  ChangelogEntry('1.3.0', '2026-11-04', <String>[
+    '改版：发消息 / 发文件改成微信式输入条——左侧「+」展开「图片 / 文件」，右侧发送，已选附件显示缩略图与名字 / 大小',
+    '优化：发送键在没内容时是灰的，不会误发空命令；点输入框会自动收起附件面板',
+    '新增：电脑突然关机 / 断网时，命令会在约 3 分钟内自动收成「失败」并写明原因，不再永远停在「执行中」（需要 Hub 同步升级）',
+  ]),
   ChangelogEntry('1.2.0', '2026-11-04', <String>[
     '更名：App 标题、抽屉、引导页、设置页版本行与通知统一显示 ClineHub（原 Cline Console）',
     '不变：包名与签名不变，可直接覆盖安装；Hub 地址、token、设置与历史数据都保留',

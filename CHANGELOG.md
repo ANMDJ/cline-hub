@@ -5,6 +5,25 @@
 > [`docs/interruptions.md`](docs/interruptions.md)，单条设计决策在
 > [`docs/decisions.md`](docs/decisions.md)。日期均为 +08。
 
+## 2026-11-04 · App 1.3.0+13 / Hub 0.1.0（P42 / P46 / P47）
+
+### 输入区改版（P46，ADR-59）
+
+- **发消息 / 发文件改成微信式输入条**：左侧「+」就地展开「图片 / 文件」，右侧发送键；
+  已选附件在输入框上方显示缩略图与「名字 · 大小」，可一键移除。
+- 空内容时发送键是灰的（不会误发空命令）；点回输入框自动收起附件面板。
+- 会话详情与下发面板共用同一个组件 `ui/chat_composer.dart`，两处行为一致。
+
+### 命令租约（P42 / P47，ADR-60）
+
+- **命令不再永远停在「执行中」**：bridge 认领命令后每 30 秒续租，Hub 每 60 秒扫一次；
+  执行侧失联（bridge 崩溃 / 断网 / 关机）超过约 2 分钟，命令自动收成
+  `failed`（`cancelling` 收成 `cancelled`），`errorText` 写明「执行它的电脑没有心跳」。
+- 新增 `POST /api/v1/commands/:id/heartbeat`（device）与 `commands.lease_expires_at`
+  （migration 010）；`HUB_COMMAND_LEASE_SEC` / `HUB_COMMAND_LEASE_SWEEP_SEC` 可调。
+- 终态命令不再接受 `running`：回收之后旧 bridge 醒来补报也不会把「失败」翻回「执行中」。
+- `npm run reconcile` 保留为人工兜底（它看得到本机进程，仍是第一道）。
+
 ## 2026-11-04 · App 1.2.0+12 / Hub 0.1.0
 
 ### 更名

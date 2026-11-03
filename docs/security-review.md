@@ -151,8 +151,13 @@ cline --version   # 3.0.74  > 3.0.30
 |---|---|---|---|---|
 | **P40** | `net.js` 取 XFF **最后一段**；`deploy/Caddyfile` 里 hub 的两个站点（443 / :8443）显式 `header_up X-Forwarded-For {remote_host}`；补 `server/test/net.test.mjs`（首段伪造 / 多段 / 无 XFF / 非回环直连 4 例） | ~30 min | 唯一「拓扑一变即失守」的线路，改动极小 | 伪造 `X-Forwarded-For` 不改变 Hub 看到的 IP；`HUB_ALLOW_IPS` 与限流按真实 IP 生效 |
 | **P41** | SSE 短期 ticket：`POST /api/v1/sse-ticket`（60s、一次性、库内存 hash）→ `GET /api/v1/events?ticket=`；App 改用它；`?token=` 留 1 个版本后停用 | 1–2 h（含 App 发版） | 唯一真实的「凭据落日志」面 | access log 里不再出现 `clh_` 前缀；旧 APK 仍能用 token 连（过渡期） |
-| **P42** | 命令租约：`migrations/010_command_lease.sql`（`lease_expires_at`）+ 每 60s 扫描过期 → `failed: orphaned`；`npm run reconcile` 保留为手动兜底 | 2–3 h（含迁移 + 部署） | 它说得对，且你踩过「命令卡 running」 | bridge 硬崩后 ≤2× 扫描周期自动转 `failed: orphaned`，不需要人工 |
+| **P42** | 命令租约：`migrations/010_command_lease.sql`（`lease_expires_at`）+ 每 60s 扫描过期 → `failed: orphaned`；`npm run reconcile` 保留为手动兜底 **（✅ 2026-11-04 已实施，见 ADR-60）** | 2–3 h（含迁移 + 部署） | 它说得对，且你踩过「命令卡 running」 | bridge 硬崩后 ≤2× 扫描周期自动转 `failed: orphaned`，不需要人工 |
 | **P43** | SSE 纵深防御：`HUB_SSE_ALLOWED_ORIGINS`（默认空 = 只拒绝「带 Origin 且跨源」的请求，无 Origin 的客户端照常）+ 单 token 连接上限（默认 8，超限踢最旧）+ 空闲超时（默认 10 min 无写入断开） | ~1 h | 成本低，先把「以后接浏览器端」的坑填了 | 带假 Origin 的 SSE 被 403；连 9 条时最旧一条被踢；`health` 里能看到连接数 |
+
+> **2026-11-04 更新（P42 已实施）**：`migrations/010_command_lease.sql` + `server/src/lease.js`
+> （每 60s 扫过期租约）+ `POST /api/v1/commands/:id/heartbeat`（bridge 每 30s 续租）
+> + 终态不接受 `running`；线上已部署（06:31），过期自检行被自动扫成 `failed`。
+> **P40 / P41 / P43 仍未开工**。细节见 ADR-60 与 `docs/status.md` §0 P47。
 
 **明确不做（连同理由）**
 

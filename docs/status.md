@@ -40,16 +40,19 @@
 | 28 | — | **安全审计复核**：把手机发来的 `cline-hub 安全审计与加固建议.docx` 逐条对代码核了一遍（说对的 7 条 / 说错或夸大 4 条 / 漏掉 4 条 / 实测 4 项），结论与采纳计划写进 [`security-review.md`](security-review.md) | ✅ 文档完成（ADR-55；**未改任何行为代码**） |
 | 29 | P40 | `net.js` 取 `X-Forwarded-For` **最后一段** + `deploy/Caddyfile` 显式 `header_up`，补 `server/test/net.test.mjs` | ⏳ 未开工（等用户拍板；复核文档 §5） |
 | 30 | P41 | SSE 短期 ticket（`POST /api/v1/sse-ticket`）替代 URL 里的 token，App 跟着改 | ⏳ 未开工（含 App 发版） |
-| 31 | P42 | 命令租约自动回收（`migrations/010` + 每 60s 扫描 → `failed: orphaned`） | ⏳ 未开工（`reconcile` 保留为手动兜底） |
+| 31 | P42 | 命令租约自动回收（`migrations/010` + 每 60s 扫描 → `failed: orphaned`） | ✅ 已实施（见 P47；`reconcile` 保留为手动兜底） |
 | 32 | P43 | SSE 纵深防御：Origin 白名单 + 单 token 连接上限 + 空闲超时 | ⏳ 未开工 |
 | 33 | P44 | **App 实时看 DeepSeek 余额**：Hub 新增 `GET /api/v1/deepseek/balance`（Key 只读 `server/.env` 的 `DEEPSEEK_API_KEY`；60 秒缓存、并发复用、失败退旧值并标 `stale`）；App 右侧抽屉顶部「DeepSeek 余额」卡片（总额 / 充值 / 赠金 / 更新时间 + 可用标记），启动、回前台、打开菜单、命令走到终态时自动刷新，右上角可强制刷新 | ✅ **已上线（2026-11-03 19:47）**：服务器 `.env` 写入 `DEEPSEEK_API_KEY` + 镜像重建（备份 `20261103-194741`，23 条路由）；App `1.1.9+11` 已发版（ADR-56） |
 | 34 | P45 | **品牌统一为 ClineHub（A 层）+ App 1.2.0+12 发版**：展示文案全部改成 ClineHub（ADR-57 / ADR-58），包名 / applicationId / 库名 / 目录 / 环境变量 / APK 文件名一律不动；版本号 1.1.9+11 → **1.2.0+12**，落地页六处版本引用同步 | ✅ **已上线（2026-11-04 04:30）**：提交 `63488a9`；APK 55,601,132 B / sha256 `fb543395…8901` / `versionCode=12` / `aapt2` label `ClineHub`，已发 `/app/cline-console-1.2.0.apk` + `latest.json`；站点已更新（IP 站 200 / 19,392 B） |
+| 35 | P46 | **微信式输入条**：新建 `ui/chat_composer.dart`（左侧「+」就地展开「图片 / 文件」、圆角输入框、右侧发送；附件缩略图 / 名字 · 大小可移除；空内容发送键禁用）；会话详情与下发面板共用，`attachment_bar.dart` 只留选文件与文案 | ✅ 代码 + 测试完成（`flutter test` 101 通过 / 5 跳过；ADR-59；随 1.3.0+13 发版） |
+| 36 | P47 | **命令租约（P42 落地）**：migration 010 `lease_expires_at` + `POST /api/v1/commands/:id/heartbeat` + Hub 每 60s 扫过期（delivered/running → failed，cancelling → cancelled，广播 `command.update`）+ 终态不接受 `running`；bridge 每 30s 续租（含排队中的命令） | ✅ **Hub 已上线（2026-11-04 06:31）**：备份 `server.bak-20261104-063124`、`routes: 24`、线上心跳实测 200、过期自检行 22:33:02 被扫成 `failed`；bridge 已排空闲重启（supervisor pid 6376）。验证 server **65** / bridge **61** |
 
 
 
 
-已完成并上线的：P0 / P1 / P3–P26 / P35–P45
-（P3、P9 已部署；P5、P10、P15、P17、P8、P22–P26、P35、P38 已发布到 App；P7/P14 已在 12:51 重启后生效）。
+已完成并上线的：P0 / P1 / P3–P26 / P35–P45 / P46 / P47
+（P3、P9 已部署；P5、P10、P15、P17、P8、P22–P26、P35、P38、P46 已发布到 App；
+P7/P14 已重启生效；P47 的 Hub 侧已上线，bridge 侧等空闲重启）。
 **P39 已随 `1.1.8+10` 发版**（浏览入口收进右侧抽屉 + 设置页去重，ADR-54；
 `flutter analyze` 无告警、`flutter test` **88 通过 / 5 跳过**；APK 55,568,256 B /
 sha256 `a17a2ca0…a314`，线上 HEAD 200、`GET /api/v1/app/latest` 返回 1.1.8 / build 10）。
@@ -365,12 +368,12 @@ curl.exe -sS -N -m 27 "https://hub.littlewish.top:8443/api/v1/events?token=$tok"
   `cd server; node --test` 36 项、`cd app; flutter analyze` 无告警、
   `flutter test` 64 项通过（新增 `workspaceLabel` 2 项 + 设备过滤 1 项 + `ElapsedText` 3 项）。
 
-## 1. 基线快照（2026-11-02 09:15 实测；14:08 更新发布项；2026-11-03 复核 Hub / SSE / APK）
+## 1. 基线快照（2026-11-02 09:15 实测；14:08 更新发布项；2026-11-03 复核 Hub / SSE / APK；2026-11-04 06:40 复核 P42 / P46 部署与 1.3.0 发版）
 | 项 | 实测 |
 |---|---|
 | 分支 / HEAD | `master`（P7 / P14 / P8 之后；当前哈希看 `git log -1`） |
 | Hub | `{"ok":true,...,"db":{"ok":true,"latencyMs":1},"sseClients":1}`（2026-11-02 14:19 重部署后实测） |
-| Hub 部署 | 2026-11-03 12:25 重建（迁移 `009_attachments` 已应用，`routes: 22`；备份 `server.bak-20261103-122537`）；前一次是 2026-11-02 14:19（`migrations up to date {"total":8}`） |
+| Hub 部署 | 2026-11-04 06:31 重建（迁移 `010_command_lease` 已应用，`routes: 24`，`command lease 120s / sweep 60s`；备份 `server.bak-20261104-063124`）；上一次是 2026-11-03 12:25（`009_attachments`，`routes: 22`） |
 | 设备列表 | 已上线：app / device token `GET /api/v1/devices` 均返回 1 台（`localone` / LocalOne-Windows / 109 会话 / 53 命令） |
 | 读接口隔离 | 已上线：`device` 跨设备读 → `403 device_mismatch`（2026-11-02 13:29 实测） |
 | bridge | `{"ok":true,"service":"cline-bridge"}`（手动启动，未开机自启） |
@@ -379,7 +382,7 @@ curl.exe -sS -N -m 27 "https://hub.littlewish.top:8443/api/v1/events?token=$tok"
 | Flutter / Dart | `3.47.5` / `13.4` |
 | Android 工具链 | SDK `%LOCALAPPDATA%\Android\Sdk`（platforms 33–37 / build-tools 30–37）；JDK 17 与 21 在 `<JDK 目录>\`；`GRADLE_USER_HOME=%USERPROFILE%\.gradle` 已缓存 gradle-9.3.1。**`JAVA_HOME` 为空**，默认 PATH 上是 zulu-8，打包前必须设成 JDK 17 |
 | 已跟踪会话 | 109 个（`GET /api/v1/devices` 的 `sessionCount`，2026-11-02 14:19） |
-| App 发布版本 | `1.1.9+11`（`GET /api/v1/app/latest` 实测；APK 55,601,136 B，sha256 `17f49c12…a13c`；2026-11-03 19:52 发布） |
+| App 发布版本 | `1.3.0+13`（`GET /api/v1/app/latest` 实测；APK 55,601,168 B，sha256 `c3cca5cb…e179`；2026-11-04 06:37 发布） |
 
 ## 2. 里程碑与最近提交
 
@@ -557,6 +560,11 @@ powershell -NoProfile -File deploy/windows/verify-hub.ps1
 
 | 2026-11-03 | **P44 上线 + App 1.1.9+11 发版**：服务器 `/srv/cline-hub/server/.env` 写入 `DEEPSEEK_API_KEY`（`600`，Key 不进仓库 / 不进 APK / 不进日志）；上传 `src/env.js`、`src/routes/index.js`、新增 `src/routes/deepseek.js`（备份后缀 `20261103-194741`）→ `docker compose build` + `up -d --force-recreate hub`（23 条路由，容器内 `printenv DEEPSEEK_API_KEY` 有值，容器与宿主机 `deepseek.js` sha256 一致）。线上实测：`GET /api/v1/deepseek/balance` → `configured:true` / `CNY 14.37` / `isAvailable:true`（首次 196ms；60 秒内第二次 `cached:true`；`?refresh=1` 84ms 重新打上游；响应体不含任何 token）。App：`pubspec.yaml` / `app_version.dart` 1.1.8+10 → **1.1.9+11**（`kChangelog` 补 1.1.9 三条），`JAVA_HOME=<JDK 17>` 后台构建（`assembleRelease` 127.2s）→ `aapt2` 核对 `versionCode=11` / `versionName=1.1.9`；`release-apk.mjs --skip-build` 出清单（sha256 `17f49c12…a13c`，55,601,136 B）；上传 APK 到 `/var/www/cline-hub/app/cline-console-1.1.9.apk`（`caddy:caddy 644`）、清单到 `/srv/cline-hub/releases/latest.json`（4 条 notes，Hub 现读不用重启）；落地页 `site/index.html` 六处版本引用改 1.1.9 + M3 里程碑补「DeepSeek 余额已上线」（`node site/check-site.mjs` 通过、无 BOM）并 install 到 `/var/www/cline-hub/index.html`。线上验证：`GET /api/v1/app/latest` → 1.1.9 / 11 / sha 一致；`HEAD /app/cline-console-1.1.9.apk` → 200 / `application/vnd.android.package-archive` / 55,601,136 B；`http://82.157.153.22/` 显示 1.1.9 ×9、无 1.1.8 残留。测试基线：`cd server; node --test` **56 通过**、`cd app; flutter analyze` 无告警、`flutter test` **97 通过 / 5 跳过**。剩余：手机装 1.1.9 后确认抽屉卡片显示 ¥14.37 |
 | 2026-11-04 | **品牌统一为 ClineHub（A 层）+ App 1.2.0+12 发版**：提交 `63488a9`（34 个文件，改动全是展示字符串）→ 推送 `origin/master`（`ssh.github.com:443`）。站点：`site/{index.html,styles.css,app.js}` `scp` 到 `/tmp` 后 `install -o caddy -g caddy` 到 `/var/www/cline-hub/`（三个文件 md5 与本机一致；`http://82.157.153.22/` 200 / 19,392 B，title 已是 ClineHub；`https://hub.littlewish.top:8443/` 仍是 404，站点只在 IP 站，符合预期）。APK：`JAVA_HOME=D:\Program Files\Java\jdk-17` 后台 `flutter build apk --release --build-name=1.2.0 --build-number=12`（`assembleRelease` 158.3s）→ `aapt2 dump badging` 核对 `versionCode=12` / `versionName=1.2.0` / `application-label=ClineHub`；`release-apk.mjs --skip-build` 出清单（sha256 `fb543395…8901` / 55,601,132 B）；上传到 `/var/www/cline-hub/app/cline-console-1.2.0.apk`（`caddy:caddy 644`，md5 `a0e4e7ab…7738` 与本机一致）与 `/srv/cline-hub/releases/latest.json`（3 条 notes，Hub 现读不重启）。线上验证：`GET /api/v1/app/latest` → 1.2.0 / 12 / sha 一致；`HEAD /app/cline-console-1.2.0.apk` → 200 / `application/vnd.android.package-archive` / 55,601,132 B；Hub health 200（`db 0ms`）；`GET /deepseek/balance` 仍 `configured:true`（CNY 10.85，回归通过）；`deploy/windows/verify-hub.ps1` **failed=0 / warnings=0 / RESULT OK**。**顺手修了一处真回归**：`app/test/app_update_test.dart` 把「更高版本」硬编码成 `1.2.0`，版本号升到 1.2.0 后断言变 false → 改成按 `kAppVersion` 主版本 +1 推导，发版不再自撞。测试基线：`cd server; node --test` **56 通过**、`cd bridge; npm test` **59 通过**、`flutter analyze` 无告警、`flutter test` **97 通过 / 5 跳过**、`node site/check-site.mjs` ✓。Hub / bridge 无行为代码改动，未重建镜像、未重启 bridge。剩余：手机装 1.2.0 后确认桌面图标名与通知显示 ClineHub |
+| 2026-11-04 | **P46 微信式输入条**：新增 `app/lib/src/ui/chat_composer.dart`（左侧「+」就地展开「图片 / 文件」、圆角输入框、右侧发送；已选附件显示缩略图 / 名字 · 大小并可移除；空内容发送键禁用；点输入框自动收起面板）；会话详情 `_ComposerBar` 与下发面板共用，`attachment_bar.dart` 删掉 `AttachmentBar`，只留 `pickAttachmentForCommand()` / `attachmentSummary()`；下发面板用 `showSendButton:false`（仍由底部「下发」提交）。验证：`flutter analyze` 无告警、`flutter test` **101 通过 / 5 跳过**（新增 `test/chat_composer_test.dart` 4 项；`attachment_test` 改成先点「+」再断言图片 / 文件；`session_detail_test` 在 `enterText` 后补一次 `pump()`），ADR-59 |
+| 2026-11-04 | **P47 命令租约（P42 落地）+ Hub 部署**：`migrations/010_command_lease.sql`（`commands.lease_expires_at` + 活状态部分索引）；新增 `server/src/lease.js`（每 60s `for update skip locked` 选过期行 → delivered/running → failed、cancelling → cancelled，清空租约并广播**带附件**的 `command.update`；启动先扫一次 + `timer.unref()`）；新增 `POST /api/v1/commands/:id/heartbeat`（device：只续租、不改状态、不推 SSE；已结束返回 `finished:true`；跨设备 403）；认领 `pending` 写租约、`PATCH running` 续租、终态清空；**终态不再接受 `running`**（`ignored:true`，防回收后旧 bridge 复活）；`HUB_COMMAND_LEASE_SEC` / `HUB_COMMAND_LEASE_SWEEP_SEC`（默认 120 / 60）。bridge 每 30s 调心跳（`commands.leaseHeartbeatMs`，覆盖跑着 / 占槽位 / 排队的命令，空闲零请求）。部署：`scp` → 备份 `server.bak-20261104-063124` → `docker compose build` → `run --rm hub node src/migrate.js`（`migration applied 010_command_lease.sql`）→ `up -d --force-recreate hub`（**`routes: 24`**、`command lease sweeper started {"everySec":60}`）。线上实测：`POST /commands/cmd_31d24a702889/heartbeat` → `{"ok":true,"finished":false,"leaseExpiresAt":"2026-11-03T22:34:26.152Z"}`；插入一条 `lease_expires_at = now() - 1min` 的 running 自检行 → 22:33:02 被扫成 `failed`（`error_text` 为租约说明、`finished_at` 写入），随后删除自检行。验证：`cd server; node --test` **65 通过**（新增 9）、`cd bridge; node --test` **61 通过**（新增 2）。**bridge 仍是旧代码**，要在两条在跑的命令结束后 `npm run restart:idle` 排空闲重启（旧命令 `lease_expires_at` 为 NULL 不参与回收，不会误杀），ADR-60 |
+| 2026-11-04 | **App 1.3.0+13 发版 + 站点**：`pubspec.yaml` / `app_version.dart` 1.2.0+12 → **1.3.0+13**（`kChangelog` 补 1.3.0 三条）；`JAVA_HOME=D:\Program Files\Java\jdk-17` + `ANDROID_HOME=D:\android\sdk` 后台构建（`assembleRelease` 16.7s，命中缓存）→ `aapt2` 核对 `versionCode=13` / `versionName=1.3.0` / label `ClineHub`；`release-apk.mjs --skip-build` 出清单（sha256 `c3cca5cb…e179` / 55,601,168 B / 3 条 notes）；上传 `/var/www/cline-hub/app/cline-console-1.3.0.apk`（`caddy:caddy 644`）与 `/srv/cline-hub/releases/latest.json`。线上验证：`GET /api/v1/app/latest` → 1.3.0 / 13 / sha 一致；`HEAD /app/cline-console-1.3.0.apk` → 200 / `application/vnd.android.package-archive` / 55,601,168 B；`http://82.157.153.22/` 200、`1.3.0` ×9、`1.2.0` ×0、`ClineHub` ×5（`node site/check-site.mjs` 通过）。bridge 已用 `npm run restart:idle` 排空闲重启（supervisor pid 6376，见 `docs/interruptions.md`） |
+
+
 
 
 

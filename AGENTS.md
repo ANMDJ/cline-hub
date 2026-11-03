@@ -84,7 +84,7 @@ cd server; npm run create-device -- --id phone --role app --name Pixel
 cd server; npm run smoke                # 端到端冒烟
 
 # app（Flutter）
-cd app; flutter pub get; flutter test   # 88 项通过（5 项真机用例跳过）
+cd app; flutter pub get; flutter test   # 101 项通过（5 项真机用例跳过）
 cd app; flutter run -d chrome           # 桌面预览（Web 没有 SSE，降级为轮询）
 cd app; flutter build apk --release     # → build/app/outputs/flutter-apk/
 

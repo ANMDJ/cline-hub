@@ -9,6 +9,7 @@ import '../models/models.dart';
 import '../state/hub_store.dart';
 import '../util/format.dart';
 import 'attachment_bar.dart';
+import 'chat_composer.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
@@ -616,7 +617,7 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
               ),
             ),
           ),
-          _Composer(
+          _ComposerBar(
             controller: _composer,
             sending: _sending,
             picking: _picking,
@@ -1200,9 +1201,12 @@ class _CommandBubbleState extends State<_CommandBubble> {
   }
 }
 
-/// 底部输入框：「继续对话」→ 一条 act 命令 → bridge 在电脑上新建一个 cline 会话。
-class _Composer extends StatelessWidget {
-  const _Composer({
+/// 底部输入区：PLAN/ACT + 微信式输入条（P46）。
+///
+/// 「继续对话」= 一条命令 → bridge 在电脑上新建 / 接续 Cline 会话；
+/// 附件走输入条左侧的「+」，不再单独占一行按钮。
+class _ComposerBar extends StatelessWidget {
+  const _ComposerBar({
     required this.controller,
     required this.sending,
     required this.picking,
@@ -1234,87 +1238,31 @@ class _Composer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      top: false,
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-        decoration: const BoxDecoration(
-          color: kBgSoft,
-          border: Border(top: BorderSide(color: kLine)),
-        ),
+    return Container(
+      decoration: const BoxDecoration(
+        color: kBgSoft,
+        border: Border(top: BorderSide(color: kLine)),
+      ),
+      child: SafeArea(
+        top: false,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _ModeBar(mode: mode, onChanged: onModeChanged),
-            const SizedBox(height: 6),
-            AttachmentBar(
-              picked: attachment,
-              busy: picking || sending,
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+              child: _ModeBar(mode: mode, onChanged: onModeChanged),
+            ),
+            ChatComposer(
+              controller: controller,
+              sending: sending,
+              picking: picking,
+              attachment: attachment,
               onPickFile: onPickFile,
               onPickImage: onPickImage,
-              onClear: onClearAttachment,
-              hint: attachment == null
-                  ? null
-                  : '输入框里写要对这个文件做什么；留空就只让它读一遍并总结。',
-            ),
-            const SizedBox(height: 6),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: controller,
-                    minLines: 1,
-                    maxLines: 4,
-                    textInputAction: TextInputAction.send,
-                    onSubmitted: (_) => onSend(),
-                    style: const TextStyle(fontSize: 13.5, height: 1.4),
-                    decoration: InputDecoration(
-                      hintText: '继续对话（会新建 Cline 会话）…',
-                      hintStyle: const TextStyle(fontSize: 13, color: kMuted),
-                      filled: true,
-                      fillColor: kPanel,
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(color: kLine),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(color: kLine),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(color: kAccent),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                IconButton.filled(
-                  onPressed: sending ? null : onSend,
-                  style: IconButton.styleFrom(
-                    backgroundColor: kAccent,
-                    foregroundColor: kBg,
-                    disabledBackgroundColor: kLine,
-                    minimumSize: const Size(42, 42),
-                  ),
-                  icon: sending
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: kBg,
-                          ),
-                        )
-                      : const Icon(Icons.send_rounded, size: 18),
-                ),
-              ],
+              onClearAttachment: onClearAttachment,
+              onSend: onSend,
+              hintText: '继续对话（会新建 Cline 会话）…',
+              helper: '输入框里写要对这个文件做什么；留空就只让它读一遍并总结。',
             ),
           ],
         ),

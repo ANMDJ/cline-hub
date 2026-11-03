@@ -18,7 +18,8 @@ app/
 │     ├─ util/format.dart           相对时间、时长
 │     └─ ui/                        gate / setup / home_shell / 三个 Tab / 详情 / 工作区 / 设置
 │                                   （home_drawer：右侧划出菜单，设备列表 + 设置入口；
-│                                    attachment_bar：「发送文件 / 发送图片」+ 已选附件卡片）
+│                                    chat_composer：微信式输入条（「+」展开图片 / 文件 + 发送键）；
+│                                    attachment_bar：选文件 + 「名字 · 大小」文案）
 │                                   （详情页：右上角「概览」弹层 + 顶部「会话开头」+ 回到最新）
 │                                   （session_tile 是列表与工作区页共用的卡片）
 └─ test/                            fake_api + 模型、状态层、页面测试
@@ -31,7 +32,7 @@ cd app
 flutter pub get
 flutter run -d android            # 真机 / 模拟器
 flutter run -d chrome             # 桌面预览（Web 下没有 SSE，见下文）
-flutter test                      # 97 项通过（5 项真机用例跳过；含通知去重 / 同任务合并 / 回前台补发 / 保活 / 附件上传 / 右侧菜单 / DeepSeek 余额）
+flutter test                      # 101 项通过（5 项真机用例跳过；含通知去重 / 同任务合并 / 回前台补发 / 保活 / 附件上传 / 微信式输入条 / 右侧菜单 / DeepSeek 余额）
 flutter build apk --release       # 产物 build/app/outputs/flutter-apk/
 
 # 可选：拿真实 Hub 跑一遍客户端（不设变量则这组自动跳过）
@@ -220,13 +221,14 @@ SSE 四种事件都用上了：`session`（去抖 900ms 后刷新列表）、`ho
   （即使只有一台，组头也写明），因为不同机器的同名项目是两组。
 
 
-## 发送文件 / 图片 + 右侧菜单（1.2.0 起）
+## 发送文件 / 图片 + 右侧菜单（1.2.0 起，输入区 1.3.0 改版）
 
 | 能力 | 位置 | 说明 |
 |---|---|---|
 | 右侧菜单 | `ui/home_drawer.dart` + `ui/home_shell.dart` | 顶栏只留连接状态 + 菜单按钮；抽屉分三段：**浏览**（「按工作区浏览」+ ≥2 台时的设备 chip）/ **电脑**（在线 / 会话数 / 待执行 / 执行中 / 离线时多久没上报，点一台设为默认）/ **操作**（刷新数据、设置）。设置页不再重复放设备列表（P39） |
-| 发送文件 / 发送图片 | `ui/attachment_bar.dart` | 下发面板与会话输入框各有一组按钮；选中后显示「文件名 · 大小」卡片，可一键移除 |
-| 追加指令 | 原来的输入框 | 输入框里的文字就是「要对这个文件做什么」；**可以留空**，此时 bridge 补一句「先读这个文件，简要说明内容，先不要改文件」 |
+| 输入条 | `ui/chat_composer.dart` | 微信式：左侧「+」展开「图片 / 文件」，右侧发送键（空内容时灰）；已选附件显示缩略图与「名字 · 大小」，可移除。会话详情与下发面板共用（P46 / ADR-59） |
+| 发送文件 / 发送图片 | `ui/attachment_bar.dart` | 只剩「怎么选文件」（`pickAttachmentForCommand`）与「名字 · 大小」文案；选完自动收起面板 |
+| 追加指令 | 输入条里的文字 | 输入框里的文字就是「要对这个文件做什么」；**可以留空**，此时 bridge 补一句「先读这个文件，简要说明内容，先不要改文件」 |
 | 上传 | `data/hub_api.dart` 的 `uploadAttachment()` | `POST /api/v1/attachments`，base64 JSON，上限 `kMaxAttachmentBytes` = 8 MB（与 Hub 默认值一致）；上传超时单独放宽到 90 秒 |
 | 选择器 | `data/file_picker.dart` + `MainActivity.pickFile()` | `ACTION_OPEN_DOCUMENT`（图片走 `image/*`），不需要存储权限；读成字节数组回给 Dart，超过上限直接 `too_large` |
 | 命令展示 | `ui/commands_page.dart` | 命令卡片 / 详情多一行「附件 文件名 · 大小」，内容不落 App |

@@ -43,6 +43,8 @@ curl http://127.0.0.1:3100/api/v1/health
 | `HUB_RATE_LIMIT_PER_SEC` | | `5` | 每 IP 令牌桶恢复速率（请求/秒） |
 | `HUB_RATE_LIMIT_BURST` | | `120` | 每 IP 瞬时突发上限，超过返回 `429` + `retry-after` |
 | `HUB_ALLOW_IPS` | | 空 | 逗号分隔的 IP / CIDR 白名单；空 = 不限 IP，本机回环永远放行 |
+| `HUB_COMMAND_LEASE_SEC` | | `120` | 命令租约秒数：bridge 认领后必须在这个时间内续租（P42），过期自动收成 `failed: orphaned` |
+| `HUB_COMMAND_LEASE_SWEEP_SEC` | | `60` | 过期租约扫描间隔（秒）；bridge 硬崩后最迟约 3 分钟自动收尾 |
 | `DEEPSEEK_API_KEY` | | 空 | App「DeepSeek 余额」卡片用。Key 只在 Hub 上，留空时接口返回 `configured:false` |
 | `DEEPSEEK_BASE_URL` | | `https://api.deepseek.com` | 上游地址（一般不用改） |
 | `DEEPSEEK_BALANCE_TTL_SEC` | | `60` | 余额短缓存秒数：窗口内重复请求不重复打上游 |

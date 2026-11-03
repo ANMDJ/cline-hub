@@ -50,7 +50,7 @@ export function createRoutes({ db, logger, sse, config, startedAt }) {
     ...createSessionRoutes({ db, logger, sse }),
     ...createHookRoutes({ db, logger, sse }),
     ...createAttachmentRoutes({ db, logger, config }),
-    ...createCommandRoutes({ db, logger, sse }),
+    ...createCommandRoutes({ db, logger, sse, config }),
     ...createDeepSeekRoutes({ logger, config })
   ]
 }

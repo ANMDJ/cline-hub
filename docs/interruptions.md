@@ -187,3 +187,19 @@
   附件保留策略按用户要求暂不做，只记录 `created_at`（入库时间）。
 
 
+
+### 2026-11-04 06:40 排队重启 bridge（P47 租约心跳上线）
+
+- **为什么杀**：让新的 `command-worker.heartbeat()` 生效 —— Hub 侧租约（P42 / P47）已经在
+  06:31 上线，每 60 秒扫一次过期租约；旧 bridge 不发心跳，虽然「认领前就存在的命令」
+  `lease_expires_at` 为 NULL 不参与回收，但新命令需要 bridge 续租才安全。
+- **怎么杀的**：`cd bridge; npm run restart:idle -- --reason "P47 租约心跳上线（bridge 30s 续租）" --grace 15000`
+  —— **不是立刻杀**：supervisor（pid 6376）等所有执行中的命令结束后才动手，日志
+  `bridge/logs/restart-when-idle.log`。
+- **受影响**：当前两条在跑的命令（`cmd_231658b30695` kids_points_app / `cmd_31d24a702889`
+  cline-hub，都是 act）**不受影响**，会各自跑完；只有它们都结束后 supervisor 才重启。
+- **恢复**：supervisor 自动 `Start-Process` 拉起新 bridge（新代码包含 30s 心跳 +
+  `commands.leaseHeartbeatMs`）。重启后核对：`npm run health` 返回 `cline-bridge`、
+  Hub 日志出现 `POST /api/v1/commands/<id>/heartbeat 200`。
+- **遗留**：确认新 bridge 起来后，`npm run ps` 不应有残留登记；旧 APK（≤1.2.0）不需要动。
+

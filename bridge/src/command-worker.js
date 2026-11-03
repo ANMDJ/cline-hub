@@ -51,6 +51,15 @@ const RESULT_LIMIT = 20000
  */
 const RECONCILE_INTERVAL_MS = 60 * 1000
 
+/**
+ * 租约心跳间隔（P42）。
+ *
+ * Hub 侧的租约默认 120 秒（`HUB_COMMAND_LEASE_SEC`），过期会把命令自动判成
+ * `failed: orphaned`。这里 30 秒续一次，容忍一两次丢包；只在「本机确实还拿着命令」
+ * 时才发请求，空闲时一个多余的包都不发。
+ */
+const LEASE_HEARTBEAT_MS = 30 * 1000
+
 /** 回写孤儿命令时给手机看的原因：说清楚「不是命令本身失败」，可以直接重发。 */
 const ORPHAN_ERROR = '命令已中断：原来的执行进程不在了（bridge 重启 / 崩溃后没有接管）。可以重新下发。'
 
@@ -219,6 +228,14 @@ export function createCommandWorker({ cfg, logger }) {
   const concurrency = Number.isFinite(Number(opts.concurrency)) && Number(opts.concurrency) > 0
     ? Math.min(MAX_CONCURRENCY, Math.max(1, Math.floor(Number(opts.concurrency))))
     : 1
+  /**
+   * 心跳间隔（P42）：默认 30 秒；测试里可以调到几百毫秒来验证「真的会续租」。
+   * 不做下限钳制，配置写错（太大）时 Hub 会先回收 —— 那时日志里会有
+   * `command lease expired`，比静默续不上更容易排查。
+   */
+  const leaseHeartbeatMs = Number.isFinite(Number(opts.leaseHeartbeatMs)) && Number(opts.leaseHeartbeatMs) > 0
+    ? Number(opts.leaseHeartbeatMs)
+    : LEASE_HEARTBEAT_MS
   const defaultWorkspace = opts.defaultWorkspace ? path.resolve(opts.defaultWorkspace) : ''
 
   /**
@@ -266,6 +283,9 @@ export function createCommandWorker({ cfg, logger }) {
     /** 上次对账时间 + 是否在跑：避免 tick 每 5 秒叠一次请求。 */
     lastReconcileAt: 0,
     reconciling: false,
+    /** 上次续租时间 + 是否在跑（P42）：只对「本机还拿着的命令」发心跳。 */
+    lastHeartbeatAt: 0,
+    heartbeating: false,
     /** 上次查「待取消」的时间 + 是否在跑（只在本机有活命令时才查）。 */
     lastCancelPollAt: 0,
     cancelPolling: false
@@ -1109,6 +1129,51 @@ export function createCommandWorker({ cfg, logger }) {
     }
   }
 
+  /**
+   * 本机「还拿着命令」的 id：跑着的 + 占着槽位的 + 排队等槽位的。
+   *
+   * 排队中的也要续租：Hub 一次最多发 batchSize 条，槽位却可能只放得下 1 条；
+   * 只靠认领时那一份租约的话，队列里的命令还没轮到就会被 Hub 判成失联（P42）。
+   */
+  function leasedCommandIds() {
+    return [
+      ...state.children.keys(),
+      ...state.slots.keys(),
+      ...state.queue.map((item) => item.id)
+    ]
+  }
+
+  /**
+   * 续租（P42）：告诉 Hub「这几条命令我还在负责」，别把它们回收成 failed。
+   *
+   * 单条失败只记日志：Hub 抖一下不该影响正在跑的命令，下一轮会自动重试；
+   * 真过期了还有下一次启动的 reconcile 兜底（它能核对 pid，知道进程是否还在）。
+   */
+  async function heartbeat() {
+    if (state.heartbeating || state.stopped) return { ok: true, renewed: 0 }
+    const ids = [...new Set(leasedCommandIds())]
+    state.lastHeartbeatAt = Date.now()
+    if (ids.length === 0) return { ok: true, renewed: 0 }
+
+    state.heartbeating = true
+    let renewed = 0
+    try {
+      await Promise.all(
+        ids.map(async (id) => {
+          try {
+            await request('POST', `/api/v1/commands/${encodeURIComponent(id)}/heartbeat`, {})
+            renewed += 1
+          } catch (error) {
+            logger.warn('command heartbeat failed', { id, message: error.message })
+          }
+        })
+      )
+      return { ok: true, renewed, ids }
+    } finally {
+      state.heartbeating = false
+    }
+  }
+
   async function tick() {
     if (state.stopped) return
     if (!enabled) {
@@ -1123,6 +1188,11 @@ export function createCommandWorker({ cfg, logger }) {
     // 取消轮询放在「ticking / 槽位」检查之前：命令正在跑的时候，才是最需要它的时刻。
     if (!state.cancelPolling && state.children.size > 0) {
       void pollCancellations()
+    }
+
+    // 租约心跳（P42）：本机还拿着命令时每 30 秒续一次，别让 Hub 把它判成失联。
+    if (!state.heartbeating && Date.now() - state.lastHeartbeatAt >= leaseHeartbeatMs) {
+      void heartbeat()
     }
 
     if (state.ticking) return
@@ -1232,5 +1302,5 @@ export function createCommandWorker({ cfg, logger }) {
     for (const { child } of [...state.children.values()]) killTree(child)
   }
 
-  return { tick, stop, shutdown, reconcile, get enabled() { return enabled } }
+  return { tick, stop, shutdown, reconcile, heartbeat, get enabled() { return enabled } }
 }
