@@ -31,7 +31,7 @@ cd app
 flutter pub get
 flutter run -d android            # 真机 / 模拟器
 flutter run -d chrome             # 桌面预览（Web 下没有 SSE，见下文）
-flutter test                      # 86 项通过（5 项真机用例跳过；含通知去重 / 同任务合并 / 回前台补发 / 保活 / 附件上传与右侧菜单）
+flutter test                      # 88 项通过（5 项真机用例跳过；含通知去重 / 同任务合并 / 回前台补发 / 保活 / 附件上传与右侧菜单）
 flutter build apk --release       # 产物 build/app/outputs/flutter-apk/
 
 # 可选：拿真实 Hub 跑一遍客户端（不设变量则这组自动跳过）
@@ -211,9 +211,11 @@ SSE 四种事件都用上了：`session`（去抖 900ms 后刷新列表）、`ho
 - **耗时靠自己走表**：`CommandItem.duration` 是 getter，但列表只在数据变化时重建，SSE 空闲时
   秒数会停住。`ElapsedText` 在「执行中」时挂一个 1 秒 `Timer.periodic`，翻成终态立刻停。
 - **设备过滤在本地做**：`HubStore.visible*` 在已加载的 50–60 条上筛，不重新请求（分页游标会乱）。
-  `DeviceFilterBar` 只在已知设备 ≥ 2 时渲染，单设备下界面与以前完全一样。
+  入口只有右侧抽屉一处（P39）：「浏览」区在 ≥2 台已知设备时出现「全部设备 / 每台」chip，
+  点开抽屉时顺手 `refreshDevices()`；页面里只在筛选生效时显示 `ActiveDeviceFilterBar`
+  （「只看 X」+「看全部设备」），避免列表少了一半却看不出原因。
   设备候选来自 `GET /api/v1/devices`（ADR-47），并合并「设置里的 deviceId / 已加载数据」兜底；
-  chip 显示 `clients.name`，设置页「已接入设备」卡片展示在线状态与计数。
+  chip 显示 `clients.name`。设置页不再重复放设备列表，只留「默认执行设备（手填兜底）」。
   接了两台以上时，会话卡片元信息会补一段 `设备 <名字>`；工作区页的分组与组头一律带设备
   （即使只有一台，组头也写明），因为不同机器的同名项目是两组。
 
@@ -222,7 +224,7 @@ SSE 四种事件都用上了：`session`（去抖 900ms 后刷新列表）、`ho
 
 | 能力 | 位置 | 说明 |
 |---|---|---|
-| 右侧菜单 | `ui/home_drawer.dart` + `ui/home_shell.dart` | 顶栏只留连接状态 + 菜单按钮；抽屉里是**电脑列表**（在线 / 会话数 / 待执行 / 执行中，点一台设为默认）与「刷新数据 / 设置」。设置页里的设备卡片保留（同一份 `GET /api/v1/devices`） |
+| 右侧菜单 | `ui/home_drawer.dart` + `ui/home_shell.dart` | 顶栏只留连接状态 + 菜单按钮；抽屉分三段：**浏览**（「按工作区浏览」+ ≥2 台时的设备 chip）/ **电脑**（在线 / 会话数 / 待执行 / 执行中 / 离线时多久没上报，点一台设为默认）/ **操作**（刷新数据、设置）。设置页不再重复放设备列表（P39） |
 | 发送文件 / 发送图片 | `ui/attachment_bar.dart` | 下发面板与会话输入框各有一组按钮；选中后显示「文件名 · 大小」卡片，可一键移除 |
 | 追加指令 | 原来的输入框 | 输入框里的文字就是「要对这个文件做什么」；**可以留空**，此时 bridge 补一句「先读这个文件，简要说明内容，先不要改文件」 |
 | 上传 | `data/hub_api.dart` 的 `uploadAttachment()` | `POST /api/v1/attachments`，base64 JSON，上限 `kMaxAttachmentBytes` = 8 MB（与 Hub 默认值一致）；上传超时单独放宽到 90 秒 |
@@ -257,7 +259,7 @@ SSE 四种事件都用上了：`session`（去抖 900ms 后刷新列表）、`ho
 | Markdown 渲染 | `ui/widgets.dart` 的 `markdownSheetOf` / `MessageText` | 1.1.4 起会话正文 / 问题 / 结果按 Markdown 渲染（`flutter_markdown_plus`）；**命令输出不解析**（终端原文）。长文本折叠态仍是纯文本预览，展开页才渲染 |
 | 取消命令 | `ui/commands_page.dart` 的 `_CancelCommandButton` | 只有 `pending/delivered/running/cancelling` 显示；二次确认后 `POST /commands/:id/cancel`；排队中立即 `cancelled`，执行中先 `cancelling`，终态由 SSE 推回 |
 | 版本与更新 | `ui/settings_page.dart` | 版本号来自 `data/app_version.dart`；「检查更新」读 `GET /api/v1/app/latest`。有新版本时给两个入口：**「打开下载页」**（`data/link_launcher.dart` → 原生 `ACTION_VIEW`，直接用系统浏览器打开 APK 地址）与「复制链接」；打不开浏览器时自动退回复制 |
-| 已接入设备 | `ui/settings_page.dart` | 读 `GET /api/v1/devices`：在线（2 分钟内有 `lastSeenAt`）/ 离线、会话数、待执行 / 执行中、最近上报；「设为默认」直接改默认下发设备 |
+| 设备列表 / 浏览筛选 | `ui/home_drawer.dart` | 读 `GET /api/v1/devices`：在线（2 分钟内有 `lastSeenAt`）/ 离线（附多久没上报）、会话数、待执行 / 执行中；点一行设为默认；≥2 台时「浏览」区给设备 chip（只筛列表，不改下发目标） |
 
 ### 发版流程
 

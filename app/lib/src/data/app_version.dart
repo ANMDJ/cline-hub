@@ -3,8 +3,8 @@
 /// 为什么不引 `package_info_plus`：这个客户端刻意只保留 http / shared_preferences
 /// 两个依赖，版本号一年也就改几次，手工同步比多一个插件更划算。
 /// 发版脚本 `scripts/release-apk.mjs` 会读 `pubspec.yaml` 并校验这里是否一致。
-const String kAppVersion = '1.1.7';
-const int kAppBuild = 9;
+const String kAppVersion = '1.1.8';
+const int kAppBuild = 10;
 
 class ChangelogEntry {
   const ChangelogEntry(this.version, this.date, this.items);
@@ -15,6 +15,12 @@ class ChangelogEntry {
 }
 
 const List<ChangelogEntry> kChangelog = <ChangelogEntry>[
+  ChangelogEntry('1.1.8', '2026-11-03', <String>[
+    '优化：按工作区浏览、只看哪台电脑都收进右侧菜单，抽屉里一划就能切（原来散在会话页顶栏）',
+    '优化：设置页去掉与右侧菜单重复的「已接入设备」列表，只留「手填兜底」的设备 id',
+    '优化：筛选生效时列表顶部提示「只看 X · 看全部设备」，不会误以为数据少了',
+    '修复：卡片里的开关点按时的水波纹断言（debug 模式会报错）',
+  ]),
   ChangelogEntry('1.1.7', '2026-11-03', <String>[
     '新增：把手机上的文件 / 图片发给电脑——下发命令时会话页都能「选文件」，写一句要它做什么（也可以只发文件）',
     '新增：命令详情显示附件名、大小、类型与入库时间；bridge 把文件落到电脑上再把绝对路径交给 Cline',

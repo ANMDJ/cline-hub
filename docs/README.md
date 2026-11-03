@@ -13,7 +13,8 @@
 | 想知道某个版本改了什么 | [`../CHANGELOG.md`](../CHANGELOG.md) | 2 分钟 |
 | 要改 Hub 接口 / 写客户端 | [`api.md`](api.md) | 10 分钟 |
 | 要改 bridge 的采集或执行 | [`bridge-notes.md`](bridge-notes.md) + `../bridge/README.md` | 15 分钟 |
-| 想推翻某个设计 | [`decisions.md`](decisions.md)（50 条 ADR，只追加） | 按条查 |
+| 想推翻某个设计 | [`decisions.md`](decisions.md)（55 条 ADR，只追加） | 按条查 |
+| 收到外部安全审计 / 漏洞报告 | [`security-review.md`](security-review.md)（先核事实再采纳） | 10 分钟 |
 | 要重启 / 停掉 bridge | [`interruptions.md`](interruptions.md)（先停任务、再杀进程） | 3 分钟 |
 | 换服务器 / 从零重建 | [`server-prep.md`](server-prep.md) + `../deploy/README.md` | 30 分钟 |
 | 改手机端 UI | `../app/README.md` | 10 分钟 |
@@ -39,6 +40,7 @@
 | [`new-device.md`](new-device.md) | 接入第二台 Windows（bridge + device token） |
 | [`bridge-notes.md`](bridge-notes.md) | Windows 端实测：数据位置、`messages.json` 结构、安全排查 |
 | [`decisions.md`](decisions.md) | ADR：为什么这么做 |
+| [`security-review.md`](security-review.md) | 外部安全审计的逐条复核结论 + 采纳计划（P40–P43） |
 | [`interruptions.md`](interruptions.md) | 主动中断记录：为什么杀 bridge / 影响了谁 / 怎么恢复 |
 | [`server-prep.md`](server-prep.md) | 服务器从零准备 |
 | [`../AGENTS.md`](../AGENTS.md) | 给新会话的入口页（30 秒看懂 + 开工三条命令） |

@@ -12,6 +12,7 @@ import 'package:cline_console/src/ui/commands_page.dart';
 import 'package:cline_console/src/ui/session_detail_page.dart';
 import 'package:cline_console/src/ui/session_tile.dart';
 import 'package:cline_console/src/ui/sessions_page.dart';
+import 'package:cline_console/src/ui/settings_page.dart';
 import 'package:cline_console/src/ui/workspaces_page.dart';
 import 'package:cline_console/src/ui/setup_page.dart';
 import 'package:cline_console/src/ui/theme.dart';
@@ -68,6 +69,54 @@ void main() {
     store.dispose();
   });
 
+  testWidgets('设备筛选提示条只在筛选生效时出现，可一键看全部', (tester) async {
+    final settings = await configuredSettings();
+    final fake = FakeHubApi(
+      deviceItems: [
+        DeviceItem(
+          id: 'localone',
+          name: 'LocalOne-Windows',
+          lastSeenAt: DateTime.now(),
+        ),
+        DeviceItem(
+          id: 'localtwo',
+          name: 'LocalTwo-Mac',
+          lastSeenAt: DateTime.now(),
+        ),
+      ],
+      sessionItems: [
+        SessionItem(
+          deviceId: 'localtwo',
+          sessionId: 's2',
+          workspace: 'kids_points_app',
+          userPrompt: '改登录页',
+        ),
+      ],
+    );
+    final store = HubStore(settings: settings, apiFactory: (_) => fake);
+    await store.refreshDevices();
+    await store.refreshSessions();
+
+    await tester.pumpWidget(wrap(ListenableBuilder(
+      listenable: store,
+      builder: (context, _) => SessionsPage(store: store),
+    )));
+    await tester.pump();
+    // 没筛设备时完全不占空间（筛选入口已经挪进右侧抽屉）。
+    expect(find.text('看全部设备'), findsNothing);
+
+    store.setDeviceFilter('localtwo');
+    await tester.pump();
+    expect(find.text('只看 LocalTwo-Mac'), findsOneWidget);
+
+    await tester.tap(find.text('看全部设备'));
+    await tester.pump();
+    expect(store.deviceFilter, isNull);
+    expect(find.text('看全部设备'), findsNothing);
+
+    store.dispose();
+  });
+
   testWidgets('命令页空状态给出发命令的入口', (tester) async {
     final settings = await configuredSettings();
     final store = HubStore(settings: settings, apiFactory: (_) => FakeHubApi());
@@ -77,6 +126,43 @@ void main() {
 
     expect(find.text('还没有下发过命令'), findsOneWidget);
     expect(find.text('下发第一条'), findsOneWidget);
+
+    store.dispose();
+  });
+
+  testWidgets('设置页不再重复放设备列表，只留默认设备手填兜底', (tester) async {
+    // 设置页比一屏长：给足高度，让「默认执行设备」那张卡也建出来。
+    tester.view.physicalSize = const Size(411, 1400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final settings = await configuredSettings();
+    final fake = FakeHubApi(
+      deviceItems: [
+        DeviceItem(
+          id: 'localone',
+          name: 'LocalOne-Windows',
+          lastSeenAt: DateTime.now(),
+          sessionCount: 12,
+        ),
+      ],
+    );
+    final store = HubStore(settings: settings, apiFactory: (_) => fake);
+    await store.refreshDevices();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: SettingsPage(settings: settings, store: store),
+      ),
+    );
+    await tester.pump();
+
+    // 设备列表只在右侧抽屉里（P39）：设置页再放一份会各刷各的在线状态。
+    expect(find.text('已接入设备'), findsNothing);
+    expect(find.text('默认执行设备（手填兜底）'), findsOneWidget);
+    expect(find.textContaining('右侧菜单里点一台电脑就能切默认'), findsOneWidget);
 
     store.dispose();
   });

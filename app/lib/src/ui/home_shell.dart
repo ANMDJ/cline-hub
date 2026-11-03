@@ -14,6 +14,7 @@ import 'sessions_page.dart';
 import 'settings_page.dart';
 import 'theme.dart';
 import 'widgets.dart';
+import 'workspaces_page.dart';
 
 /// 三个 Tab 的外壳：会话 / 命令 / 动态，顶栏常驻连接状态。
 class HomeShell extends StatefulWidget {
@@ -75,6 +76,13 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     );
   }
 
+  /// 「按工作区浏览」的入口在右侧抽屉里（P39）：抽屉先自己 pop，再走这里 push。
+  void _openWorkspaces() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => WorkspacesPage(store: _store)),
+    );
+  }
+
   /// 右侧菜单：设备列表 / 刷新 / 设置都在里面（P38）。
   ///
   /// 打开时顺手刷一次设备：在线状态靠 `lastSeenAt`，用户点开菜单就是想看
@@ -132,7 +140,11 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
               const SizedBox(width: 4),
             ],
           ),
-          endDrawer: HomeDrawer(store: _store, onOpenSettings: _openSettings),
+          endDrawer: HomeDrawer(
+            store: _store,
+            onOpenSettings: _openSettings,
+            onOpenWorkspaces: _openWorkspaces,
+          ),
           body: IndexedStack(
             index: _index,
             children: [

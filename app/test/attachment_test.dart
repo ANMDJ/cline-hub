@@ -162,7 +162,13 @@ void main() {
     store.dispose();
   });
 
-  testWidgets('右侧菜单：设备列表可切默认，设置按钮能进设置页', (tester) async {
+  testWidgets('右侧菜单：设备列表可切默认，浏览筛选与工作区入口都在这里', (tester) async {
+    // 手机尺寸：抽屉内容变多了（浏览 + 电脑 + 操作），要确认整条都能点到。
+    tester.view.physicalSize = const Size(411, 914);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     final settings = await configuredSettings();
     final fake = FakeHubApi(
       deviceItems: [
@@ -184,12 +190,14 @@ void main() {
     await store.refreshDevices();
 
     var openedSettings = false;
+    var openedWorkspaces = false;
     await tester.pumpWidget(
       wrap(
         Scaffold(
           endDrawer: HomeDrawer(
             store: store,
             onOpenSettings: () => openedSettings = true,
+            onOpenWorkspaces: () => openedWorkspaces = true,
           ),
           body: const SizedBox.shrink(),
         ),
@@ -203,7 +211,23 @@ void main() {
     expect(find.text('LocalOne-Windows · localone'), findsOneWidget);
     expect(find.textContaining('在线 · 会话 12'), findsOneWidget);
     expect(find.textContaining('离线 · 会话 0'), findsOneWidget);
+    expect(find.textContaining('上报'), findsOneWidget);
     expect(find.text('默认'), findsOneWidget);
+
+    // P39：设备 chip 与「按工作区浏览」从页面顶栏挪进抽屉。
+    expect(find.text('按工作区浏览'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, '全部设备'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, 'LocalTwo-Mac'), findsOneWidget);
+
+    // chip 只筛列表，不改下发目标。
+    await tester.tap(find.widgetWithText(ChoiceChip, 'LocalTwo-Mac'));
+    await tester.pumpAndSettle();
+    expect(store.deviceFilter, 'localtwo');
+    expect(settings.deviceId, 'localone');
+
+    await tester.tap(find.widgetWithText(ChoiceChip, '全部设备'));
+    await tester.pumpAndSettle();
+    expect(store.deviceFilter, isNull);
 
     // 点第二台 → 默认设备切过去，标记也跟着走。
     await tester.tap(find.text('LocalTwo-Mac · localtwo'));
@@ -211,7 +235,13 @@ void main() {
     expect(settings.deviceId, 'localtwo');
     expect(store.devices, hasLength(2));
 
-    // 再打开一次（点设备后抽屉仍然开着，这里只是确保按钮可点）。
+    await tester.tap(find.text('按工作区浏览'));
+    await tester.pumpAndSettle();
+    expect(openedWorkspaces, isTrue);
+
+    // 点「按工作区浏览」会先关抽屉；要看设置就再打开一次。
+    tester.state<ScaffoldState>(find.byType(Scaffold)).openEndDrawer();
+    await tester.pumpAndSettle();
     await tester.tap(find.text('设置'));
     await tester.pumpAndSettle();
     expect(openedSettings, isTrue);

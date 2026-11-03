@@ -95,29 +95,35 @@ class SectionCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(kRadius),
         border: Border.all(color: kLine),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (title != null) ...[
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    title!,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: kMuted,
+      // 卡片里可能放 SwitchListTile / ListTile：它们把水波纹画在最近的 Material 上，
+      // 中间隔一层带背景色的 Container 会触发 debug 断言（assistive 提示「水波纹不可见」）。
+      // 这里只补一层透明 Material，不改背景与圆角，避免整屏卡片样式漂移。
+      child: Material(
+        type: MaterialType.transparency,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (title != null) ...[
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      title!,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: kMuted,
+                      ),
                     ),
                   ),
-                ),
-                ?trailing,
-              ],
-            ),
-            const SizedBox(height: 10),
+                  ?trailing,
+                ],
+              ),
+              const SizedBox(height: 10),
+            ],
+            child,
           ],
-          child,
-        ],
+        ),
       ),
     );
   }
@@ -249,57 +255,48 @@ class _ElapsedTextState extends State<ElapsedText> {
   }
 }
 
-/// 多设备时的设备过滤器：只有一台设备（或还没拉到数据）时不占空间。
+/// 「只看一台设备」生效时的提示条（P39）。
+///
+/// 设备筛选的入口已经收进右侧抽屉：抽屉是藏起来的，列表被筛过必须一眼能看见，
+/// 否则用户会以为别的机器的数据丢了。没筛设备时完全不占空间。
 ///
 /// 过滤放在 App 侧：服务端已经按设备返回全量，命令只有最近 50 条、
 /// 会话一页 60 条，本地筛一下比多发一次请求简单。
-class DeviceFilterBar extends StatelessWidget {
-  const DeviceFilterBar({super.key, required this.store});
+class ActiveDeviceFilterBar extends StatelessWidget {
+  const ActiveDeviceFilterBar({super.key, required this.store});
 
   final HubStore store;
 
   @override
   Widget build(BuildContext context) {
-    final devices = store.knownDevices;
-    if (devices.length < 2) return const SizedBox.shrink();
-    final selected = store.deviceFilter;
-    return SizedBox(
-      height: 42,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.fromLTRB(14, 4, 14, 4),
+    final filter = store.deviceFilter;
+    if (filter == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 4, 8, 0),
+      child: Row(
         children: [
-          _chip(
-            context,
-            label: '全部设备',
-            value: null,
-            selected: selected == null,
-          ),
-          for (final device in devices) ...[
-            const SizedBox(width: 6),
-            _chip(
-              context,
-              label: store.deviceLabel(device),
-              value: device,
-              selected: selected == device,
+          Flexible(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Pill(
+                label: '只看 ${store.deviceLabel(filter)}',
+                color: kAccent,
+                icon: Icons.computer_rounded,
+              ),
             ),
-          ],
+          ),
+          const SizedBox(width: 6),
+          TextButton(
+            onPressed: () => store.setDeviceFilter(null),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              minimumSize: const Size(0, 28),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text('看全部设备', style: TextStyle(fontSize: 11.5)),
+          ),
         ],
       ),
-    );
-  }
-
-  Widget _chip(
-    BuildContext context, {
-    required String label,
-    required String? value,
-    required bool selected,
-  }) {
-    return ChoiceChip(
-      label: Text(label, style: const TextStyle(fontSize: 11.5)),
-      selected: selected,
-      visualDensity: VisualDensity.compact,
-      onSelected: (_) => store.setDeviceFilter(value),
     );
   }
 }

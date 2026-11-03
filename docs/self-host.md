@@ -298,7 +298,7 @@ handle_path /app/* {
 1. Hub 地址：`https://hub.example.com`（**不要**带 `/api/v1`）
 2. token：上一步的 `app` token
 3. 点「测试连接」→ 应显示服务 / DB / token 都正常
-4. 进入 App → 设置页确认「已接入设备」能看到电脑
+4. 进入 App → 右侧菜单「电脑」里能看到电脑（在线状态 / 计数，点一行设为默认）
 5. 命令页发 `plan` 命令，观察状态流转
 
 ---
@@ -329,7 +329,8 @@ handle_path /app/* {
 
 - 每台 Windows 一个 **独立 `deviceId` + device token**，配置只改那一台的 `bridge/config.json`。
 - Hub 上按 `(deviceId, sessionId)` 存数据，同一台机器上的同名会话不会串。
-- App 的设备 chip 在 ≥2 台设备时出现；「设置 → 已接入设备」能看到在线状态 / 计数 / 设为默认。
+- App 右侧菜单的「浏览」区在 ≥2 台设备时出现设备 chip（只筛列表，不改默认）；
+  「电脑」区能看到在线状态 / 计数，点一行设为默认（P39）。
 - 下发命令时明确选设备；`GET /api/v1/devices` 给 App 提供设备列表（ADR-47）。
 - 一台机器不想被远程执行：它自己的 `commands.enabled=false`，不影响采集和其它机器。
 

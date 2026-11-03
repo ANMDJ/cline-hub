@@ -85,7 +85,8 @@ SSE 例外：`GET /api/v1/events?token=<token>`（EventSource 不能设置请求
 
 ## 设备列表（`GET /api/v1/devices`，ADR-47）
 
-给 App 渲染「已接入设备」和多设备筛选 chip。只返回 `role='device'` 的 client（手机自己的
+给 App 渲染右侧菜单里的「电脑」列表（在线状态 / 计数 / 设为默认）与「浏览」区的设备筛选 chip。
+只返回 `role='device'` 的 client（手机自己的
 `app` client 不算设备）。
 
 ```json

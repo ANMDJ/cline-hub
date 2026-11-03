@@ -6,11 +6,13 @@ import '../models/models.dart';
 import '../state/hub_store.dart';
 import 'session_detail_page.dart';
 import 'session_tile.dart';
-import 'workspaces_page.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
 /// 会话列表：搜索 + 下拉刷新 + 滚到底自动翻页。
+///
+/// 顶部只留搜索框：设备筛选与「按工作区浏览」都在右侧抽屉里（P39），
+/// 筛选生效时才多一条 `ActiveDeviceFilterBar` 提示。
 class SessionsPage extends StatefulWidget {
   const SessionsPage({super.key, required this.store});
 
@@ -59,33 +61,8 @@ class _SessionsPageState extends State<SessionsPage> {
     final store = widget.store;
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
-          child: Row(
-            children: [
-              TextButton.icon(
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => WorkspacesPage(store: widget.store),
-                  ),
-                ),
-                icon: const Icon(Icons.folder_copy_outlined, size: 16),
-                label: const Text('按工作区浏览', style: TextStyle(fontSize: 12.5)),
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 6,
-                  ),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-              ),
-            ],
-          ),
-        ),
-
-        // 多设备时才出现（只有一台时不占空间）。
-        DeviceFilterBar(store: widget.store),
+        // 只有筛过设备时才出现（抽屉里选的，这里负责提醒 + 一键看全部）。
+        ActiveDeviceFilterBar(store: widget.store),
 
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 6, 14, 10),

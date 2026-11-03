@@ -6,13 +6,14 @@ import '../data/app_version.dart';
 import '../data/hub_api.dart';
 import '../data/link_launcher.dart';
 import '../data/settings_store.dart';
-import '../models/models.dart';
 import '../state/hub_store.dart';
-import '../util/format.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
-/// 设置：连接信息、健康检查、默认设备、换连接。
+/// 设置：连接信息、健康检查、通知、默认设备（手填兜底）、换连接、版本。
+///
+/// 设备列表 / 浏览筛选 / 点选默认设备都在右侧抽屉里（P38/P39），这里不重复放一份：
+/// 同一个「设备」概念出现两处、状态还得各自刷新，是上一版最容易看出不一致的地方。
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key, required this.settings, required this.store});
 
@@ -39,38 +40,7 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _requestingNotify = false;
   String? _notifyStatus;
 
-  bool _loadingDevices = false;
-
   final LinkLauncher _links = const LinkLauncher();
-
-  @override
-  void initState() {
-    super.initState();
-    // 设置页打开时顺手刷新一次：在线状态 / 计数要新，不能只靠启动时那一次。
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _refreshDevices();
-    });
-  }
-
-  Future<void> _refreshDevices() async {
-    setState(() => _loadingDevices = true);
-    await widget.store.refreshDevices();
-    if (mounted) setState(() => _loadingDevices = false);
-  }
-
-  /// 把某台电脑设为默认下发目标（同时更新输入框，不用再手动保存一次）。
-  Future<void> _useDevice(DeviceItem device) async {
-    await widget.settings.setDeviceId(device.id);
-    _deviceCtrl.text = device.id;
-    if (!mounted) return;
-    setState(() {});
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('默认执行设备已切到 ${device.label}'),
-        duration: const Duration(seconds: 1),
-      ),
-    );
-  }
 
   /// 有新版本时直接交给系统浏览器下载，不用再「复制链接 → 打开浏览器 → 粘贴」。
   /// 打不开（Web 预览 / 没有浏览器 / 地址不合法）就退回复制，至少不会卡住。
@@ -264,115 +234,6 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Widget _devicesBody() {
-    final store = widget.store;
-    if (store.devices.isEmpty) {
-      if (_loadingDevices) {
-        return const Text(
-          '正在读取设备列表…',
-          style: TextStyle(fontSize: 12, color: kMuted),
-        );
-      }
-      if (store.devicesError != null) {
-        return Text(
-          '读取失败：${store.devicesError}',
-          style: const TextStyle(fontSize: 12, height: 1.6, color: kWarn),
-        );
-      }
-      return const Text(
-        '还没有电脑接入。在电脑上起 bridge 后点右上角「刷新」。',
-        style: TextStyle(fontSize: 12, height: 1.65, color: kMuted),
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (final device in store.devices) _deviceRow(device),
-        if (store.devicesError != null)
-          Text(
-            '刷新失败：${store.devicesError}',
-            style: const TextStyle(fontSize: 11.5, height: 1.6, color: kWarn),
-          ),
-      ],
-    );
-  }
-
-  Widget _deviceRow(DeviceItem device) {
-    final online = device.isOnline;
-    final isDefault = widget.settings.deviceId == device.id;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 8,
-            height: 8,
-            margin: const EdgeInsets.only(top: 5, right: 8),
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: online ? kAccent : kMuted,
-            ),
-          ),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  device.label == device.id
-                      ? device.id
-                      : '${device.label} · ${device.id}',
-                  style: const TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '${online ? '在线' : '离线'} · 会话 ${device.sessionCount} · '
-                  '待执行 ${device.pendingCommands} · 执行中 ${device.runningCommands}',
-                  style: const TextStyle(
-                    fontSize: 11.5,
-                    height: 1.5,
-                    color: kMuted,
-                  ),
-                ),
-                Text(
-                  '最近上报 ${relativeTime(device.lastSeenAt)}',
-                  style: const TextStyle(fontSize: 11, color: kMuted),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          if (isDefault)
-            const Padding(
-              padding: EdgeInsets.only(top: 6),
-              child: Text(
-                '默认',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: kAccent,
-                ),
-              ),
-            )
-          else
-            TextButton(
-              onPressed: () => _useDevice(device),
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 6),
-                minimumSize: const Size(0, 30),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              child: const Text('设为默认', style: TextStyle(fontSize: 11.5)),
-            ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final settings = widget.settings;
@@ -523,7 +384,7 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
           const SizedBox(height: 12),
           SectionCard(
-            title: '默认执行设备',
+            title: '默认执行设备（手填兜底）',
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -538,7 +399,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   children: [
                     const Expanded(
                       child: Text(
-                        '下发命令时默认发到这台设备，可在下发面板里临时改。',
+                        '平时在右侧菜单里点一台电脑就能切默认，这里只给「还没上报过、列表里看不到」的'
+                        '设备兜底。下发面板里仍可临时改目标。',
                         style: TextStyle(
                           fontSize: 11.5,
                           height: 1.6,
@@ -560,24 +422,12 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
           const SizedBox(height: 12),
-          SectionCard(
-            title: '已接入设备',
-            trailing: TextButton(
-              onPressed: _loadingDevices ? null : _refreshDevices,
-              child: Text(
-                _loadingDevices ? '刷新中…' : '刷新',
-                style: const TextStyle(fontSize: 12),
-              ),
-            ),
-            child: _devicesBody(),
-          ),
-          const SizedBox(height: 12),
           const SectionCard(
             title: '安全提示',
             child: Text(
-              '当前是 IP + 随机前缀的明文 HTTP 入口（域名还在等备案）。同网络的其他人理论上能嗅探到 token，'
-              '所以尽量别在公共 Wi-Fi 下用；备案通过后把地址换成 https://hub.littlewish.top，'
-              '并在服务器上轮换 device / app token。',
+              '线上入口是 https://hub.littlewish.top:8443（备案期的临时 HTTPS 端口）。'
+              '如果自己部署时用了 http://<IP>:3100 这种明文入口，同一网络的人能看到 token —— '
+              '公共 Wi-Fi 下别用；换过地址或怀疑泄露时，在服务器上轮换 device / app token。',
               style: TextStyle(fontSize: 12, height: 1.7, color: kMuted),
             ),
           ),

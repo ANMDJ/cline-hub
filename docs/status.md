@@ -36,9 +36,25 @@
 | 24 | P35 | **App 1.1.6+8 发版**：锁屏保活 + 通知归并 + 分组带设备一起上线（清单 `/srv/cline-hub/releases/latest.json`、APK `/app/cline-console-1.1.6.apk`），落地页对齐 1.1.6 | ✅ APK 55,256,496 B / sha256 `4ecaf2f3…4173`，已上线 |
 | 25 | P37 | **推送 / 保活验证（不接厂商通道）**：ntfy 直达通知栏 + Hub SSE 长连接 + 线上 1.1.6 APK 静态核验（保活 service / 权限 / sha256）+ 全量自检；真机 7 条仍需手机 | ✅ 2026-11-03 完成「不依赖真机」的全部验证（ADR-51） |
 | 26 | P38 | **右侧划出菜单 + 发送文件 / 图片**：设备列表与设置入口挪进 `endDrawer`；`POST/GET /api/v1/attachments`（base64 + bytea，migration 009）+ 命令携带 `attachmentId`；bridge 落盘到 `%TEMP%\cline-hub-cmd\incoming` 再把绝对路径拼进 prompt；下发面板与会话输入框都能「选文件 + 写一句要它做什么」 | ✅ **已上线（2026-11-03 12:25）**：迁移 009 + 镜像重建（备份 `server.bak-20261103-122537`），线上 app token 上传 / 下载实测通过；附件带**入库时间 `createdAt`**（保留策略暂不做）；App `1.1.7+9` 已发布（55,568,256 B / sha256 `4261c8f2…ee25`）；bridge 已排空闲重启（等 `cmd_10e3f1f2394f` / `cmd_b4c3e28a6d9b` 两条在跑的命令都结束，supervisor pid 3260） |
+| 27 | P39 | **浏览入口收进右侧抽屉 + 设置页去重**：会话页「按工作区浏览」按钮与三页顶部的设备 chip 挪进 `HomeDrawer`「浏览」区（`onOpenWorkspaces` 回调由 `HomeShell` 提供）；页面只在筛选生效时显示 `ActiveDeviceFilterBar`（「只看 X」+「看全部设备」）；抽屉设备行离线时补「多久没上报」；设置页删掉重复的「已接入设备」卡片，手填默认设备改名「手填兜底」 | ✅ 已发版 `1.1.8+10`（ADR-54） |
+| 28 | — | **安全审计复核**：把手机发来的 `cline-hub 安全审计与加固建议.docx` 逐条对代码核了一遍（说对的 7 条 / 说错或夸大 4 条 / 漏掉 4 条 / 实测 4 项），结论与采纳计划写进 [`security-review.md`](security-review.md) | ✅ 文档完成（ADR-55；**未改任何行为代码**） |
+| 29 | P40 | `net.js` 取 `X-Forwarded-For` **最后一段** + `deploy/Caddyfile` 显式 `header_up`，补 `server/test/net.test.mjs` | ⏳ 未开工（等用户拍板；复核文档 §5） |
+| 30 | P41 | SSE 短期 ticket（`POST /api/v1/sse-ticket`）替代 URL 里的 token，App 跟着改 | ⏳ 未开工（含 App 发版） |
+| 31 | P42 | 命令租约自动回收（`migrations/010` + 每 60s 扫描 → `failed: orphaned`） | ⏳ 未开工（`reconcile` 保留为手动兜底） |
+| 32 | P43 | SSE 纵深防御：Origin 白名单 + 单 token 连接上限 + 空闲超时 | ⏳ 未开工 |
 
-已完成并上线的：P0 / P1 / P3–P26 / P35–P38
+
+
+已完成并上线的：P0 / P1 / P3–P26 / P35–P39
 （P3、P9 已部署；P5、P10、P15、P17、P8、P22–P26、P35、P38 已发布到 App；P7/P14 已在 12:51 重启后生效）。
+**P39 已随 `1.1.8+10` 发版**（浏览入口收进右侧抽屉 + 设置页去重，ADR-54；
+`flutter analyze` 无告警、`flutter test` **88 通过 / 5 跳过**；APK 55,568,256 B /
+sha256 `a17a2ca0…a314`，线上 HEAD 200、`GET /api/v1/app/latest` 返回 1.1.8 / build 10）。
+**安全审计复核（2026-11-03）已完成文档部分**：`cline-hub 安全审计与加固建议.docx` 的
+7 条说对、4 条说错/夸大（SSE 心跳其实有、CVE-2026-59723 实为 8.8/AV:A 且本机 `cline 3.0.74` 已修、
+XFF 是「取段错」不是「条件错」、Origin 该降级）、4 条它漏掉（其中 SSE token 在 URL 里最该修）。
+采纳计划 P40–P43 已登记，**按用户拍板只写文档、不动行为代码**（ADR-55，见 [`security-review.md`](security-review.md)）。
+
 **P32 / P33 / P34 已随 `1.1.6+8` 发版**（`flutter test` 78 通过 / 5 真机用例跳过；
 APK 55,256,496 B / sha256 `4ecaf2f3…4173`，线上 APK HEAD 200、`GET /api/v1/app/latest` 返回 1.1.6 / build 8）。
 P34 仍需真机按 §0 的清单核对（锁屏收通知 / 常驻通知消失 / 划掉任务）。
@@ -353,7 +369,7 @@ curl.exe -sS -N -m 27 "https://hub.littlewish.top:8443/api/v1/events?token=$tok"
 | Flutter / Dart | `3.47.5` / `13.4` |
 | Android 工具链 | SDK `%LOCALAPPDATA%\Android\Sdk`（platforms 33–37 / build-tools 30–37）；JDK 17 与 21 在 `<JDK 目录>\`；`GRADLE_USER_HOME=%USERPROFILE%\.gradle` 已缓存 gradle-9.3.1。**`JAVA_HOME` 为空**，默认 PATH 上是 zulu-8，打包前必须设成 JDK 17 |
 | 已跟踪会话 | 109 个（`GET /api/v1/devices` 的 `sessionCount`，2026-11-02 14:19） |
-| App 发布版本 | `1.1.7+9`（`GET /api/v1/app/latest` 实测；APK 55,568,256 B，sha256 `4261c8f2…ee25`；2026-11-03 12:28 发布） |
+| App 发布版本 | `1.1.8+10`（`GET /api/v1/app/latest` 实测；APK 55,568,256 B，sha256 `a17a2ca0…a314`；2026-11-03 14:02 发布） |
 
 ## 2. 里程碑与最近提交
 
@@ -516,4 +532,8 @@ powershell -NoProfile -File deploy/windows/verify-hub.ps1
 
 
 
+
+| 2026-11-03 | **P39 浏览入口收进右侧抽屉 + 设置页去重**：`ui/home_drawer.dart` 新增「浏览」区 —— 「按工作区浏览」（`onOpenWorkspaces` 由 `HomeShell` push，先 pop 抽屉）+ ≥2 台设备时的 chip（「全部设备 / 每台」，只改 `HubStore.deviceFilter`，不动 `settings.deviceId`）；设备行离线时补「X 小时前上报」；`ui/widgets.dart` 的 `DeviceFilterBar` 换成 `ActiveDeviceFilterBar`（`deviceFilter == null` 时零高度，筛选生效才出现「只看 X + 看全部设备」）；`sessions_page.dart` 删掉顶部工作区按钮，会话 / 命令 / 动态三页只保留提示条；`settings_page.dart` 删掉与抽屉重复的「已接入设备」卡片及 `_devicesBody` / `_deviceRow` / `_refreshDevices` / `_loadingDevices`，「默认执行设备」改名「手填兜底」（设备没上报过时仍可填）；「安全提示」按线上 `https://hub.littlewish.top:8443` 现状改写（原文还写着「IP + 随机前缀的明文 HTTP / 等备案」）；`SectionCard` 内容补一层透明 `Material`，消掉卡片里 `SwitchListTile` 触发的 debug 断言（水波纹不可见）；ADR-54。验证：`cd app; flutter analyze` 无告警、`flutter test` **88 通过 / 5 跳过**（抽屉用例扩到 chip 筛选 / 工作区入口 / 离线多久没上报；新增「提示条只在筛选时出现」「设置页不再放设备列表」2 条） |
+| 2026-11-03 | **App 1.1.8+10 发版（P39 上线）**：`pubspec.yaml` / `app_version.dart` 1.1.7+9 → 1.1.8+10（`kChangelog` 补 1.1.8 四条）；`JAVA_HOME=<JDK 17 路径>` + `ANDROID_HOME/ANDROID_SDK_ROOT=<Android SDK>` 后台构建（`assembleRelease` 57.8s）→ `aapt2` 核对 `versionCode=10` / `versionName=1.1.8`；`release-apk.mjs --skip-build` 出清单（sha256 `a17a2ca0…a314`，55,568,256 B）；`ssh -i ~/.ssh/kids.pem` 上传 APK 到 `/var/www/cline-hub/app/cline-console-1.1.8.apk`（`caddy:caddy 644`）、清单到 `/srv/cline-hub/releases/latest.json`；落地页 `site/index.html` 六处版本引用改 1.1.8（`node site/check-site.mjs` 通过、无 BOM）并 install 到 `/var/www/cline-hub/index.html`。线上验证：`GET /api/v1/app/latest` → 1.1.8 / 10 / sha 一致；`HEAD /app/cline-console-1.1.8.apk` → 200 / `application/vnd.android.package-archive` / 55,568,256 B；`http://82.157.153.22/` 显示 1.1.8 ×9、APK 链接 200。bridge（3210）与 Hub（health 200 / db 1ms）本来就在跑，无需重启 |
+| 2026-11-03 | **安全审计复核（只写文档）**：手机发来的 `cline-hub 安全审计与加固建议.docx` 逐条回代码核对 —— 说对 7 条（SKIP LOCKED 短事务 / token 只存哈希 / 单租户 / 线上只监听回环 / 无租约…），说错或夸大 4 条（**SSE 其实有 25s 心跳**；CVE-2026-59723 实为 8.8 / `AV:A`、影响 `cline dashboard` 且本机 `cline 3.0.74` 已修；XFF 是「取第一段」错而非「采信条件」错；Origin 该从 🔴 降到低/中 —— 凭据是 bearer 没有 cookie 可被自动携带），漏掉 4 条（**SSE 的 token 在 URL 里会进 access log**、命令回写是无条件 UPDATE、附件无配额、health 泄露 `sseClients`）。新增 `docs/security-review.md` + ADR-55，`status.md` 登记 P40–P43（**均未开工**）；按用户拍板**不动行为代码**。验证：`flutter analyze` 无告警、`flutter test` **88 通过 / 5 跳过**；另打了 P39 预览包 `app/dist/cline-console-1.1.7-preview-p39.apk`（55,568,256 B / sha256 `bc1dc4c0…b762` / `versionCode=10`），**未能上传服务器**（本机无 SSH 私钥） |
 

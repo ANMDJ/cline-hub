@@ -19,8 +19,8 @@ class CommandsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // 多设备时才出现（只有一台时不占空间）。
-        DeviceFilterBar(store: store),
+        // 设备筛选在右侧抽屉里选；筛过设备才出现一条提示（P39）。
+        ActiveDeviceFilterBar(store: store),
         Expanded(child: _buildList(context)),
       ],
     );
