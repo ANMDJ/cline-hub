@@ -1564,6 +1564,10 @@ APK 文件名 `cline-console-x.y.z.apk`、`ClineConsoleApp` 类名全部保持�
   心跳只在「本机还拿着命令」时发（跑着的 + 占槽位的 + 排队的），空闲零请求。
 - 时间常量两处：Hub `HUB_COMMAND_LEASE_SEC` / `HUB_COMMAND_LEASE_SWEEP_SEC`，
   bridge `commands.leaseHeartbeatMs`。默认 120 / 60 / 30 秒，满足「bridge 硬崩后 3 分钟内自动收尾」。
+- **别手工给「旧 bridge 正在跑」的命令发心跳**：那等于给它上了租约却没人续，约 2 分钟后会被回收成
+  `failed`（2026-11-04 上线自检时把当前会话的命令刷成过一次失败；跑完的终态回写会再翻回 `done`，
+  也可以用 SQL 把 `status='running'` + `lease_expires_at=null` 复原）。要验证心跳，等新 bridge
+  起来后看 Hub 日志里的 `POST /api/v1/commands/<id>/heartbeat 200` 即可。
 
 **验证**：`cd server; node --test` **65 通过**（新增 9 条：续租参数 / 心跳四态 / 终态不接受 running /
 回收的 SQL 映射与广播形状 / 附件保留 / 并发扫描跳过）；`cd bridge; node --test` **61 通过**
