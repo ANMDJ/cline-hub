@@ -138,6 +138,9 @@ Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
    为什么这么设计 → `docs/decisions.md`。
 4. 小步改，改完立刻验证（对应模块的测试 / 自检脚本，见 §4）。
 5. 收尾：更新 `docs/status.md` 的变更日志 + 相关文档，`git status` 复核没有把 token / 日志带进去。
+6. **收尾必须交「下一步计划」**：先写清这次做了什么 / 验证结果 / 遗留风险，再按
+   [`docs/status.md`](docs/status.md) §0 的顺序列 3~5 条后续待开发项，并标出哪条能立刻做、
+   哪条要等真机或用户拍板。**计划只列不擅自开工** —— 用户看完再决定下一轮做什么。
 
 ## 7. 常见故障速查
 

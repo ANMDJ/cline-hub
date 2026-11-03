@@ -1,6 +1,6 @@
 # 现状与待办（status）
 
-> 每次开工先读 §0；动手前核对 §1 的实测值。最后更新：**2026-11-02（+08）**。
+> 每次开工先读 §0；动手前核对 §1 的实测值。最后更新：**2026-11-03（+08）**。
 
 ## 0. 现在要做什么
 
@@ -30,14 +30,16 @@
 | 18 | P24 | **设备列表接口**：`GET /api/v1/devices`（app 看全部、device 只看自己；在线时间 / 会话数 / 待执行 / 执行中）+ App 设置页「已接入设备」卡片、chip 用设备名 | ✅ Hub 已上线（2026-11-02 14:07）；App `1.1.5+7` |
 | 19 | P25 | **接入文档**：`docs/new-device.md`（第二台电脑）、`docs/self-host.md`（从零自托管 / 多设备 / 多人边界）、`bridge/README.md` | ✅ 已写入仓库 |
 | 20 | P26 | **App 1.1.5+7 发版**：设备列表 + 设备名 chip + 命令卡片项目目录 / 实时耗时 | ✅ APK 55,239,940 B / sha256 `53a64cd1…d5ac`，已上线 |
-| 21 | P32 | **同一条任务只弹一条通知**：命令终态与 bridge 合成的 `session_done` 用 `sessionId` 归并（15 分钟窗口），修「息屏回前台收到两条消息」 | ✅ 代码 + 测试完成（App 未发版） |
-| 22 | P33 | **会话分组显示来源机器**：分组键改成 `<设备>\|<项目键>`（两机的同名项目是两组），组头 + 卡片元信息显示设备名；设备过滤也作用于工作区页 | ✅ 代码 + 测试完成（App 未发版） |
-| 23 | P34 | **后台保活（形态 B）**：只在「有命令在跑」时挂 `dataSync` 前台服务（`KeepAliveService` + 静音常驻通知），锁屏期间 SSE 不断、命令跑完立刻弹通知；活跃数归 0 / 401 / 关开关 / 划掉任务即停。设置页「锁屏也提醒」默认开 | ✅ 代码 + 测试完成（1.1.6+8 未发版，待真机验证） |
+| 21 | P32 | **同一条任务只弹一条通知**：命令终态与 bridge 合成的 `session_done` 用 `sessionId` 归并（15 分钟窗口），修「息屏回前台收到两条消息」 | ✅ 已随 `1.1.6+8` 发版 |
+| 22 | P33 | **会话分组显示来源机器**：分组键改成 `<设备>\|<项目键>`（两机的同名项目是两组），组头 + 卡片元信息显示设备名；设备过滤也作用于工作区页 | ✅ 已随 `1.1.6+8` 发版 |
+| 23 | P34 | **后台保活（形态 B）**：只在「有命令在跑」时挂 `dataSync` 前台服务（`KeepAliveService` + 静音常驻通知），锁屏期间 SSE 不断、命令跑完立刻弹通知；活跃数归 0 / 401 / 关开关 / 划掉任务即停。设置页「锁屏也提醒」默认开 | ✅ 已发版 `1.1.6+8`（2026-11-03 08:28）；待真机按清单核对 |
+| 24 | P35 | **App 1.1.6+8 发版**：锁屏保活 + 通知归并 + 分组带设备一起上线（清单 `/srv/cline-hub/releases/latest.json`、APK `/app/cline-console-1.1.6.apk`），落地页对齐 1.1.6 | ✅ APK 55,256,496 B / sha256 `4ecaf2f3…4173`，已上线 |
 
-已完成并上线的：P0 / P1 / P3–P26
-（P3、P9 已部署；P5、P10、P15、P17、P8、P22–P26 已发布到 App；P7/P14 已在 12:51 重启后生效）。
-**P32 / P33 / P34 已改完并测试，App 未发版**（`flutter test` 78 通过 / 5 真机用例跳过；
-版本号已提到 `1.1.6+8`，release APK 已构建）。P34 需要真机按 §0 的清单核对（锁屏收通知 / 常驻通知消失 / 划掉任务）。
+已完成并上线的：P0 / P1 / P3–P26 / P35
+（P3、P9 已部署；P5、P10、P15、P17、P8、P22–P26、P35 已发布到 App；P7/P14 已在 12:51 重启后生效）。
+**P32 / P33 / P34 已随 `1.1.6+8` 发版**（`flutter test` 78 通过 / 5 真机用例跳过；
+APK 55,256,496 B / sha256 `4ecaf2f3…4173`，线上 APK HEAD 200、`GET /api/v1/app/latest` 返回 1.1.6 / build 8）。
+P34 仍需真机按 §0 的清单核对（锁屏收通知 / 常驻通知消失 / 划掉任务）。
 **P19（读接口按设备隔离）已上线**（2026-11-02 13:28 镜像重建，迁移无变化）。
 **P20（路径归一化）已上线**（2026-11-02 13:50 镜像重建，备份后缀 `20261102-135023`）。
 **P21–P26 已上线/已发版**：重发脚本 / 命令卡片项目目录 + 动态耗时 / 多设备过滤 / 设备列表接口 /
@@ -306,7 +308,7 @@
 | Flutter / Dart | `3.47.5` / `13.4` |
 | Android 工具链 | SDK `%LOCALAPPDATA%\Android\Sdk`（platforms 33–37 / build-tools 30–37）；JDK 17 与 21 在 `<JDK 目录>\`；`GRADLE_USER_HOME=%USERPROFILE%\.gradle` 已缓存 gradle-9.3.1。**`JAVA_HOME` 为空**，默认 PATH 上是 zulu-8，打包前必须设成 JDK 17 |
 | 已跟踪会话 | 109 个（`GET /api/v1/devices` 的 `sessionCount`，2026-11-02 14:19） |
-| App 发布版本 | `1.1.5+7`（`GET /api/v1/app/latest` 实测；APK 55,239,940 B，sha256 `53a64cd1…d5ac`） |
+| App 发布版本 | `1.1.6+8`（`GET /api/v1/app/latest` 实测；APK 55,256,496 B，sha256 `4ecaf2f3…4173`） |
 
 ## 2. 里程碑与最近提交
 
@@ -457,6 +459,7 @@ powershell -NoProfile -File deploy/windows/verify-hub.ps1
 | 2026-11-02 | **P33 分组显示来源机器**：`HubStore._groupKey()` 改成 `<deviceId>\|<项目键>`（两机同名项目分成两组），`SessionGroup` 加 `deviceId` / `loose`，`sessionGroups` 走设备过滤；`WorkspaceGroupHeader` 增加设备 Pill、`SessionTile` 元信息补 `设备 …`（多设备时）；`flutter test` 71 通过 / 5 跳过；ADR-49 |
 | 2026-11-03 | **P34 锁屏保活（形态 B）**：新增 `KeepAliveService.kt`（`dataSync` 前台服务 + 静音常驻通知，通道 `cline_hub_keepalive` / id `7301`，`START_NOT_STICKY`、`stopWithTask`、Android 15 `onTimeout` 收工）；`AndroidManifest` 加 `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_DATA_SYNC` 与 service 声明；`MainActivity` 的 `…/notify` 通道加 `startKeepAlive` / `stopKeepAlive`（`IllegalStateException` / `SecurityException` 一律降级为 false）；`HubNotifier` 加两个默认空实现的方法，`SettingsStore.keepAliveEnabled`（`notify.keepAlive`，默认开）；`HubStore._syncKeepAlive()` 在活跃命令 0→1 开、归 0 / 401 / 关开关 / `dispose` 停（回前台不主动停，避开 Android 11+ 后台启动限制），设置页「通知」卡片加「锁屏也提醒」开关；版本 `1.1.6+8`；`flutter analyze` 无告警、`flutter test` **78 通过 / 5 跳过**（新增 7 条保活用例）；ADR-50。**待真机验证**（锁屏收通知 / 常驻通知消失 / 划掉任务） |
 | 2026-11-02 | **重写历史清掉本机路径（P31）**：用 `git-filter-repo`（单文件脚本，不装进系统环境）对全部提交做 blob 级替换 —— Windows 用户目录（含 JSON 里 4 层反斜杠变体）→ `C:\Users\alice`，全大写变体单独映射成 `ALICE`；Git Bash 的 `/c/Users/<账号>/...`（两种旧目录形态 `~/.cline/...` 与 `~/projects/...`）→ `<仓库>`；`D:\Android\Sdk` / `D:\android\.gradle` / `D:\Program Files\java\jdk-17` / `D:/android/sdk` → 环境变量写法；反引号包着的账号名 → `alice`。`LICENSE` / `README` 的版权署名保留（作者名不是路径）。重写前 `git bundle` 备份到仓外临时目录；重写后 HEAD tree 与重写前**逐字节一致**（`6e4eca45`），即只改了历史、当前内容未变。随后按 `commit-map` 把 `docs/status.md` 里 8 处旧短哈希回填成新哈希（例：`a20abe1`→`c3ee1da`），`git log -S'<旧用户目录>'` 全历史 **0 命中**。⚠️ 实测 GitHub 仍能按 SHA 直接访问强推前的旧提交（HTTP 200 且内容含旧路径），彻底清掉必须删仓重建 —— `delete_repo` scope 待授权 |
+| 2026-11-03 | **P35 App 1.1.6+8 发版 + 落地页对齐**：`cd app; node scripts/release-apk.mjs --skip-build`（复用已构建的 `app-release.apk`，先用 `output-metadata.json` 核对 versionName `1.1.6` / versionCode `8`）生成 `dist/cline-console-1.1.6.apk` + `dist/latest.json`（sha256 `4ecaf2f3…4173`）；`scp` 后 `sudo install` 到 `/var/www/cline-hub/app/`（HEAD 200 / `application/vnd.android.package-archive` / 55,256,496 B）与 `/srv/cline-hub/releases/latest.json`（`GET /api/v1/app/latest` 返回 1.1.6 / build 8 / 三条 notes，Hub 不用重启）；`site/index.html` 9 处版本号 + M3 进度 + 「实时下行」补锁屏保活说明、`site/README.md` 同步；`node site/check-site.mjs` 通过，逐文件 `scp` + `sudo install` 发布（本机 `tar.exe` 被系统拒绝 `Access denied`，改用单文件 scp；旧页面备份 `/tmp/site-backup-20261103-082841.tgz`），线上 `http://82.157.153.22/` 200 / 19351 B、`1.1.6`×9、`1.1.5`×0；`adb devices` 为空，手机走 App 内「检查更新」 |
 
 
 
