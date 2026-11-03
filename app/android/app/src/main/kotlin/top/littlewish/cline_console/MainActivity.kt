@@ -25,7 +25,8 @@ import io.flutter.plugin.common.MethodChannel
  *
  * Dart 侧见 `lib/src/data/notifier.dart`：
  *   - `ensurePermission()` → Android 13+ 弹 POST_NOTIFICATIONS 授权，返回最终状态；
- *   - `show(id, title, body)` → 发一条可点开 App 的通知（同一个 id 覆盖旧通知）。
+ *   - `show(id, title, body)` → 发一条可点开 App 的通知（同一个 id 覆盖旧通知）；
+ *   - `startKeepAlive(text)` / `stopKeepAlive()` → 拉起 / 停掉 KeepAliveService（P34）。
  */
 class MainActivity : FlutterActivity() {
     private var pendingPermission: MethodChannel.Result? = null
@@ -79,7 +80,49 @@ class MainActivity : FlutterActivity() {
                 notificationManager().cancelAll()
                 result.success(null)
             }
+            // P34：命令运行期间的 dataSync 前台服务（见 KeepAliveService）。
+            "startKeepAlive" -> {
+                result.success(startKeepAlive(call.argument<String>("text")))
+            }
+            "stopKeepAlive" -> {
+                stopKeepAlive()
+                result.success(null)
+            }
             else -> result.notImplemented()
+        }
+    }
+
+    /**
+     * 拉起保活服务。
+     *
+     * 失败一律返回 false、不抛给 Dart：Android 11+ 的后台启动限制会抛
+     * `ForegroundServiceStartNotAllowedException`（它是 IllegalStateException 的子类），
+     * 国产 ROM 也可能抛 SecurityException。保活失败只影响「锁屏即时提醒」，
+     * 不影响命令下发与回前台补发，所以按降级处理（与 show() 的容错风格一致）。
+     */
+    private fun startKeepAlive(text: String?): Boolean {
+        val intent = Intent(this, KeepAliveService::class.java).apply {
+            putExtra(KeepAliveService.EXTRA_TEXT, text?.trim().orEmpty())
+        }
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+            true
+        } catch (_: IllegalStateException) {
+            false
+        } catch (_: SecurityException) {
+            false
+        }
+    }
+
+    private fun stopKeepAlive() {
+        try {
+            stopService(Intent(this, KeepAliveService::class.java))
+        } catch (_: SecurityException) {
+            // 服务没起来 / 已被系统回收：什么都不用做。
         }
     }
 

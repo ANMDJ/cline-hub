@@ -18,10 +18,14 @@ class SessionGroup {
     required this.label,
     required this.path,
     required this.items,
+    required this.deviceId,
+    this.loose = false,
   });
 
-  /// 折叠状态的键：优先绝对路径（转小写，Windows 路径不分大小写），
-  /// 退化 `name:<项目名>`，都没有时是空串。
+  /// 折叠状态的键：`<设备>|<项目键>`。
+  ///
+  /// 设备必须进键里：`C:\work\b` 在两台电脑上是两个目录（内容可能不同），
+  /// 只按项目路径合并会让组头「12 条」混着两台机器的会话。
   final String key;
 
   /// 组头显示的项目名，如 `kids_points_app`。
@@ -29,6 +33,12 @@ class SessionGroup {
 
   /// 完整绝对路径；拿不到时为 null（组头只显示项目名）。
   final String? path;
+
+  /// 这一组会话来自哪台电脑（Hub 的 device id）。
+  final String deviceId;
+
+  /// 散会话（`projectKind=loose`，家目录等）：工作区页永远排在最后。
+  final bool loose;
 
   final List<SessionItem> items;
 }
@@ -110,8 +120,29 @@ class HubStore extends ChangeNotifier {
   /// SSE 与「回前台补拉」可能同时命中同一条，只弹一次。
   final Set<String> _notified = <String>{};
 
+  /// 会话 id → 第一次提醒的时间。
+  ///
+  /// 一次远程命令会同时产生两条终态：`command.update`（done/failed）和 bridge
+  /// 从 `sessions.db` 跃迁合出来的 `session_done`（那条命令开出来的会话）。
+  /// 它们描述的是**同一件事**，但键不同（`cmd_x:done` / `hook:185`），
+  /// 所以会并排弹两条：命令一结束先响「命令完成 · ACT」，30 秒后
+  /// （`COMPLETION_SETTLE_MS`）再响「会话完成 · cline-hub」。
+  /// 息屏期间断流、回前台补发时最明显——用户看到的就是「同一个任务两条消息」。
+  ///
+  /// 归并键用 `sessionId`（命令执行时 bridge 会 PATCH 回写），只在这个窗口内算同一次任务：
+  /// 同一个会话几小时后重新跑一轮，应该再提醒。
+  final Map<String, DateTime> _notifiedTasks = <String, DateTime>{};
+
+  static const Duration _taskDedupeWindow = Duration(minutes: 15);
+
   /// 退到后台时还在跑的命令 id：回前台如果已经结束，补一条通知。
   Set<String> _activeAtPause = <String>{};
+
+  /// 当前是否在后台（`pause()` / `resume()` 维护）。
+  ///
+  /// 与 `_paused` 分开：保活期间 App 在后台但 SSE 没断（`_paused=false`），
+  /// 等保活结束时才需要按「后台」策略补一次断流。
+  bool _backgrounded = false;
 
   static const Set<String> _terminalStatuses = <String>{
     'done',
@@ -250,11 +281,14 @@ class HubStore extends ChangeNotifier {
     return trimmed.toLowerCase();
   }
 
-  /// 会话按工作目录分组：组顺序跟每组第一条会话走（列表本身按时间倒序），
-  /// 组内保持原顺序。同一个目录的不同写法（大小写 / 分隔符 / 尾斜杠）会并成一组。
+  /// 会话按「设备 + 工作目录」分组：组顺序跟每组第一条会话走（列表本身按时间倒序），
+  /// 组内保持原顺序。同一台机器上同一个目录的不同写法（大小写 / 分隔符 / 尾斜杠）
+  /// 会并成一组；不同机器的同名项目各成一组，组头显示来自哪台电脑。
   List<SessionGroup> get sessionGroups {
     // 工作区页优先用整批数据；还没拉到（或拉失败）时退回主列表已加载的部分。
-    final source = workspaceSessions.isNotEmpty ? workspaceSessions : sessions;
+    final source = (workspaceSessions.isNotEmpty ? workspaceSessions : sessions)
+        .where((item) => _onDevice(item.deviceId))
+        .toList(growable: false);
     final buckets = <String, List<SessionItem>>{};
     for (final item in source) {
       buckets.putIfAbsent(_groupKey(item), () => <SessionItem>[]).add(item);
@@ -265,6 +299,8 @@ class HubStore extends ChangeNotifier {
           key: entry.key,
           label: _groupLabel(entry.value.first),
           path: _absoluteWorkspace(entry.value.first),
+          deviceId: entry.value.first.deviceId,
+          loose: _isLoose(entry.value.first),
           items: entry.value,
         ),
     ];
@@ -279,30 +315,45 @@ class HubStore extends ChangeNotifier {
     return null;
   }
 
+  /// 分组键 = `<设备>|<项目键>`。
+  ///
+  /// 设备前缀不能省：两台电脑都有 `cline-hub` 时，它们的绝对路径不同
+  /// （`C:\Users\a\...` / `C:\work\...`），但「项目名兜底」分支会撞进同一组；
+  /// 而同名项目在两台机器上本来就不是同一堆会话。
   static String _groupKey(SessionItem item) {
+    final device = item.deviceId.trim().toLowerCase();
+    final scope = device.isEmpty ? '' : '$device|';
     // 有 project 信息时按「项目根」分组；loose（家目录等）统一进散会话。
     final kind = (item.projectKind ?? '').trim();
     final project = (item.project ?? '').trim();
     final root = (item.projectRoot ?? '').trim();
     if (kind.isNotEmpty || project.isNotEmpty) {
-      if (kind == 'loose' || project.isEmpty) return '__loose__';
+      if (_isLoose(item)) return '${scope}__loose__';
       return root.isNotEmpty
-          ? _pathKey(root)
-          : 'project:${project.toLowerCase()}';
+          ? '$scope${_pathKey(root)}'
+          : '${scope}project:${project.toLowerCase()}';
     }
     // 旧数据（还没回填 project）：保持按绝对路径分组，但同样走路径键，
-    // 否则 `C:\...\cline-hub` 与 `C:/...\cline-hub` 会并排显示两组。
+    // 否则 `C:\...\cline-hub` 与 `C:/.../cline-hub` 会并排显示两组。
     final path = _absoluteWorkspace(item);
-    if (path != null) return _pathKey(path);
+    if (path != null) return '$scope${_pathKey(path)}';
     final name = (item.workspace ?? '').trim();
-    return name.isEmpty ? '' : 'name:${name.toLowerCase()}';
+    return name.isEmpty ? scope : '${scope}name:${name.toLowerCase()}';
+  }
+
+  /// 有项目字段、但属于松散会话（家目录里临时聊的）。
+  static bool _isLoose(SessionItem item) {
+    final kind = (item.projectKind ?? '').trim();
+    final project = (item.project ?? '').trim();
+    if (kind.isEmpty && project.isEmpty) return false;
+    return kind == 'loose' || project.isEmpty;
   }
 
   static String _groupLabel(SessionItem item) {
+    if (_isLoose(item)) return '散会话（无项目）';
     final kind = (item.projectKind ?? '').trim();
     final project = (item.project ?? '').trim();
     if (kind.isNotEmpty || project.isNotEmpty) {
-      if (kind == 'loose' || project.isEmpty) return '散会话（无项目）';
       return project;
     }
     final name = (item.workspace ?? '').trim();
@@ -319,6 +370,42 @@ class HubStore extends ChangeNotifier {
   }
 
   int get activeCommandCount => commands.where((item) => item.isActive).length;
+
+  // ------------------------------------------------------------- 前台保活（P34）
+  /// 保活前台服务当前是否处于「已拉起」状态。
+  ///
+  /// 只在有活跃命令且链路可用时存在：SSE 挂了（401 等）挂着服务也没有意义。
+  /// 只在内存里，进程重启后由 [refreshCommands] 重新判定。
+  bool _keepAliveOn = false;
+
+  /// 活跃命令数变化后调用：0→1 开服务、1→0 停，幂等。
+  ///
+  /// 为什么不监听生命周期：回前台就停会让「再进后台」变成后台启动 FGS，
+  /// Android 11+ 会直接拒绝。命令跑的这几分钟留着常驻通知，顺便当状态指示。
+  void _syncKeepAlive() {
+    if (_disposed) return;
+    final want = settings.keepAliveEnabled &&
+        notifier.supported &&
+        activeCommandCount > 0 &&
+        link != LinkState.offline;
+    if (want == _keepAliveOn) return;
+    _keepAliveOn = want;
+    if (want) {
+      final count = activeCommandCount;
+      unawaited(
+        notifier.startKeepAlive(
+          count == 1 ? '有 1 条命令正在执行' : '有 $count 条命令正在执行',
+        ),
+      );
+    } else {
+      unawaited(notifier.stopKeepAlive());
+      // 后台且已无活跃命令：不用再保活，按原策略断流省电。
+      if (_backgrounded && activeCommandCount == 0) _pauseNow();
+    }
+  }
+
+  /// 设置页改了「锁屏也提醒」后调用：立刻按新开关调整，不用等下一条命令。
+  void syncKeepAliveNow() => _syncKeepAlive();
 
   // ------------------------------------------------------------- sessions API
   Future<void> refreshSessions() async {
@@ -454,6 +541,8 @@ class HubStore extends ChangeNotifier {
     } finally {
       if (!_disposed) {
         loadingCommands = false;
+        // 启动时会把「已经在跑」的命令一起拉回来，这里决定要不要开保活。
+        _syncKeepAlive();
         notifyListeners();
       }
     }
@@ -478,6 +567,8 @@ class HubStore extends ChangeNotifier {
       workspace: workspace,
     );
     _upsertCommand(created);
+    // 新命令是 pending：这是「0→1」，App 此时在前台，启动 FGS 合法。
+    _syncKeepAlive();
     notifyListeners();
     return created;
   }
@@ -492,6 +583,7 @@ class HubStore extends ChangeNotifier {
     final previous = _upsertCommand(updated);
     // 排队中取消是直接终态：通知规则同「命令结束」，别让用户以为它还在跑。
     _maybeNotifyCommand(previous, updated);
+    _syncKeepAlive();
     notifyListeners();
     return updated;
   }
@@ -550,8 +642,27 @@ class HubStore extends ChangeNotifier {
     _connect();
   }
 
-  /// 退到后台就主动断流：SSE 挂着只会白烧电，回到前台再拉一次最新数据。
+  /// 退到后台：默认断流省电（SSE 挂着白烧电，回前台再拉一次最新数据）。
+  ///
+  /// 例外是**保活服务在跑**（P34）：那条常驻通知的目的就是让 App 在后台
+  /// 继续收事件，断掉 SSE 等于把保活做成了纯摆设。这时只记下在跑的命令，
+  /// 等活跃数归 0（服务停）时由 [_syncKeepAlive] 再按原策略断流。
   void pause() {
+    if (_disposed) return;
+    _backgrounded = true;
+    if (_keepAliveOn) {
+      // 不断流：仍记一份，覆盖极短的断线窗口（见 _refreshAfterResume）。
+      _activeAtPause = commands
+          .where((item) => item.isActive)
+          .map((item) => item.id)
+          .toSet();
+      return;
+    }
+    _pauseNow();
+  }
+
+  /// 真正取消 SSE 订阅并回到 idle。
+  void _pauseNow() {
     if (_paused || _disposed) return;
     _paused = true;
     // 后台期间收不到 SSE：先记下还在跑的命令，回前台时补通知（见 _refreshAfterResume）。
@@ -567,11 +678,18 @@ class HubStore extends ChangeNotifier {
   }
 
   void resume() {
-    if (!_paused || _disposed) return;
-    _paused = false;
-    _attempt = 0;
+    if (_disposed) return;
+    final wasBackground = _backgrounded;
+    _backgrounded = false;
     final wasActive = _activeAtPause;
     _activeAtPause = <String>{};
+    if (!_paused) {
+      // 保活期间 SSE 一直连着：仍补一次，覆盖断线窗口里漏掉的事件。
+      if (wasBackground) unawaited(_refreshAfterResume(wasActive));
+      return;
+    }
+    _paused = false;
+    _attempt = 0;
     unawaited(_refreshAfterResume(wasActive));
     _connect();
   }
@@ -621,6 +739,7 @@ class HubStore extends ChangeNotifier {
         if (item.id.isEmpty) break;
         final previous = _upsertCommand(item);
         _maybeNotifyCommand(previous, item);
+        _syncKeepAlive();
       case 'tick':
         _refreshTick();
       case 'open':
@@ -645,6 +764,8 @@ class HubStore extends ChangeNotifier {
     if (error is ApiException && error.isAuth) {
       // token 废了就别再敲服务器，让用户去设置页换一个
       link = LinkState.offline;
+      // 链路断了，保活挂着也没意义：直接收掉常驻通知。
+      _syncKeepAlive();
       notifyListeners();
       return;
     }
@@ -710,6 +831,8 @@ class HubStore extends ChangeNotifier {
     if (!_terminalStatuses.contains(item.status)) return;
     final key = '${item.id}:${item.status}';
     if (!_notified.add(key)) return;
+    // 同一条任务已经提醒过（例如先到的是 session_done）：不再弹第二条。
+    if (_taskAlreadyNotified(item.sessionId)) return;
 
     final ok = item.status == 'done';
     final headline = switch (item.status) {
@@ -720,6 +843,7 @@ class HubStore extends ChangeNotifier {
     final detail = ok
         ? (item.resultText ?? item.prompt)
         : (item.errorText ?? item.resultText ?? item.prompt);
+    _rememberTask(item.sessionId);
     unawaited(
       notifier.show(
         HubNotification(
@@ -738,6 +862,8 @@ class HubStore extends ChangeNotifier {
     if (!_terminalSessionEvents.contains(event)) return;
     final key = 'hook:${item.id}';
     if (!_notified.add(key)) return;
+    // 远程命令跑出来的会话：命令那条已经提醒过（或即将提醒），别再弹一遍。
+    if (_taskAlreadyNotified(item.sessionId)) return;
 
     final headline = switch (event) {
       'session_done' => '会话完成',
@@ -745,6 +871,7 @@ class HubStore extends ChangeNotifier {
       _ => '会话失败',
     };
     final subject = _shorten(inlinePreview(item.title ?? ''), 40);
+    _rememberTask(item.sessionId);
     unawaited(
       notifier.show(
         HubNotification(
@@ -754,6 +881,30 @@ class HubStore extends ChangeNotifier {
         ),
       ),
     );
+  }
+
+  /// 这个会话在归并窗口内是否已经提醒过（没有 sessionId 的历史数据一律算「没提醒过」）。
+  bool _taskAlreadyNotified(String? sessionId) {
+    final id = (sessionId ?? '').trim();
+    if (id.isEmpty) return false;
+    final at = _notifiedTasks[id];
+    if (at == null) return false;
+    if (DateTime.now().difference(at) > _taskDedupeWindow) {
+      _notifiedTasks.remove(id);
+      return false;
+    }
+    return true;
+  }
+
+  void _rememberTask(String? sessionId) {
+    final id = (sessionId ?? '').trim();
+    if (id.isEmpty) return;
+    if (_notifiedTasks.length >= 300) {
+      final cutoff = DateTime.now().subtract(_taskDedupeWindow);
+      _notifiedTasks.removeWhere((_, at) => at.isBefore(cutoff));
+      if (_notifiedTasks.length >= 300) _notifiedTasks.clear();
+    }
+    _notifiedTasks[id] = DateTime.now();
   }
 
   /// 通知正文：去 ANSI、折叠空白、截到一行能读的长度（按码点切，不劈开 emoji）。
@@ -772,6 +923,10 @@ class HubStore extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    if (_keepAliveOn) {
+      _keepAliveOn = false;
+      unawaited(notifier.stopKeepAlive());
+    }
     _sub?.cancel();
     _reconnectTimer?.cancel();
     _sessionDebounce?.cancel();

@@ -19,17 +19,20 @@ class SettingsStore extends ChangeNotifier {
     String deviceId = '',
     bool notifyCommands = true,
     bool notifySessions = true,
+    bool keepAlive = true,
   }) : _baseUrl = baseUrl,
        _token = token,
        _deviceId = deviceId,
        _notifyCommands = notifyCommands,
-       _notifySessions = notifySessions;
+       _notifySessions = notifySessions,
+       _keepAlive = keepAlive;
 
   static const _kBaseUrl = 'hub.baseUrl';
   static const _kToken = 'hub.token';
   static const _kDeviceId = 'hub.deviceId';
   static const _kNotifyCommands = 'notify.commands';
   static const _kNotifySessions = 'notify.sessions';
+  static const _kKeepAlive = 'notify.keepAlive';
 
   static Future<SettingsStore> load({SharedPreferences? prefs}) async {
     final store = prefs ?? await SharedPreferences.getInstance();
@@ -41,6 +44,9 @@ class SettingsStore extends ChangeNotifier {
       // 没存过时默认开启：新装用户第一晚就能收到「命令跑完了」。
       notifyCommands: store.getBool(_kNotifyCommands) ?? true,
       notifySessions: store.getBool(_kNotifySessions) ?? true,
+      // 默认开：只在「有命令在跑」的几分钟里存在，不是长期常驻通知；
+      // 关掉就退回旧行为（回前台补发）。
+      keepAlive: store.getBool(_kKeepAlive) ?? true,
     );
   }
 
@@ -50,6 +56,7 @@ class SettingsStore extends ChangeNotifier {
   String _deviceId;
   bool _notifyCommands;
   bool _notifySessions;
+  bool _keepAlive;
 
   String get baseUrl => _baseUrl;
   String get token => _token;
@@ -60,6 +67,12 @@ class SettingsStore extends ChangeNotifier {
 
   /// 会话结束 / 失败 / 中断时弹系统通知（bridge 的 `session_*` 事件）。
   bool get notifySessions => _notifySessions;
+
+  /// 命令运行期间是否挂 `dataSync` 前台服务保活（P34）。
+  ///
+  /// 开了以后 App 退到后台也不断 SSE，锁屏期间命令跑完能立刻弹通知；
+  /// 代价是这几分钟里有一条不可划走的常驻通知。
+  bool get keepAliveEnabled => _keepAlive;
 
   bool get notificationsEnabled => _notifyCommands || _notifySessions;
 
@@ -106,6 +119,13 @@ class SettingsStore extends ChangeNotifier {
     if (_notifySessions == value) return;
     _notifySessions = value;
     await _prefs.setBool(_kNotifySessions, value);
+    notifyListeners();
+  }
+
+  Future<void> setKeepAlive(bool value) async {
+    if (_keepAlive == value) return;
+    _keepAlive = value;
+    await _prefs.setBool(_kKeepAlive, value);
     notifyListeners();
   }
 

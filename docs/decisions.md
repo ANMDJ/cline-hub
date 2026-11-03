@@ -1098,3 +1098,116 @@ token 发到客户端。所以新增一个只读、按角色收敛的接口。
 **验证**：`cd server; node --test` 39 项全绿（新增 `test/devices.test.mjs` 3 项：
 app 看全部 / device 只看自己 / 无 token 401）；`cd app; flutter analyze` 无告警、
 `flutter test` 67 项通过（新增 `DeviceItem` 2 项、设备列表合并 1 项）。
+
+## 48. 同一条任务只提醒一次：命令终态与会话终态按 `sessionId` 归并（2026-11-02）
+
+**现象**：手机上「同一个任务收到两条消息」，且**息屏后回到前台时最明显**：
+先响一条「命令完成 · ACT」，约 30 秒后再响一条「会话完成 · cline-hub」。
+
+**原因**：一次远程命令会写两次终态，描述的是同一件事：
+1. bridge 执行结束立刻 `PATCH /commands/:id`（`done` / `failed`）→ SSE `command.update`；
+2. bridge 的 `sessions.db` 扫描发现「命令开出来的那个会话」从 `running` 翻成终态，
+   为了防抖要等 `COMPLETION_SETTLE_MS = 30_000`，稳定后才合成 `session_done` → SSE `hook`。
+
+App 的去重键分别是 `cmd_x:done` 与 `hook:185`（ADR-35），两者互不相识，于是各弹一条。
+息屏时 SSE 被 `pause()` 断掉，回前台先按「退后台时还在跑的命令」补发第一条，
+随后 bridge 的 30 秒窗口到点、第二条通过重连后的 SSE 到达 —— 两条正好前后脚出现。
+
+**决策**：
+- `HubStore` 新增 `_notifiedTasks`（`sessionId → 首次提醒时间`，窗口 **15 分钟**）。
+  命令通知与会话通知在弹之前都查它、弹之后写入；**先到哪条弹哪条，另一条静默**。
+- 归并键用 `sessionId`：bridge 在 spawn 后会把新建会话的 id `PATCH` 回命令（ADR-25），
+  所以命令侧也有这个字段；`session_done` 的 hook 由 `emitCompletion()` 带上 `sessionId`。
+- 没有 `sessionId` 的数据（老的命令没回写、Cline 自己开的工作区会话）保持原行为：
+  只有 `commandId:status` / `hook:<id>` 的单事件去重。
+- 窗口外不合并：同一个会话几小时后重新跑一轮，应该再提醒一次。
+- 不用「按标题/项目名相似度」之类的启发式：键必须是稳定 id，猜错会吞掉真正的提醒。
+
+**代价与边界**：
+- 归并表只在内存里，进程重启就清空；重启后如果恰好收到同一条 hook 的 SSE 重放，
+  理论上还可能再弹一次 —— 但 Hub 的 SSE 不回放历史（见 `server/src/http.js`），所以不成立。
+- 两条都到得很快时「先到先弹」，用户看到的是命令那条（带 mode / 失败原因），
+  而不是会话那条（带项目名 + 摘要）；这是有意的：命令信息更精确。
+- 不能归并「同一个会话被两次不同命令打开」的情况（实际上 bridge 每次都是新会话）。
+- 真正的后台推送仍未解决：锁屏期间没有 SSE，只能靠回前台补发或 ntfy（见 P34 / ADR-35）。
+
+**验证**：`app/test/notifications_test.dart` 新增 3 项 —— 命令先到 / 会话先到 / 回前台补发后
+再收到 `session_done`，三种顺序都断言只弹 1 条；`flutter test` 71 通过 / 5 项真机用例跳过。
+
+## 49. 会话分组键带上设备，组头显示来源机器（2026-11-02）
+
+**问题**：工作区页的分组键只有项目路径（`projectRoot` / `workspaceRoot` / 项目名兜底），
+两台电脑上的同名项目会被并成一个组：组头「12 条」混着两台机器的会话，
+而且组头只有文件夹图标 + 项目名，看不出这批会话来自哪台电脑。
+
+**决策**：
+- `HubStore._groupKey()` 前缀 `<deviceId>|`：同一台机器上同一个目录仍然只算一组
+  （路径键继续抹平大小写 / 分隔符 / 尾斜杠，ADR-44），不同机器的同名项目分成两组。
+- `SessionGroup` 增加 `deviceId` 与 `loose` 两个字段；`loose` 取代工作区页里
+  `key == '__loose__'` 的字符串比较（键现在带设备前缀，字符串比较必然失效）。
+- `WorkspaceGroupHeader` 右侧加设备 Pill：`HubStore.deviceLabel(deviceId)`，
+  有 `clients.name` 用名字，否则退回 id（ADR-47）。
+- `SessionTile` 增加可选 `deviceLabel`：工作区页始终传，主列表只在已知设备 ≥ 2 时传，
+  单设备用户界面与以前完全一样。
+- `sessionGroups` 也走 `_onDevice()` 过滤，工作区页与主列表的设备 chip 行为一致。
+
+**代价与边界**：
+- 设备 id 是分组键的一部分，改名（`PATCH /clients`）不影响分组（用的是 id 不是 name）。
+- 一台电脑换了设备 id（重装 / 换 token）会多出一组「同名项目」，这是正确的：
+  Hub 也把它们当两台设备。
+- 组头多一个 Pill，窄屏上项目名可用宽度变小；项目名是 `Flexible` + 省略号，
+  不会挤掉右侧的条数。
+- 主列表的 `设备 …` 只在多设备时出现：单人单机用户的卡片不增加噪音。
+
+**验证**：`hub_store_test.dart` 新增「同名项目来自两台电脑时各成一组」；
+`widget_test.dart` 的工作区页用例断言两个组头都显示 `localone`；
+`flutter analyze` 无告警、`flutter test` 71 通过 / 5 跳过。
+
+## 50. 锁屏期间的即时提醒：只在「有命令在跑」时挂 `dataSync` 前台服务（2026-11-03）
+
+**问题**：`HomeShell` 在 `paused/hidden` 时主动 `_store.pause()` 断 SSE（ADR-35 的省电取舍），
+于是锁屏期间命令跑完只能等回前台补发，或依赖 Windows hook 发的 ntfy。
+「手机下发命令 → 锁屏等结果」这个最主要的用法，恰恰是本地通知发不出去的那段。
+
+**为什么必须是「前台」服务**：Android 8 起，没有常驻通知的 Service 会被系统在几分钟内冻结；
+只有 `startForeground()` 的服务（带一条用户可见、不可划走的通知）才被允许长期运行。
+所以「后台保活」在 Android 上的唯一合法形态就是「前台服务」——它说的不是
+「App 在前台」，而是「这个 Service 带一条通知，因此系统不冻结它」。
+
+**决策：形态 B —— 只在这段时间里开**：
+
+| 时机 | 动作 |
+|---|---|
+| 活跃命令数 0→1（`sendCommand` / 启动时 `refreshCommands` / SSE `command.update`） | `startKeepAlive('有 N 条命令正在执行')` |
+| 活跃数跌回 0（done / failed / cancelled / cancelling 结束） | `stopKeepAlive()` |
+| 鉴权失效（`LinkState.offline`，401） | 立刻停：SSE 都连不上，挂着没意义 |
+| 用户关掉「锁屏也提醒」 | 立刻停（`syncKeepAliveNow()`） |
+| 划掉最近任务 / Android 15 `onTimeout` / `dispose()` | 停（`stopWithTask="true"` + `STOP_FOREGROUND_REMOVE`） |
+
+- **回前台不主动停**：停了以后再次进后台就是「后台启动 FGS」，Android 11+ 会直接拒绝
+  （`ForegroundServiceStartNotAllowedException`）；命令跑的这几分钟留着常驻通知，
+  正好当「还在跑」的状态指示。
+- **不用 FCM**：自建单机场景没有 Google 服务（国产 ROM 普遍没有），也违背「零推送依赖」。
+- **不引三方库**：`KeepAliveService.kt` 只用系统 API（~110 行），与 ADR-35 一致；
+  仍不申请 `WAKE_LOCK`（前台服务本身已不被冻结）。
+- **`START_NOT_STICKY`**：进程被杀后单独复活 Service 没有意义（Flutter engine 没了，SSE 回不来）。
+- 通知走独立通道 `cline_hub_keepalive`（`IMPORTANCE_LOW`、静音、不亮、不显示角标），
+  id 固定 `7301`，与 `HubNotification.id`（key 哈希）分开，互不覆盖。
+
+**Dart 侧**：`HubNotifier` 新增 `startKeepAlive` / `stopKeepAlive`，**带默认空实现**——
+`extends HubNotifier` 的实现不必改；`implements` 的 `NoopHubNotifier` / 测试记录器
+不继承方法体，各自补两个空方法。旧 APK 装了新 Dart 只会 `MissingPluginException` 静默降级。
+开关是 `SettingsStore.keepAliveEnabled`（`notify.keepAlive`，默认开）。
+
+**代价与边界**：
+- 命令运行期间多一条不可划走的常驻通知；可一键关掉，回到「回前台补发」的旧行为。
+- 国产 ROM 若仍冻结进程，前台服务也救不了：README 排障表记「电池优化 → 无限制」。
+- Android 15+ `dataSync` 有 6h/24h 累计上限：命令都是分钟级，到点只有卡死命令才可能触发；
+  卡死时 P13 的 60 秒对账会把 `running` 回写 `failed`，活跃数归 0 自动退场。
+- 手机本地通知与 Windows hook 的 ntfy 是两条独立通道：同一件事仍可能响两次
+  （ntfy 覆盖的是「电脑上的会话」，包括手机没开 App 的情况，见 ADR-35）。
+
+**验证**：`cd app; flutter analyze` 无告警、`flutter test` **78 通过 / 5 跳过**
+（新增 7 条保活用例：拉起 + 幂等 / 终态收起 / 取消收起 / 关开关不拉起 / 平台不支持不碰 /
+切换开关即时生效 / 后台保活期间不断流）。真机清单见 `docs/status.md` §0 的 P34。
+

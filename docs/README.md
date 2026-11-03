@@ -13,7 +13,7 @@
 | 想知道某个版本改了什么 | [`../CHANGELOG.md`](../CHANGELOG.md) | 2 分钟 |
 | 要改 Hub 接口 / 写客户端 | [`api.md`](api.md) | 10 分钟 |
 | 要改 bridge 的采集或执行 | [`bridge-notes.md`](bridge-notes.md) + `../bridge/README.md` | 15 分钟 |
-| 想推翻某个设计 | [`decisions.md`](decisions.md)（47 条 ADR，只追加） | 按条查 |
+| 想推翻某个设计 | [`decisions.md`](decisions.md)（50 条 ADR，只追加） | 按条查 |
 | 要重启 / 停掉 bridge | [`interruptions.md`](interruptions.md)（先停任务、再杀进程） | 3 分钟 |
 | 换服务器 / 从零重建 | [`server-prep.md`](server-prep.md) + `../deploy/README.md` | 30 分钟 |
 | 改手机端 UI | `../app/README.md` | 10 分钟 |

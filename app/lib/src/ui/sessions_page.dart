@@ -181,7 +181,14 @@ class _SessionsPageState extends State<SessionsPage> {
         itemBuilder: (context, index) {
           if (index == items.length) return _buildFooter(store);
           final item = items[index];
-          return SessionTile(item: item, onTap: () => _open(item));
+          return SessionTile(
+            item: item,
+            // 单设备时不重复报设备名；接了两台电脑后每条会话都要能看出出处。
+            deviceLabel: store.knownDevices.length > 1
+                ? store.deviceLabel(item.deviceId)
+                : null,
+            onTap: () => _open(item),
+          );
         },
       ),
     );

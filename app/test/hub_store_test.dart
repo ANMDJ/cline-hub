@@ -365,8 +365,56 @@ void main() {
     expect(groups.map((group) => group.label), ['b', 'a', '未标注工作区']);
     expect(groups.first.items.map((item) => item.sessionId), ['s1', 's3']);
     expect(groups.first.path, r'C:\work\b');
-    expect(groups.first.key, 'c:/work/b');
+    // 折叠键带设备前缀：同名项目在两台电脑上是两组。
+    expect(groups.first.key, 'localone|c:/work/b');
+    expect(groups.first.deviceId, 'localone');
+    expect(groups.first.loose, isFalse);
+    // 没有 project 信息的是「未标注工作区」，不是 loose（loose = 家目录等散会话）。
+    expect(groups.last.loose, isFalse);
     expect(groups.first.items, hasLength(2));
+    store.dispose();
+  });
+
+  test('同名项目来自两台电脑时各成一组，组头能拿到设备名', () async {
+    final settings = await makeSettings();
+    final fake = FakeHubApi(
+      sessionItems: [
+        SessionItem(
+          deviceId: 'localone',
+          sessionId: 's1',
+          project: 'cline-hub',
+          projectRoot: r'C:\work\cline-hub',
+          projectKind: 'project',
+          sortAt: DateTime(2026, 11, 2, 9),
+        ),
+        SessionItem(
+          deviceId: 'laptop',
+          sessionId: 's2',
+          project: 'cline-hub',
+          projectRoot: r'C:\Users\bob\cline-hub',
+          projectKind: 'project',
+          sortAt: DateTime(2026, 11, 2, 8),
+        ),
+      ],
+      deviceItems: const [
+        DeviceItem(id: 'localone', name: 'LocalOne-Windows'),
+        DeviceItem(id: 'laptop', name: '办公本'),
+      ],
+    );
+    final store = HubStore(settings: settings, apiFactory: (_) => fake);
+    await store.start();
+
+    final groups = store.sessionGroups;
+    expect(groups, hasLength(2), reason: '两台电脑的同名项目不能合并');
+    expect(groups.map((group) => group.label), ['cline-hub', 'cline-hub']);
+    expect(groups.map((group) => group.deviceId), ['localone', 'laptop']);
+    expect(store.deviceLabel(groups.first.deviceId), 'LocalOne-Windows');
+    expect(store.deviceLabel(groups.last.deviceId), '办公本');
+
+    // 设备过滤同样作用于工作区分组（不只是主列表）。
+    store.setDeviceFilter('laptop');
+    expect(store.sessionGroups.map((group) => group.deviceId), ['laptop']);
+    store.setDeviceFilter(null);
     store.dispose();
   });
 

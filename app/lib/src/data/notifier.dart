@@ -28,6 +28,16 @@ abstract class HubNotifier {
   Future<bool> ensurePermission();
 
   Future<void> show(HubNotification notification);
+
+  /// 起「有命令在跑」期间的保活前台服务（P34）。
+  ///
+  /// 给默认空实现是有意的：`extends HubNotifier` 的实现不必改。
+  /// 注意 `implements HubNotifier` 的类（`NoopHubNotifier` / 测试里的记录器）
+  /// 不会继承方法体，仍需各自 override —— 两个方法都保持空实现即可。
+  Future<void> startKeepAlive(String text) async {}
+
+  /// 停掉保活服务；没有在跑时是空操作。
+  Future<void> stopKeepAlive() async {}
 }
 
 /// Android 原生实现：`MainActivity` 里注册的 MethodChannel。
@@ -72,6 +82,34 @@ class LocalHubNotifier implements HubNotifier {
       // 用户关了权限时系统会抛，不打扰界面。
     }
   }
+
+  /// 老 APK（没有 KeepAliveService）会抛 MissingPluginException：
+  /// 静默忽略即可，前端不需要知道保活失败。
+  @override
+  Future<void> startKeepAlive(String text) async {
+    if (!supported) return;
+    try {
+      await _channel.invokeMethod<bool>('startKeepAlive', <String, Object?>{
+        'text': text,
+      });
+    } on MissingPluginException {
+      // 旧包：没有这个方法。
+    } on PlatformException {
+      // 后台启动被系统拒绝（Android 11+）/ ROM 限制：降级为「回前台补发」。
+    }
+  }
+
+  @override
+  Future<void> stopKeepAlive() async {
+    if (!supported) return;
+    try {
+      await _channel.invokeMethod<void>('stopKeepAlive');
+    } on MissingPluginException {
+      // 旧包：没有这个方法。
+    } on PlatformException {
+      // 服务已经不在：无所谓。
+    }
+  }
 }
 
 /// 什么都不做：Web 预览、测试、或用户关掉通知时使用。
@@ -86,4 +124,10 @@ class NoopHubNotifier implements HubNotifier {
 
   @override
   Future<void> show(HubNotification notification) async {}
+
+  @override
+  Future<void> startKeepAlive(String text) async {}
+
+  @override
+  Future<void> stopKeepAlive() async {}
 }

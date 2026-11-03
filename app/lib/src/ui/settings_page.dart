@@ -486,11 +486,32 @@ class _SettingsPageState extends State<SettingsPage> {
                     if (mounted) setState(() {});
                   },
                 ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  title: const Text(
+                    '锁屏也提醒',
+                    style: TextStyle(fontSize: 12.5),
+                  ),
+                  subtitle: const Text(
+                    '命令运行期间挂一个 dataSync 前台服务（会显示一条不可划走的常驻通知），'
+                    '锁屏后也能收到完成通知；Android 15+ 系统限制最长 6 小时',
+                    style: TextStyle(fontSize: 11, height: 1.5, color: kMuted),
+                  ),
+                  value: settings.keepAliveEnabled,
+                  onChanged: (value) async {
+                    await settings.setKeepAlive(value);
+                    // 开关立即生效：不用等下一轮命令才开 / 停服务。
+                    widget.store.syncKeepAliveNow();
+                    if (mounted) setState(() {});
+                  },
+                ),
                 const SizedBox(height: 4),
                 Text(
                   _notifyStatus ??
-                      'Android 13+ 需要授予通知权限；App 退到后台会主动断 SSE 省电，'
-                          '这期间由 ntfy 兜底，回到 App 后会补发后台期间结束的命令。',
+                      'Android 13+ 需要授予通知权限。手机下发的命令：开着「锁屏也提醒」时，'
+                          '命令运行期间 App 保持 SSE 连接，跑完能立刻提醒；关掉则等回到 App 才补发。'
+                          '电脑上自己开的会话仍由 ntfy 推送。',
                   style: TextStyle(
                     fontSize: 11,
                     height: 1.6,

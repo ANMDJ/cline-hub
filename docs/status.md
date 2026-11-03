@@ -30,13 +30,49 @@
 | 18 | P24 | **设备列表接口**：`GET /api/v1/devices`（app 看全部、device 只看自己；在线时间 / 会话数 / 待执行 / 执行中）+ App 设置页「已接入设备」卡片、chip 用设备名 | ✅ Hub 已上线（2026-11-02 14:07）；App `1.1.5+7` |
 | 19 | P25 | **接入文档**：`docs/new-device.md`（第二台电脑）、`docs/self-host.md`（从零自托管 / 多设备 / 多人边界）、`bridge/README.md` | ✅ 已写入仓库 |
 | 20 | P26 | **App 1.1.5+7 发版**：设备列表 + 设备名 chip + 命令卡片项目目录 / 实时耗时 | ✅ APK 55,239,940 B / sha256 `53a64cd1…d5ac`，已上线 |
+| 21 | P32 | **同一条任务只弹一条通知**：命令终态与 bridge 合成的 `session_done` 用 `sessionId` 归并（15 分钟窗口），修「息屏回前台收到两条消息」 | ✅ 代码 + 测试完成（App 未发版） |
+| 22 | P33 | **会话分组显示来源机器**：分组键改成 `<设备>\|<项目键>`（两机的同名项目是两组），组头 + 卡片元信息显示设备名；设备过滤也作用于工作区页 | ✅ 代码 + 测试完成（App 未发版） |
+| 23 | P34 | **后台保活（形态 B）**：只在「有命令在跑」时挂 `dataSync` 前台服务（`KeepAliveService` + 静音常驻通知），锁屏期间 SSE 不断、命令跑完立刻弹通知；活跃数归 0 / 401 / 关开关 / 划掉任务即停。设置页「锁屏也提醒」默认开 | ✅ 代码 + 测试完成（1.1.6+8 未发版，待真机验证） |
 
 已完成并上线的：P0 / P1 / P3–P26
 （P3、P9 已部署；P5、P10、P15、P17、P8、P22–P26 已发布到 App；P7/P14 已在 12:51 重启后生效）。
+**P32 / P33 / P34 已改完并测试，App 未发版**（`flutter test` 78 通过 / 5 真机用例跳过；
+版本号已提到 `1.1.6+8`，release APK 已构建）。P34 需要真机按 §0 的清单核对（锁屏收通知 / 常驻通知消失 / 划掉任务）。
 **P19（读接口按设备隔离）已上线**（2026-11-02 13:28 镜像重建，迁移无变化）。
 **P20（路径归一化）已上线**（2026-11-02 13:50 镜像重建，备份后缀 `20261102-135023`）。
 **P21–P26 已上线/已发版**：重发脚本 / 命令卡片项目目录 + 动态耗时 / 多设备过滤 / 设备列表接口 /
 接入文档；App `1.1.5+7`（`flutter test` 67 项通过，5 项真机用例跳过）。
+
+### P32 + P33 落地记录（2026-11-02）
+
+- **P32 为什么**：用户在息屏 → 回前台时收到同一任务的两条通知。一次远程命令会写两次终态：
+  bridge 立刻 PATCH 的 `command.update`，和 30 秒「终态稳定」后合成的 `session_done`
+  （会话就是这条命令开出来的）。`HubStore` 原来的去重键是 `cmd_x:done` / `hook:185`，
+  两者互不相识，所以先弹「命令完成 · ACT」、再弹「会话完成 · cline-hub」；
+  息屏期间 SSE 断了，回前台先补发命令、随后 hook 事件到达时又弹一次，最容易被看到。
+- **P32 改法**：新增 `_notifiedTasks`（`sessionId → 首次提醒时间`，窗口 15 分钟）。
+  命令 / 会话两个通知出口在弹之前都查它、弹之后写入；先到哪条弹哪条，另一条静默。
+  没有 `sessionId` 的老数据（命令没回写、Cline 自己的会话）行为不变。
+- **P33 为什么**：工作区分组键只有项目路径，两台电脑上的同名项目会被并成一组，
+  组头的「N 条」混着两台机器；而且组头没有来源机器标识，看不出差别。
+- **P33 改法**：`_groupKey()` 前缀 `<deviceId>|`，`SessionGroup` 新增 `deviceId` / `loose`；
+  组头右侧加设备 Pill（`HubStore.deviceLabel()`，没有名字时退回 id），组内卡片元信息补
+  `设备 …`；`sessionGroups` 也走设备过滤（工作区页同样受 chip 影响）；
+  `loose` 取代原来对 `key == '__loose__'` 的字符串比较。
+- **验证**：`cd app; flutter analyze`（No issues，20.6s）、`flutter test` **71 通过 / 5 跳过**
+  （新增 3 条通知归并用例 + 1 条多设备分组用例 + 组头设备名断言）。
+
+### P34 真机验证清单（待做，装 `1.1.6+8` 后逐条核对）
+
+| # | 操作 | 期望 |
+|---|---|---|
+| 1 | 手机下发 `act` 命令 → 立刻息屏 | 命令结束时**锁屏收到本地通知**；期间通知栏有「Cline Console · 有 1 条命令正在执行」常驻通知 |
+| 2 | 同上，同时看着 ntfy | 确认是否**双响**；双响就记成已知边界（两条通道独立，见 ADR-50），或让用户关掉设置里「会话完成 / 失败」 |
+| 3 | 命令跑到终态 | 常驻通知**自动消失**，普通完成通知仍在 |
+| 4 | 系统设置里撤销 `POST_NOTIFICATIONS` → 再下发命令 | 服务不崩、不弹通知，命令照常执行；回前台仍能看到结果 |
+| 5 | 命令运行期间从最近任务划掉 App | 常驻通知消失（`stopWithTask="true"`），bridge 侧命令继续执行 |
+| 6 | Android 15+ 跑一条正常命令 | `onTimeout` 不触发（`dataSync` 6h/24h 上限与分钟级命令无关） |
+| 7 | 国产 ROM（MIUI / EMUI 等）仍被冻结 | 设置里给 App「电池优化 → 无限制」后重试；仍不行就关「锁屏也提醒」（回退到回前台补发），并记进 `app/README.md` 排障 |
 
 ### Step 1 + Step 2 落地记录（2026-11-02）
 
@@ -417,6 +453,9 @@ powershell -NoProfile -File deploy/windows/verify-hub.ps1
 | 2026-11-02 | **仓库转公开 + 落地页填链接（P28）**：`gh repo edit --visibility public`（`ANMDJ/cline-hub`）；`site/index.html` 三处 `data-todo="repo"` 占位（顶栏 / CTA「看源码」/ 页脚）换成 `https://github.com/ANMDJ/cline-hub` 并**去掉 `data-todo`**（否则 `app.js` 会 `preventDefault` 弹「地址还没填」），`app.js` 注释改为「只兜 fork 后的占位」；`site/README.md` / `README.md` / `AGENTS.md` 更正「4 个占位 / 仓库还是私有」的过期说法（实际 3 处）；服务器 IP 与域名**未脱敏**（`hub.littlewish.top` 的 A 记录本就直指该 IP，仓库里藏它没有安全意义） |
 | 2026-11-02 | **落地页对齐 1.1.5 + 接上仓库（P29）**：`site/index.html` 按当前版本重写 —— Hero 按钮「五分钟自建 / 下载 App 1.1.5（`/app/cline-console-1.1.5.apk`）/ GitHub 源码」，facts 换成 `1.1.5` + `22/22`；特性卡 6→8（远程命令与取消、模板化执行 · 并发池、多设备、结构化输出、8 个迁移、22 项冒烟）；架构三段补 `messages.json` / `devices` / Markdown / 设备筛选 / `pid` 对账；快速开始 `git clone` 填真仓库、冒烟输出改 `22/22`；进度表 M2b/M2c 完成、M3 进行中（剩 FCM 与审计视图）；FAQ 加「APK 在哪下载」；页脚接仓库 + CHANGELOG + 版本号。`site/check-site.mjs` 增加 `/app/*` 运行时白名单（APK 由 Caddy 直出、不在 `site/` 里，否则误报「文件不存在」）；`site/README.md` 记下「版本 / APK 路径共 6 行 9 处，发版一起改」。`node site/check-site.mjs` 通过；**已发版**：`tar` → `scp` → 服务器解包（备份 `/tmp/site-backup-20261102-153423.tgz`，文件 chmod `644`），线上 `http://82.157.153.22/` 实测 200、`1.1.5`×9、`22/22`×2、APK 链接×3、`data-todo` 残留 0、APK HEAD 200 |
 | 2026-11-02 | **脱敏本机路径（P30）**：公开仓库里写死的个人绝对路径全部换掉 —— Windows 用户目录统一写成 `C:\Users\alice`（代码注释 / 接口示例 / 测试夹具，大小写用例同步成 `ALICE` 以保留「不动大小写」的断言）、Git Bash 的 `/c/Users/<账号>/...` → `<仓库>`、Android SDK / Gradle / JDK 的本机绝对路径 → `%LOCALAPPDATA%\Android\Sdk` / `%USERPROFILE%\.gradle` / `<JDK 17 路径>`、`Downloads\kids_privae.pem` → `<下载目录>/kids.pem`。`deploy/windows/ClineBridge.vbs` 改为顶部 `REPO` 常量 + 拼接（它会被复制进「启动」文件夹，无法靠脚本自定位；同时 `README.md` 里的同款片段同步）。`AGENTS.md` 仓库根改成「当前目录 + `<仓库>` + `%USERPROFILE%` 示例」，`docs/bridge-notes.md` 的本机账号改成 `<你的账号>`；`LICENSE` 的版权署名保留（那是作者名，不是路径）。回归：server **39/39**、bridge **53/53**、whitelist 自检 **10/10**、App `flutter test` **67 通过 / 5 跳过**、`node site/check-site.mjs` 通过 |
+| 2026-11-02 | **P32 同任务通知归并**：`HubStore._notifiedTasks`（`sessionId → 首次提醒时间`，窗口 15 分钟）把 `command.update` 终态与 bridge 30 秒稳定后合成的 `session_done` 归并成「一条任务」；先到哪条弹哪条，另一条静默。修「息屏 → 回前台同一任务两条通知」；`flutter test` 71 通过 / 5 跳过（新增 3 条归并用例）；ADR-48 |
+| 2026-11-02 | **P33 分组显示来源机器**：`HubStore._groupKey()` 改成 `<deviceId>\|<项目键>`（两机同名项目分成两组），`SessionGroup` 加 `deviceId` / `loose`，`sessionGroups` 走设备过滤；`WorkspaceGroupHeader` 增加设备 Pill、`SessionTile` 元信息补 `设备 …`（多设备时）；`flutter test` 71 通过 / 5 跳过；ADR-49 |
+| 2026-11-03 | **P34 锁屏保活（形态 B）**：新增 `KeepAliveService.kt`（`dataSync` 前台服务 + 静音常驻通知，通道 `cline_hub_keepalive` / id `7301`，`START_NOT_STICKY`、`stopWithTask`、Android 15 `onTimeout` 收工）；`AndroidManifest` 加 `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_DATA_SYNC` 与 service 声明；`MainActivity` 的 `…/notify` 通道加 `startKeepAlive` / `stopKeepAlive`（`IllegalStateException` / `SecurityException` 一律降级为 false）；`HubNotifier` 加两个默认空实现的方法，`SettingsStore.keepAliveEnabled`（`notify.keepAlive`，默认开）；`HubStore._syncKeepAlive()` 在活跃命令 0→1 开、归 0 / 401 / 关开关 / `dispose` 停（回前台不主动停，避开 Android 11+ 后台启动限制），设置页「通知」卡片加「锁屏也提醒」开关；版本 `1.1.6+8`；`flutter analyze` 无告警、`flutter test` **78 通过 / 5 跳过**（新增 7 条保活用例）；ADR-50。**待真机验证**（锁屏收通知 / 常驻通知消失 / 划掉任务） |
 | 2026-11-02 | **重写历史清掉本机路径（P31）**：用 `git-filter-repo`（单文件脚本，不装进系统环境）对全部提交做 blob 级替换 —— Windows 用户目录（含 JSON 里 4 层反斜杠变体）→ `C:\Users\alice`，全大写变体单独映射成 `ALICE`；Git Bash 的 `/c/Users/<账号>/...`（两种旧目录形态 `~/.cline/...` 与 `~/projects/...`）→ `<仓库>`；`D:\Android\Sdk` / `D:\android\.gradle` / `D:\Program Files\java\jdk-17` / `D:/android/sdk` → 环境变量写法；反引号包着的账号名 → `alice`。`LICENSE` / `README` 的版权署名保留（作者名不是路径）。重写前 `git bundle` 备份到仓外临时目录；重写后 HEAD tree 与重写前**逐字节一致**（`6e4eca45`），即只改了历史、当前内容未变。随后按 `commit-map` 把 `docs/status.md` 里 8 处旧短哈希回填成新哈希（例：`a20abe1`→`c3ee1da`），`git log -S'<旧用户目录>'` 全历史 **0 命中**。⚠️ 实测 GitHub 仍能按 SHA 直接访问强推前的旧提交（HTTP 200 且内容含旧路径），彻底清掉必须删仓重建 —— `delete_repo` scope 待授权 |
 
 

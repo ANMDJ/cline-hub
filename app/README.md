@@ -28,7 +28,7 @@ cd app
 flutter pub get
 flutter run -d android            # 真机 / 模拟器
 flutter run -d chrome             # 桌面预览（Web 下没有 SSE，见下文）
-flutter test                      # 51 个用例（含通知去重 / 回前台补发 / 打开下载页）
+flutter test                      # 78 项通过（5 项真机用例跳过；含通知去重 / 同任务合并 / 回前台补发 / 保活）
 flutter build apk --release       # 产物 build/app/outputs/flutter-apk/
 
 # 可选：拿真实 Hub 跑一遍客户端（不设变量则这组自动跳过）
@@ -137,8 +137,11 @@ flutter build apk --release     # → build/app/outputs/flutter-apk/app-release.
 SSE 四种事件都用上了：`session`（去抖 900ms 后刷新列表）、`hook`（插到动态顶部，按 id 去重）、
 `command` / `command.update`（按 id 就地替换命令状态）。
 
-工作区页的分组键会抹平路径写法差异（`C:\a` / `C:/a` / 重复或尾部斜杠 / 大小写），
-同一个目录只显示一组；`HubStore._pathKey()` 只用于比较，展示值仍是服务端原样（ADR-44）。
+工作区页的分组键是 **`<设备>|<项目键>`**，同一个键里再抹平路径写法差异
+（`C:\a` / `C:/a` / 重复或尾部斜杠 / 大小写），所以同一台机器上的同一个目录只显示一组；
+两台电脑上的同名项目是**两组**，组头右侧用 `clients.name`（没起名字时退回 device id）标出
+「来自哪台电脑」，组内每张卡片也会在元信息里写 `设备 …`。
+`HubStore._pathKey()` 只用于比较，展示值仍是服务端原样（ADR-44）。
 
 ## 系统通知（1.1.2 起）
 
@@ -155,7 +158,22 @@ SSE 四种事件都用上了：`session`（去抖 900ms 后刷新列表）、`ho
 设置页「通知」卡片可分别关掉命令 / 会话通知，并手动请求 `POST_NOTIFICATIONS`（Android 13+）。
 
 边界：App 退到后台会断 SSE 省电，这期间收不到事件（可靠通道仍是 ntfy）；
-这里的通知是「App 还活着时的即时提醒」，不是推送。同一个 `commandId:status` / `hook:<id>` 只弹一次。
+这里的通知是「App 还活着时的即时提醒」，不是推送。
+
+**同一件事只提醒一次**：一次远程命令会产生两条终态事件 —— bridge 立刻 PATCH 的
+`command.update`（done/failed）和 30 秒终态稳定后合成的 `session_done`（会话就是这条命令
+开出来的）。它们的去重键不同（`cmd_x:done` 与 `hook:185`），所以以前会并排弹
+「命令完成 · ACT」和「会话完成 · cline-hub」；息屏后回前台补发时最明显。
+现在 `HubStore` 用 `sessionId` 把两者归并成一个「任务」，**15 分钟内同一会话只弹第一条**
+（先到哪条弹哪条，另一条静默），键的清理也只是内存里的 Map，不落盘。
+
+**锁屏也即时提醒（1.1.6 起）**：`HomeShell` 仍然在 `paused/hidden` 时 `_store.pause()`，
+但只要有**活跃命令**（pending / delivered / running / cancelling），`HubStore._syncKeepAlive()`
+就会通过 MethodChannel 拉起 `KeepAliveService`（`dataSync` 前台服务 + 一条静音常驻通知），
+进程不被冻结、SSE 继续收事件，所以锁屏期间命令跑完也能立刻弹本地通知。
+活跃数跌回 0 / 鉴权失效 / 用户关开关 / 划掉最近任务时服务自动停 —— 它只覆盖
+「命令运行的那几分钟」，不是长期常驻。设置页「通知」卡片的「锁屏也提醒」开关默认开。
+代价与边界（ROM 省电策略、Android 15 的 6 小时上限、与 ntfy 两条通道）见 ADR-50。
 
 ## 几个刻意的取舍
 
@@ -180,6 +198,8 @@ SSE 四种事件都用上了：`session`（去抖 900ms 后刷新列表）、`ho
   `DeviceFilterBar` 只在已知设备 ≥ 2 时渲染，单设备下界面与以前完全一样。
   设备候选来自 `GET /api/v1/devices`（ADR-47），并合并「设置里的 deviceId / 已加载数据」兜底；
   chip 显示 `clients.name`，设置页「已接入设备」卡片展示在线状态与计数。
+  接了两台以上时，会话卡片元信息会补一段 `设备 <名字>`；工作区页的分组与组头一律带设备
+  （即使只有一台，组头也写明），因为不同机器的同名项目是两组。
 
 
 ## Hub 侧注意

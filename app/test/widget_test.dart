@@ -233,6 +233,9 @@ void main() {
     expect(find.text('2 条'), findsOneWidget);
     expect(find.text('1 条'), findsOneWidget);
     expect(find.text('改登录页'), findsOneWidget);
+    // 组头必须写清来自哪台电脑（没起名字时退回 device id），
+    // 否则两台机器上同名项目分成两组时看不出差别。
+    expect(find.text('localone'), findsNWidgets(2));
 
     // 收起 2 条的那组，另一组不受影响
     await tester.tap(find.text('2 条'));

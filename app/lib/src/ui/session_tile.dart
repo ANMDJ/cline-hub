@@ -7,10 +7,18 @@ import 'widgets.dart';
 
 /// 会话卡片（列表页与工作区页共用）：状态点 + 标题 + 执行中/命令数 + 元信息 + 结果预览。
 class SessionTile extends StatelessWidget {
-  const SessionTile({super.key, required this.item, required this.onTap});
+  const SessionTile({
+    super.key,
+    required this.item,
+    required this.onTap,
+    this.deviceLabel,
+  });
 
   final SessionItem item;
   final VoidCallback onTap;
+
+  /// 来源电脑的显示名：多设备时由页面传进来，单设备时为 null（不占位）。
+  final String? deviceLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -70,7 +78,13 @@ class SessionTile extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               MetaLine(
-                parts: [item.workspace, relativeTime(item.sortAt), item.model],
+                parts: [
+                  if ((deviceLabel ?? '').trim().isNotEmpty)
+                    '设备 ${deviceLabel!.trim()}',
+                  item.workspace,
+                  relativeTime(item.sortAt),
+                  item.model,
+                ],
               ),
               if (item.resultPreview != null) ...[
                 const SizedBox(height: 6),

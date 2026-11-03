@@ -42,8 +42,8 @@ class _WorkspacesPageState extends State<WorkspacesPage> {
       builder: (context, _) {
         final groups = widget.store.sessionGroups;
         final ordered = <SessionGroup>[
-          ...groups.where((g) => g.key != '__loose__'),
-          ...groups.where((g) => g.key == '__loose__'),
+          ...groups.where((g) => !g.loose),
+          ...groups.where((g) => g.loose),
         ];
         return Scaffold(
           appBar: AppBar(title: Text('工作区 (${ordered.length})')),
@@ -88,6 +88,7 @@ class _WorkspacesPageState extends State<WorkspacesPage> {
             children: [
               WorkspaceGroupHeader(
                 group: group,
+                deviceLabel: store.deviceLabel(group.deviceId),
                 collapsed: collapsed,
                 onToggle: () => _toggle(group.key),
               ),
@@ -97,6 +98,7 @@ class _WorkspacesPageState extends State<WorkspacesPage> {
                     padding: const EdgeInsets.only(top: 8),
                     child: SessionTile(
                       item: item,
+                      deviceLabel: store.deviceLabel(group.deviceId),
                       onTap: () => Navigator.of(context).push(
                         MaterialPageRoute<void>(
                           builder: (_) => SessionDetailPage(
@@ -115,16 +117,28 @@ class _WorkspacesPageState extends State<WorkspacesPage> {
   }
 }
 
-/// 工作区组头：点一下收起/展开；收起时右侧显示条数与最近时间。
+/// 组头空间有限：设备名来自 `clients.name`，长度不受控，太长就截断。
+String _shortenDevice(String label) {
+  final trimmed = label.trim();
+  if (trimmed.length <= 14) return trimmed;
+  return '${trimmed.substring(0, 13)}…';
+}
+
+/// 工作区组头：项目名 + 来源设备；点一下收起/展开，收起时右侧显示条数与最近时间。
 class WorkspaceGroupHeader extends StatelessWidget {
   const WorkspaceGroupHeader({
     super.key,
     required this.group,
+    required this.deviceLabel,
     required this.collapsed,
     required this.onToggle,
   });
 
   final SessionGroup group;
+
+  /// 这台电脑在 Hub 上的显示名（`clients.name`，没有名字时退回 id）。
+  final String deviceLabel;
+
   final bool collapsed;
   final VoidCallback onToggle;
 
@@ -165,7 +179,13 @@ class WorkspaceGroupHeader extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
+              // 多台电脑时最容易混：同名项目分组并排出现，组头必须写清来自哪台机器。
+              Pill(
+                label: _shortenDevice(deviceLabel),
+                color: kAccent,
+                icon: Icons.computer_rounded,
+              ),
+              const SizedBox(width: 6),
               Pill(label: '${group.items.length} 条', color: kInfo),
               if (collapsed && latest != null) ...[
                 const SizedBox(width: 8),

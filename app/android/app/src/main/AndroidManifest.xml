@@ -5,6 +5,10 @@
          振动权限给通知通道用；两个都不涉及隐私数据。 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.VIBRATE"/>
+    <!-- P34：命令执行期间的 dataSync 前台服务。
+         targetSdk 34+ 必须单独声明类型权限，否则 startForeground 抛 SecurityException。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <application
         android:label="Cline Console"
         android:name="${applicationName}"
@@ -32,6 +36,13 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- P34：「有命令在跑」时挂一条常驻通知，避免锁屏期间进程被冻结、SSE 断掉。
+             stopWithTask：用户划掉最近任务时自动收工，不留孤儿通知。 -->
+        <service
+            android:name=".KeepAliveService"
+            android:exported="false"
+            android:stopWithTask="true"
+            android:foregroundServiceType="dataSync"/>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

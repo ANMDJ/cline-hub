@@ -3,8 +3,8 @@
 /// 为什么不引 `package_info_plus`：这个客户端刻意只保留 http / shared_preferences
 /// 两个依赖，版本号一年也就改几次，手工同步比多一个插件更划算。
 /// 发版脚本 `scripts/release-apk.mjs` 会读 `pubspec.yaml` 并校验这里是否一致。
-const String kAppVersion = '1.1.5';
-const int kAppBuild = 7;
+const String kAppVersion = '1.1.6';
+const int kAppBuild = 8;
 
 class ChangelogEntry {
   const ChangelogEntry(this.version, this.date, this.items);
@@ -15,6 +15,11 @@ class ChangelogEntry {
 }
 
 const List<ChangelogEntry> kChangelog = <ChangelogEntry>[
+  ChangelogEntry('1.1.6', '2026-11-03', <String>[
+    '新增：锁屏也提醒——命令运行期间挂一个前台服务，息屏后命令跑完也能立刻收到通知（设置里可关）',
+    '修复：同一个任务收到两条通知（命令完成 + 会话完成），15 分钟内只提醒一次',
+    '优化：工作区按「设备 + 项目」分组，组头显示来自哪台电脑；两台机器的同名项目不再并成一组',
+  ]),
   ChangelogEntry('1.1.5', '2026-11-02', <String>[
     '新增：设置页「已接入设备」列表——每台电脑的在线状态、会话数、待执行 / 执行中命令，可直接设为默认设备',
     '新增：多设备筛选 chip 显示设备名（不再只有 id），新接入、还没产生数据的电脑也会立刻出现',
