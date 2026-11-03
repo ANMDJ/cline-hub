@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
@@ -28,6 +29,7 @@ class ApiException implements Exception {
     'http_502' || 'http_503' || 'http_504' => '网关后面的服务没起来（$code），去服务器看 Hub 进程',
     'unknown_device' => '设备不存在：先在 Hub 上创建设备客户端',
     'auth_unavailable' => 'Hub 连不上数据库（503）',
+    'attachment_too_large' => '附件太大：Hub 上限是 8 MB（可用 HUB_MAX_ATTACHMENT_BYTES 调大）',
     'invalid_field' => '参数不合法：$message',
     _ => status == 0 ? message : '$message（$status $code）',
   };
@@ -84,6 +86,18 @@ abstract class HubApi {
     String mode,
     String? workspace,
     String? sessionId,
+    String? attachmentId,
+  });
+
+  /// 上传一份附件（文件 / 图片）到 Hub，返回可被 [sendCommand] 引用的元数据。
+  ///
+  /// 内容走 base64 JSON，而不是 multipart：服务端是零框架的 `node:http`，
+  /// 没有 multipart 解析（ADR-52）。上限见 `kMaxAttachmentBytes`（8 MB）。
+  Future<AttachmentInfo> uploadAttachment({
+    required String deviceId,
+    required String name,
+    required String mimeType,
+    required Uint8List bytes,
   });
 
   /// 取消一条还没结束的命令。
@@ -131,6 +145,7 @@ class HttpHubApi implements HubApi {
     String path, {
     Map<String, String>? query,
     Object? body,
+    Duration? timeLimit,
   }) async {
     final request = http.Request(method, _uri(path, query));
     request.headers.addAll(_headers);
@@ -139,14 +154,15 @@ class HttpHubApi implements HubApi {
       request.body = jsonEncode(body);
     }
 
+    final limit = timeLimit ?? timeout;
     http.StreamedResponse response;
     try {
-      response = await _client.send(request).timeout(timeout);
+      response = await _client.send(request).timeout(limit);
     } on TimeoutException {
       throw ApiException(
         0,
         'timeout',
-        'request timed out after ${timeout.inSeconds}s',
+        'request timed out after ${limit.inSeconds}s',
       );
     } catch (error) {
       throw ApiException(0, 'network', '$error');
@@ -279,6 +295,7 @@ class HttpHubApi implements HubApi {
     String mode = 'plan',
     String? workspace,
     String? sessionId,
+    String? attachmentId,
   }) async {
     final json = await _request(
       'POST',
@@ -289,10 +306,39 @@ class HttpHubApi implements HubApi {
         'mode': mode,
         if (workspace != null && workspace.isNotEmpty) 'workspace': workspace,
         if (sessionId != null && sessionId.isNotEmpty) 'sessionId': sessionId,
+        if (attachmentId != null && attachmentId.isNotEmpty)
+          'attachmentId': attachmentId,
       },
     );
     final raw = json['command'];
     return CommandItem.fromJson(
+      raw is Map ? raw.cast<String, dynamic>() : <String, dynamic>{},
+    );
+  }
+
+  /// 上传超时单独放宽：一份 8 MB 的图片在移动网络下 15 秒根本传不完。
+  static const Duration uploadTimeout = Duration(seconds: 90);
+
+  @override
+  Future<AttachmentInfo> uploadAttachment({
+    required String deviceId,
+    required String name,
+    required String mimeType,
+    required Uint8List bytes,
+  }) async {
+    final json = await _request(
+      'POST',
+      '/api/v1/attachments',
+      body: {
+        'deviceId': deviceId,
+        'name': name,
+        'mimeType': mimeType,
+        'data': base64Encode(bytes),
+      },
+      timeLimit: uploadTimeout,
+    );
+    final raw = json['attachment'];
+    return AttachmentInfo.fromJson(
       raw is Map ? raw.cast<String, dynamic>() : <String, dynamic>{},
     );
   }

@@ -250,6 +250,47 @@ class SessionPage {
   final String? nextCursor;
 }
 
+/// 随命令一起发给电脑的附件（文件 / 图片）。
+///
+/// 只有元数据：内容在 Hub 的 `attachments` 表里，bridge 领取命令时按 [id]
+/// 自己下载到本机。列表接口也只返回这几个字段，不会把文件内容塞进 JSON。
+class AttachmentInfo {
+  const AttachmentInfo({
+    required this.id,
+    this.name,
+    this.mimeType,
+    this.byteSize = 0,
+    this.createdAt,
+  });
+
+  factory AttachmentInfo.fromJson(Map<String, dynamic> json) => AttachmentInfo(
+    id: _str(json['id']) ?? '',
+    name: _str(json['name']),
+    mimeType: _str(json['mimeType']),
+    byteSize: _int(json['byteSize']) ?? 0,
+    // 入库时间：附件落进 Hub 的时刻。旧版本 Hub 不返回时保持 null（界面显示 —）。
+    createdAt: _dt(json['createdAt']),
+  );
+
+  final String id;
+  final String? name;
+  final String? mimeType;
+  final int byteSize;
+
+  /// 附件在 Hub 的入库时间（不是命令下发时间）。
+  final DateTime? createdAt;
+
+  bool get isEmpty => id.isEmpty;
+
+  /// 展示用文件名：Hub 没给名字（极端容错）时退回 id。
+  String get label {
+    final value = (name ?? '').trim();
+    return value.isEmpty ? id : value;
+  }
+
+  bool get isImage => (mimeType ?? '').startsWith('image/');
+}
+
 /// 远程命令：App 下发、bridge 领取、执行完回写。
 class CommandItem {
   const CommandItem({
@@ -271,6 +312,7 @@ class CommandItem {
     this.startedAt,
     this.finishedAt,
     this.cancelRequestedAt,
+    this.attachment,
   });
 
   factory CommandItem.fromJson(Map<String, dynamic> json) => CommandItem(
@@ -292,6 +334,9 @@ class CommandItem {
     startedAt: _dt(json['startedAt']),
     finishedAt: _dt(json['finishedAt']),
     cancelRequestedAt: _dt(json['cancelRequestedAt']),
+    attachment: json['attachment'] is Map
+        ? AttachmentInfo.fromJson(_map(json['attachment']))
+        : null,
   );
 
   final String id;
@@ -325,6 +370,9 @@ class CommandItem {
 
   /// 手机端请求取消的时间；`null` 表示没人取消过。
   final DateTime? cancelRequestedAt;
+
+  /// 这条命令带过去的附件（文件 / 图片）；`null` = 纯文字命令。
+  final AttachmentInfo? attachment;
 
   /// 还在流程里：排队 / 已送达 / 执行中 / 正在取消。
   /// `cancelling` 必须算「活着」：此时 bridge 还没杀完进程，取消按钮要显示「取消中」。

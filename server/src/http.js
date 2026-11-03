@@ -161,7 +161,9 @@ export function createApp({ routes, auth, logger, corsOrigin, maxBodyBytes, rate
       try {
         let body = {}
         if (req.method === 'POST' || req.method === 'PATCH' || req.method === 'PUT') {
-          body = await readJsonBody(req, maxBodyBytes)
+          // 路由可以单独放宽 body 上限（目前只有附件上传会用到），
+          // 默认仍是全局 maxBodyBytes。
+          body = await readJsonBody(req, route.bodyLimit ?? maxBodyBytes)
         }
 
         const result = await route.handler({ req, res, url, params, body, client, requestId })

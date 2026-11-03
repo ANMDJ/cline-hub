@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../data/file_picker.dart';
 import '../data/hub_api.dart';
 import '../state/hub_store.dart';
+import 'attachment_bar.dart';
 import 'theme.dart';
 
 Future<void> showNewCommandSheet(BuildContext context, HubStore store) {
@@ -38,6 +40,10 @@ class _NewCommandSheetState extends State<_NewCommandSheet> {
   late final TextEditingController _workspaceCtrl = TextEditingController();
   String _mode = 'plan';
   bool _sending = false;
+  /// 正在选文件：选择器是系统的，回来之前别让用户再点一次。
+  bool _picking = false;
+  /// 随命令一起发过去的文件 / 图片（P38）；`null` = 纯文字命令。
+  PickedAttachment? _attachment;
   String? _error;
 
   @override
@@ -48,12 +54,27 @@ class _NewCommandSheetState extends State<_NewCommandSheet> {
     super.dispose();
   }
 
+  Future<void> _pick(bool imagesOnly) async {
+    setState(() => _picking = true);
+    final picked = await pickAttachmentForCommand(
+      context,
+      imagesOnly: imagesOnly,
+    );
+    if (!mounted) return;
+    setState(() {
+      _picking = false;
+      if (picked != null) _attachment = picked;
+    });
+  }
+
   Future<void> _submit() async {
     final prompt = _promptCtrl.text.trim();
     final device = _deviceCtrl.text.trim();
     final workspace = _workspaceCtrl.text.trim();
-    if (prompt.isEmpty) {
-      setState(() => _error = '指令不能为空');
+    final attachment = _attachment;
+    // 只发文件也行：prompt 留空，bridge 会补一句「先读这个文件」。
+    if (prompt.isEmpty && attachment == null) {
+      setState(() => _error = '指令和附件至少填一个');
       return;
     }
     if (prompt.length > 4000) {
@@ -79,15 +100,31 @@ class _NewCommandSheetState extends State<_NewCommandSheet> {
     final navigator = Navigator.of(context);
 
     try {
+      // 先上传附件再下发命令：命令里只带 attachmentId，bridge 领取后自己下载。
+      String? attachmentId;
+      if (attachment != null) {
+        final uploaded = await widget.store.uploadAttachment(
+          file: attachment,
+          deviceId: device,
+        );
+        attachmentId = uploaded.id;
+      }
       final created = await widget.store.sendCommand(
         prompt: prompt,
         mode: _mode,
         deviceId: device,
         workspace: workspace,
+        attachmentId: attachmentId,
       );
       navigator.pop();
       messenger.showSnackBar(
-        SnackBar(content: Text('已下发 ${created.id}，等 bridge 领取')),
+        SnackBar(
+          content: Text(
+            attachment == null
+                ? '已下发 ${created.id}，等 bridge 领取'
+                : '已下发 ${created.id}（附件 ${attachment.name}），等 bridge 领取',
+          ),
+        ),
       );
     } on ApiException catch (error) {
       if (mounted) {
@@ -185,6 +222,17 @@ class _NewCommandSheetState extends State<_NewCommandSheet> {
             decoration: const InputDecoration(
               hintText: '要 Windows 上做什么？例如：跑一遍 kids_points_app 的测试并总结失败项',
             ),
+          ),
+          const SizedBox(height: 10),
+          AttachmentBar(
+            picked: _attachment,
+            busy: _picking || _sending,
+            onPickFile: () => _pick(false),
+            onPickImage: () => _pick(true),
+            onClear: () => setState(() => _attachment = null),
+            hint: _attachment == null
+                ? null
+                : '在输入框里写一句要对这个文件做什么；留空就只让它读一遍并总结。',
           ),
           const SizedBox(height: 16),
           const Text('执行设备', style: TextStyle(fontSize: 12, color: kMuted)),
@@ -298,9 +346,13 @@ class _NewCommandSheetState extends State<_NewCommandSheet> {
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
-              onPressed: _sending ? null : _submit,
+              onPressed: _sending || _picking ? null : _submit,
               icon: const Icon(Icons.send_rounded, size: 16),
-              label: Text(_sending ? '下发中…' : '下发'),
+              label: Text(
+                _sending
+                    ? (_attachment == null ? '下发中…' : '上传附件并下发…')
+                    : '下发',
+              ),
             ),
           ),
         ],

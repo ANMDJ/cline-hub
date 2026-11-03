@@ -3,8 +3,8 @@
 /// 为什么不引 `package_info_plus`：这个客户端刻意只保留 http / shared_preferences
 /// 两个依赖，版本号一年也就改几次，手工同步比多一个插件更划算。
 /// 发版脚本 `scripts/release-apk.mjs` 会读 `pubspec.yaml` 并校验这里是否一致。
-const String kAppVersion = '1.1.6';
-const int kAppBuild = 8;
+const String kAppVersion = '1.1.7';
+const int kAppBuild = 9;
 
 class ChangelogEntry {
   const ChangelogEntry(this.version, this.date, this.items);
@@ -15,6 +15,11 @@ class ChangelogEntry {
 }
 
 const List<ChangelogEntry> kChangelog = <ChangelogEntry>[
+  ChangelogEntry('1.1.7', '2026-11-03', <String>[
+    '新增：把手机上的文件 / 图片发给电脑——下发命令时会话页都能「选文件」，写一句要它做什么（也可以只发文件）',
+    '新增：命令详情显示附件名、大小、类型与入库时间；bridge 把文件落到电脑上再把绝对路径交给 Cline',
+    '新增：右侧划出菜单——电脑列表带在线状态与会话 / 待执行 / 执行中计数，点一台设为默认，另有刷新与设置入口',
+  ]),
   ChangelogEntry('1.1.6', '2026-11-03', <String>[
     '新增：锁屏也提醒——命令运行期间挂一个前台服务，息屏后命令跑完也能立刻收到通知（设置里可关）',
     '修复：同一个任务收到两条通知（命令完成 + 会话完成），15 分钟内只提醒一次',

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:cline_console/src/data/hub_api.dart';
 import 'package:cline_console/src/models/models.dart';
@@ -32,6 +33,9 @@ class FakeHubApi implements HubApi {
   int? lastSessionsLimit;
   final List<Map<String, Object?>> sentCommands = <Map<String, Object?>>[];
   final List<String> cancelledCommands = <String>[];
+
+  /// 上传过的附件（P38）：测试断言「先上传再下发」的先后与参数。
+  final List<Map<String, Object?>> uploadedAttachments = <Map<String, Object?>>[];
   String? sessionQuery;
   bool closed = false;
 
@@ -114,6 +118,7 @@ class FakeHubApi implements HubApi {
     String mode = 'plan',
     String? workspace,
     String? sessionId,
+    String? attachmentId,
   }) async {
     sentCommands.add(<String, Object?>{
       'deviceId': deviceId,
@@ -121,6 +126,7 @@ class FakeHubApi implements HubApi {
       'mode': mode,
       'workspace': workspace,
       'sessionId': sessionId,
+      'attachmentId': attachmentId,
     });
     return CommandItem(
       id: 'cmd_fake',
@@ -131,6 +137,37 @@ class FakeHubApi implements HubApi {
       workspace: workspace,
       sessionId: sessionId,
       createdAt: DateTime.now(),
+      attachment: attachmentId == null
+          ? null
+          : AttachmentInfo(
+              id: attachmentId,
+              name: 'fake.bin',
+              mimeType: 'application/octet-stream',
+              byteSize: 3,
+            ),
+    );
+  }
+
+  @override
+  Future<AttachmentInfo> uploadAttachment({
+    required String deviceId,
+    required String name,
+    required String mimeType,
+    required Uint8List bytes,
+  }) async {
+    final id = 'att_fake_${uploadedAttachments.length + 1}';
+    uploadedAttachments.add(<String, Object?>{
+      'id': id,
+      'deviceId': deviceId,
+      'name': name,
+      'mimeType': mimeType,
+      'byteSize': bytes.length,
+    });
+    return AttachmentInfo(
+      id: id,
+      name: name,
+      mimeType: mimeType,
+      byteSize: bytes.length,
     );
   }
 

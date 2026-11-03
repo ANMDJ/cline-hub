@@ -13,6 +13,7 @@ import {
   writeEntry
 } from './command-registry.js'
 import { createClineJsonParser, isClineJsonFailure } from './cline-json.js'
+import { composePrompt, saveAttachment } from './attachment.js'
 import { inspectProcesses } from './process-info.js'
 
 /**
@@ -229,6 +230,12 @@ export function createCommandWorker({ cfg, logger }) {
     : []
 
   const tmpDir = path.join(os.tmpdir(), 'cline-hub-cmd')
+  /**
+   * 手机发来的附件落在这里（`%TEMP%\cline-hub-cmd\incoming`），
+   * 文件名前缀是 commandId —— 同一条命令重跑 / 并发多张图不会互相覆盖。
+   * 用临时目录而不是 `dataDir`：那里是 Cline 自己的数据根，不该被我们的垃圾文件污染。
+   */
+  const incomingDir = path.join(tmpDir, 'incoming')
   /**
    * `children`: commandId → { child, entry }。
    * 以前只有一个 `state.child` 槽位，并发后 stop()/超时只能杀到最后一条；
@@ -931,7 +938,44 @@ export function createCommandWorker({ cfg, logger }) {
       return
     }
     const sessionId = String(command.sessionId ?? '').trim()
-    const prompt = truncate(command.prompt, 8000)
+    const caption = truncate(command.prompt, 8000)
+    const attachment = command.attachment ?? null
+
+    /**
+     * 附件（P38）：先把内容拉到本机，再把「绝对路径 + 用户那句话」拼成 prompt。
+     * 下载失败直接 failed —— 让命令带着「找不到文件」的 prompt 去跑，
+     * 模型只会一本正经地乱猜，用户还以为文件发出去了。
+     */
+    let prompt = caption
+    if (attachment && attachment.id) {
+      try {
+        const saved = await saveAttachment({
+          hubUrl: cfg.hubUrl,
+          token: cfg.deviceToken,
+          attachment,
+          dir: incomingDir,
+          commandId: command.id
+        })
+        prompt = composePrompt({
+          caption,
+          filePath: saved.filePath,
+          name: saved.name,
+          mimeType: saved.mimeType,
+          byteSize: saved.byteSize
+        })
+        logger.info('command attachment saved', {
+          id: command.id,
+          path: saved.filePath,
+          bytes: saved.byteSize
+        })
+      } catch (error) {
+        await report(command.id, 'failed', {
+          errorText: `附件下载失败：${error.message}`
+        })
+        logger.warn('command attachment failed', { id: command.id, message: error.message })
+        return
+      }
+    }
 
     logger.info('command started', {
       id: command.id,

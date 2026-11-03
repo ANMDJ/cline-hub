@@ -1,6 +1,7 @@
 package top.littlewish.cline_console
 
 import android.Manifest
+import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -11,10 +12,12 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.provider.OpenableColumns
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import java.io.ByteArrayOutputStream
 
 /**
  * 会话 / 命令完成时的系统通知。
@@ -31,6 +34,10 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private var pendingPermission: MethodChannel.Result? = null
 
+    /** 系统文件选择器回来之前，把 Flutter 侧的结果暂存这里。 */
+    private var pendingPick: MethodChannel.Result? = null
+    private var pendingPickMaxBytes: Int = DEFAULT_MAX_ATTACHMENT_BYTES
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         ensureChannel()
@@ -43,6 +50,108 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+        // 发送文件 / 图片（P38）：Dart 侧见 lib/src/data/file_picker.dart。
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, FILES_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "pick" -> pickFile(
+                        call.argument<String>("mime"),
+                        call.argument<Int>("maxBytes") ?: DEFAULT_MAX_ATTACHMENT_BYTES,
+                        result
+                    )
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    /**
+     * 打开系统文件选择器（`ACTION_OPEN_DOCUMENT`，不需要存储权限）。
+     *
+     * [mime] 以 `image/` 开头时只列图片（「发送图片」），`*` 或空表示任意文件。
+     * 结果在 [onActivityResult] 里读成字节数组回给 Dart：content:// URI 在 Dart
+     * 侧没有直接读的办法，而 App 刻意不引 file_picker（ADR-31）。
+     */
+    private fun pickFile(mime: String?, maxBytes: Int, result: MethodChannel.Result) {
+        // 连点两次：前一个直接按「取消」收尾，避免 result 永远悬着。
+        pendingPick?.success(null)
+        pendingPick = result
+        pendingPickMaxBytes = if (maxBytes > 0) maxBytes else DEFAULT_MAX_ATTACHMENT_BYTES
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = if (mime.isNullOrBlank()) "*/*" else mime
+        }
+        try {
+            startActivityForResult(intent, PICK_REQUEST)
+        } catch (_: ActivityNotFoundException) {
+            pendingPick = null
+            result.error("no_picker", "系统里没有可用的文件选择器", null)
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode != PICK_REQUEST) {
+            super.onActivityResult(requestCode, resultCode, data)
+            return
+        }
+        val result = pendingPick
+        pendingPick = null
+        if (result == null) return
+
+        val uri = data?.data
+        if (resultCode != Activity.RESULT_OK || uri == null) {
+            result.success(null) // 用户取消
+            return
+        }
+        try {
+            val bytes = readBytes(uri, pendingPickMaxBytes)
+            result.success(
+                mapOf(
+                    "name" to displayName(uri),
+                    "mimeType" to (contentResolver.getType(uri) ?: "application/octet-stream"),
+                    "bytes" to bytes
+                )
+            )
+        } catch (_: TooLargeException) {
+            result.error("too_large", "文件超过上限", null)
+        } catch (error: Exception) {
+            result.error("read_failed", error.message ?: "读取失败", null)
+        }
+    }
+
+    private class TooLargeException : Exception("too_large")
+
+    /** 边读边计数：超限就立刻放弃，不把 500 MB 的视频读进内存。 */
+    private fun readBytes(uri: Uri, maxBytes: Int): ByteArray {
+        val input = contentResolver.openInputStream(uri) ?: throw IllegalStateException("打不开这个文件")
+        input.use { stream ->
+            val buffer = ByteArrayOutputStream()
+            val chunk = ByteArray(64 * 1024)
+            var total = 0
+            while (true) {
+                val read = stream.read(chunk)
+                if (read <= 0) break
+                total += read
+                if (total > maxBytes) throw TooLargeException()
+                buffer.write(chunk, 0, read)
+            }
+            return buffer.toByteArray()
+        }
+    }
+
+    /** 从 content:// 里取显示名；取不到就退回 URI 末段。 */
+    private fun displayName(uri: Uri): String {
+        var name: String? = null
+        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (index >= 0) name = cursor.getString(index)
+                }
+            }
+        val value = name?.trim().orEmpty()
+        if (value.isNotEmpty()) return value
+        return uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+            ?: "attachment"
     }
 
     /**
@@ -221,7 +330,12 @@ class MainActivity : FlutterActivity() {
     companion object {
         private const val CHANNEL = "top.littlewish.cline_console/notify"
         private const val LINK_CHANNEL = "top.littlewish.cline_console/links"
+        private const val FILES_CHANNEL = "top.littlewish.cline_console/files"
         private const val CHANNEL_ID = "cline_hub_events"
         private const val PERMISSION_REQUEST = 4101
+        private const val PICK_REQUEST = 4102
+
+        /** 与 Dart 侧 `kMaxAttachmentBytes` / Hub 默认值保持一致的兜底上限（8 MB）。 */
+        private const val DEFAULT_MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024
     }
 }

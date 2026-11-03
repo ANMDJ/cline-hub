@@ -168,3 +168,22 @@
 - **遗留**：无。
 
 
+
+### 2026-11-03 12:35 bridge 空闲重启（加载 P38 附件下载）
+
+- **为什么**：线上 Hub 已上线附件接口（迁移 009），但本机 bridge 还是升级前的进程，
+  领到带附件的命令不会下载文件 / 拼 prompt。要加载 `src/attachment.js` 必须重启。
+- **怎么做的**：`cd bridge; npm run restart:idle -- --reason "加载 P38 附件下载" --grace 15000`。
+  当前会话就是 bridge 拉起的 `cmd_b4c3e28a6d9b`（工作目录本仓库），所以**不能在轮次中间硬重启**；
+  supervisor 会等登记文件消失 + 15 秒缓冲后走 `/admin/stop` 的优雅路径。
+- **受影响**：预期没有命令被回写 `failed`（重启只发生在空闲时）；重启那几秒手机 SSE 会断，
+  App 自动重连。Hub 侧不受影响（本轮 12:25 已重建，`uptimeSec` 从 0 开始）。
+- **恢复**：无需人工拉起。下次开工核对：
+  1. `bridge/logs/restart-when-idle.log` 末尾有 `idle, handing over to stop.mjs`；
+  2. `bridge/logs/bridge.log` 有新的 `bridge started`；
+  3. `npm run health` → `{"ok":true,"service":"cline-bridge"}`；
+  4. 从手机发一份文件，`bridge/logs/bridge.log` 出现 `command attachment saved`。
+- **遗留**：手机需要装 `1.1.7+9`（`adb devices` 为空，用 App 内「检查更新」）；
+  附件保留策略按用户要求暂不做，只记录 `created_at`（入库时间）。
+
+

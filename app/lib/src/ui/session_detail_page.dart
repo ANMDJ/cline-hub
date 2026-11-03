@@ -3,10 +3,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../data/file_picker.dart';
 import '../data/hub_api.dart';
 import '../models/models.dart';
 import '../state/hub_store.dart';
 import '../util/format.dart';
+import 'attachment_bar.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
@@ -42,6 +44,12 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
   final TextEditingController _composer = TextEditingController();
   final ScrollController _scroll = ScrollController();
   bool _sending = false;
+
+  /// 正在选文件（系统选择器回来之前不重复弹）。
+  bool _picking = false;
+
+  /// 随「继续对话」一起发过去的文件 / 图片（P38）。
+  PickedAttachment? _attachment;
   /// 继续对话的执行模式：plan = 只读；act = 会改文件。默认 plan。
   String _mode = 'plan';
   bool _loadingOlder = false;
@@ -312,27 +320,59 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
     }
   }
 
+  /// 选附件：内容读进内存，随下一条「继续对话」一起发出去。
+  Future<void> _pick(bool imagesOnly) async {
+    setState(() => _picking = true);
+    final picked = await pickAttachmentForCommand(
+      context,
+      imagesOnly: imagesOnly,
+    );
+    if (!mounted) return;
+    setState(() {
+      _picking = false;
+      if (picked != null) _attachment = picked;
+    });
+  }
+
   /// 「继续这个会话」：这句话会变成一条 act 命令，
   /// bridge 用 `cline --id <sessionId>` 接续原会话，过程和回复仍回到这里。
   Future<void> _send() async {
     final text = _composer.text.trim();
-    if (text.isEmpty || _sending) return;
+    final attachment = _attachment;
+    // 只发文件也可以：输入框留空时由 bridge 补一句「先读这个文件」。
+    if ((text.isEmpty && attachment == null) || _sending) return;
 
     setState(() => _sending = true);
     try {
+      String? attachmentId;
+      if (attachment != null) {
+        final uploaded = await widget.store.api.uploadAttachment(
+          deviceId: widget.item.deviceId,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          bytes: attachment.bytes,
+        );
+        attachmentId = uploaded.id;
+      }
       await widget.store.api.sendCommand(
         deviceId: widget.item.deviceId,
         prompt: text,
         mode: _mode,
         workspace: _summary.workspaceRoot,
         sessionId: widget.item.sessionId,
+        attachmentId: attachmentId,
       );
       _composer.clear();
       if (!mounted) return;
+      setState(() => _attachment = null);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('已发到电脑，Cline 会在这个会话里接着干'),
-          duration: Duration(seconds: 3),
+        SnackBar(
+          content: Text(
+            attachment == null
+                ? '已发到电脑，Cline 会在这个会话里接着干'
+                : '已发到电脑（附件 ${attachment.name}），Cline 会在这个会话里接着干',
+          ),
+          duration: const Duration(seconds: 3),
         ),
       );
       _jumpToBottomSoon();
@@ -579,6 +619,11 @@ class _SessionDetailPageState extends State<SessionDetailPage> {
           _Composer(
             controller: _composer,
             sending: _sending,
+            picking: _picking,
+            attachment: _attachment,
+            onPickFile: () => _pick(false),
+            onPickImage: () => _pick(true),
+            onClearAttachment: () => setState(() => _attachment = null),
             onSend: _send,
             mode: _mode,
             onModeChanged: (value) => setState(() => _mode = value),
@@ -1160,6 +1205,11 @@ class _Composer extends StatelessWidget {
   const _Composer({
     required this.controller,
     required this.sending,
+    required this.picking,
+    required this.attachment,
+    required this.onPickFile,
+    required this.onPickImage,
+    required this.onClearAttachment,
     required this.onSend,
     required this.mode,
     required this.onModeChanged,
@@ -1167,6 +1217,15 @@ class _Composer extends StatelessWidget {
 
   final TextEditingController controller;
   final bool sending;
+
+  /// 系统文件选择器正开着（按钮先别重复触发）。
+  final bool picking;
+
+  /// 已选的附件：会和这句话一起发出去（P38）。
+  final PickedAttachment? attachment;
+  final VoidCallback onPickFile;
+  final VoidCallback onPickImage;
+  final VoidCallback onClearAttachment;
   final VoidCallback onSend;
 
   /// 执行模式：plan = 只读；act = 会改文件。
@@ -1187,6 +1246,17 @@ class _Composer extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             _ModeBar(mode: mode, onChanged: onModeChanged),
+            const SizedBox(height: 6),
+            AttachmentBar(
+              picked: attachment,
+              busy: picking || sending,
+              onPickFile: onPickFile,
+              onPickImage: onPickImage,
+              onClear: onClearAttachment,
+              hint: attachment == null
+                  ? null
+                  : '输入框里写要对这个文件做什么；留空就只让它读一遍并总结。',
+            ),
             const SizedBox(height: 6),
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,

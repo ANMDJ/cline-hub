@@ -36,7 +36,7 @@ SSE 例外：`GET /api/v1/events?token=<token>`（EventSource 不能设置请求
 | 403 | 角色不够，或跨设备写入 |
 | 404 | 资源不存在 |
 | 409 | client id 已存在 |
-| 413 | body 超过 `HUB_MAX_BODY_BYTES`（默认 4 MB） |
+| 413 | body 超过 `HUB_MAX_BODY_BYTES`（默认 4 MB）；附件超限时 `code=attachment_too_large` |
 | 500 / 503 | 服务端异常 / 数据库不可用 |
 
 ## 接口一览
@@ -55,7 +55,9 @@ SSE 例外：`GET /api/v1/events?token=<token>`（EventSource 不能设置请求
 | GET | `/api/v1/sessions/:sessionId` | any | 会话详情（含结果全文与命令列表） |
 | POST | `/api/v1/hooks` | device | 上报 hook 事件 |
 | GET | `/api/v1/hooks` | any | 事件流（按 id 倒序） |
-| POST | `/api/v1/commands` | app | 下发远程命令 |
+| POST | `/api/v1/commands` | app | 下发远程命令（可带附件） |
+| POST | `/api/v1/attachments` | app | 上传附件（base64 JSON，默认上限 8 MB） |
+| GET | `/api/v1/attachments/:id` | any | 下载附件（device 只能取自己那台设备的） |
 | GET | `/api/v1/commands` | any | 命令列表 |
 | GET | `/api/v1/commands/pending` | device | 领取待执行命令（自动置为 `delivered`） |
 | GET | `/api/v1/commands/:id` | any | 命令详情 |
@@ -312,6 +314,53 @@ POST /api/v1/commands
   bridge 是无头进程，所以**实际执行一律 `cline -c <workspace>` 新开会话**（2026-11-01 实测）。
   该字段目前只用于溯源，客户端不要指望消息出现在原会话里；新会话会由 bridge 下一轮扫描自动上报。
 - 返回 `{ ok, command: { id, status: "pending", sessionId, ... } }`。
+
+#### 带附件下发（P38）
+
+```json
+POST /api/v1/commands
+{ "deviceId": "localone", "prompt": "把这份周报里的错别字改掉", "mode": "act", "attachmentId": "att_1a2b3c4d5e6f7a8b" }
+```
+
+- `prompt` 与 `attachmentId` **至少给一个**：只发文件时 `prompt` 可以省略或空串，
+  由 bridge 补一句「先读这个文件」；两个都空返回 400 `invalid_field`。
+- 附件必须属于 `deviceId` 那台电脑，否则 `403 forbidden`（App 不能借别的设备的附件）。
+- 命令对象多一个 `attachment` 字段（列表与详情都有，只有元数据）：
+
+```json
+"attachment": { "id": "att_1a…", "name": "周报.docx", "mimeType": "application/vnd...", "byteSize": 20480, "createdAt": "2026-11-03T04:30:00.000Z" }
+```
+
+- `createdAt` 是**入库时间**（附件落进 Hub 的时刻，不是命令下发时间）。目前只记录、
+  不自动清理 —— 保留策略（按年龄清理）还没做，后续会直接按这个字段算。
+
+## 附件（发送文件 / 图片）
+
+### 上传（App）
+
+`POST /api/v1/attachments`（app）——**base64 JSON，不是 multipart**：
+
+```json
+{ "deviceId": "localone", "name": "周报.docx", "mimeType": "application/vnd...", "data": "UEsDBBQABgAI…" }
+```
+
+- `data` 是整份文件的 base64（服务端是零框架 `node:http`，没有 multipart 解析，ADR-52）。
+- 大小上限 `HUB_MAX_ATTACHMENT_BYTES`（默认 **8 MB**）；只有这条路由放宽 body 上限，
+  其余接口仍是 `HUB_MAX_BODY_BYTES`（4 MB）。超限返回 413 `attachment_too_large`。
+- 响应 `{ ok, attachment: { id, name, mimeType, byteSize, createdAt } }`；同设备 + 同名 + 同内容
+  会复用已有记录并带 `reused: true`（手机连点两次不会存两份）。`createdAt` 是入库时间，
+  复用时不刷新；目前只记录、不清理（保留策略待定）。
+- 文件名会去掉路径与控制字符（`a/b?.png` → `b_.png`），最长 120 字。
+
+### 下载（bridge）
+
+`GET /api/v1/attachments/:id`（any）→ 原始字节，`content-type` 取上传时记录的 MIME，
+`content-disposition` 带 RFC 5987 文件名。
+
+- 鉴权与命令详情同一条规则：**device token 只能下载自己那台设备的附件**，
+  跨设备 `403 forbidden`；app / admin 都能取。
+- bridge 领取到带附件的命令后立刻下载到 `%TEMP%\cline-hub-cmd\incoming\<commandId>-<文件名>`，
+  再把绝对路径拼进 prompt（ADR-53）。下载失败 → 命令直接 `failed`，`errorText` 写明原因。
 
 ### 领取（bridge）
 

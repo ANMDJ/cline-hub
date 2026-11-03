@@ -35,9 +35,10 @@
 | 23 | P34 | **后台保活（形态 B）**：只在「有命令在跑」时挂 `dataSync` 前台服务（`KeepAliveService` + 静音常驻通知），锁屏期间 SSE 不断、命令跑完立刻弹通知；活跃数归 0 / 401 / 关开关 / 划掉任务即停。设置页「锁屏也提醒」默认开 | ✅ 已发版 `1.1.6+8`（2026-11-03 08:28）；静态 + 自动化验证已完成（见 P37），真机 7 条仍待手机 |
 | 24 | P35 | **App 1.1.6+8 发版**：锁屏保活 + 通知归并 + 分组带设备一起上线（清单 `/srv/cline-hub/releases/latest.json`、APK `/app/cline-console-1.1.6.apk`），落地页对齐 1.1.6 | ✅ APK 55,256,496 B / sha256 `4ecaf2f3…4173`，已上线 |
 | 25 | P37 | **推送 / 保活验证（不接厂商通道）**：ntfy 直达通知栏 + Hub SSE 长连接 + 线上 1.1.6 APK 静态核验（保活 service / 权限 / sha256）+ 全量自检；真机 7 条仍需手机 | ✅ 2026-11-03 完成「不依赖真机」的全部验证（ADR-51） |
+| 26 | P38 | **右侧划出菜单 + 发送文件 / 图片**：设备列表与设置入口挪进 `endDrawer`；`POST/GET /api/v1/attachments`（base64 + bytea，migration 009）+ 命令携带 `attachmentId`；bridge 落盘到 `%TEMP%\cline-hub-cmd\incoming` 再把绝对路径拼进 prompt；下发面板与会话输入框都能「选文件 + 写一句要它做什么」 | ✅ **已上线（2026-11-03 12:25）**：迁移 009 + 镜像重建（备份 `server.bak-20261103-122537`），线上 app token 上传 / 下载实测通过；附件带**入库时间 `createdAt`**（保留策略暂不做）；App `1.1.7+9` 已发布（55,568,256 B / sha256 `4261c8f2…ee25`）；bridge 已排空闲重启（本会话结束后生效） |
 
-已完成并上线的：P0 / P1 / P3–P26 / P35–P37
-（P3、P9 已部署；P5、P10、P15、P17、P8、P22–P26、P35 已发布到 App；P7/P14 已在 12:51 重启后生效）。
+已完成并上线的：P0 / P1 / P3–P26 / P35–P38
+（P3、P9 已部署；P5、P10、P15、P17、P8、P22–P26、P35、P38 已发布到 App；P7/P14 已在 12:51 重启后生效）。
 **P32 / P33 / P34 已随 `1.1.6+8` 发版**（`flutter test` 78 通过 / 5 真机用例跳过；
 APK 55,256,496 B / sha256 `4ecaf2f3…4173`，线上 APK HEAD 200、`GET /api/v1/app/latest` 返回 1.1.6 / build 8）。
 P34 仍需真机按 §0 的清单核对（锁屏收通知 / 常驻通知消失 / 划掉任务）。
@@ -343,7 +344,7 @@ curl.exe -sS -N -m 27 "https://hub.littlewish.top:8443/api/v1/events?token=$tok"
 |---|---|
 | 分支 / HEAD | `master`（P7 / P14 / P8 之后；当前哈希看 `git log -1`） |
 | Hub | `{"ok":true,...,"db":{"ok":true,"latencyMs":1},"sseClients":1}`（2026-11-02 14:19 重部署后实测） |
-| Hub 部署 | 2026-11-02 14:19 强制重建（`up -d --force-recreate hub`；`migrations up to date {"total":8}`；镜像内 `src` 与仓库逐文件 sha256 一致），前一次是 14:07 的 `GET /api/v1/devices` 上线 |
+| Hub 部署 | 2026-11-03 12:25 重建（迁移 `009_attachments` 已应用，`routes: 22`；备份 `server.bak-20261103-122537`）；前一次是 2026-11-02 14:19（`migrations up to date {"total":8}`） |
 | 设备列表 | 已上线：app / device token `GET /api/v1/devices` 均返回 1 台（`localone` / LocalOne-Windows / 109 会话 / 53 命令） |
 | 读接口隔离 | 已上线：`device` 跨设备读 → `403 device_mismatch`（2026-11-02 13:29 实测） |
 | bridge | `{"ok":true,"service":"cline-bridge"}`（手动启动，未开机自启） |
@@ -352,7 +353,7 @@ curl.exe -sS -N -m 27 "https://hub.littlewish.top:8443/api/v1/events?token=$tok"
 | Flutter / Dart | `3.47.5` / `13.4` |
 | Android 工具链 | SDK `%LOCALAPPDATA%\Android\Sdk`（platforms 33–37 / build-tools 30–37）；JDK 17 与 21 在 `<JDK 目录>\`；`GRADLE_USER_HOME=%USERPROFILE%\.gradle` 已缓存 gradle-9.3.1。**`JAVA_HOME` 为空**，默认 PATH 上是 zulu-8，打包前必须设成 JDK 17 |
 | 已跟踪会话 | 109 个（`GET /api/v1/devices` 的 `sessionCount`，2026-11-02 14:19） |
-| App 发布版本 | `1.1.6+8`（`GET /api/v1/app/latest` 实测；APK 55,256,496 B，sha256 `4ecaf2f3…4173`） |
+| App 发布版本 | `1.1.7+9`（`GET /api/v1/app/latest` 实测；APK 55,568,256 B，sha256 `4261c8f2…ee25`；2026-11-03 12:28 发布） |
 
 ## 2. 里程碑与最近提交
 
@@ -505,7 +506,12 @@ powershell -NoProfile -File deploy/windows/verify-hub.ps1
 | 2026-11-02 | **重写历史清掉本机路径（P31）**：用 `git-filter-repo`（单文件脚本，不装进系统环境）对全部提交做 blob 级替换 —— Windows 用户目录（含 JSON 里 4 层反斜杠变体）→ `C:\Users\alice`，全大写变体单独映射成 `ALICE`；Git Bash 的 `/c/Users/<账号>/...`（两种旧目录形态 `~/.cline/...` 与 `~/projects/...`）→ `<仓库>`；`D:\Android\Sdk` / `D:\android\.gradle` / `D:\Program Files\java\jdk-17` / `D:/android/sdk` → 环境变量写法；反引号包着的账号名 → `alice`。`LICENSE` / `README` 的版权署名保留（作者名不是路径）。重写前 `git bundle` 备份到仓外临时目录；重写后 HEAD tree 与重写前**逐字节一致**（`6e4eca45`），即只改了历史、当前内容未变。随后按 `commit-map` 把 `docs/status.md` 里 8 处旧短哈希回填成新哈希（例：`a20abe1`→`c3ee1da`），`git log -S'<旧用户目录>'` 全历史 **0 命中**。⚠️ 实测 GitHub 仍能按 SHA 直接访问强推前的旧提交（HTTP 200 且内容含旧路径），彻底清掉必须删仓重建 —— `delete_repo` scope 待授权 |
 | 2026-11-03 | **P35 App 1.1.6+8 发版 + 落地页对齐**：`cd app; node scripts/release-apk.mjs --skip-build`（复用已构建的 `app-release.apk`，先用 `output-metadata.json` 核对 versionName `1.1.6` / versionCode `8`）生成 `dist/cline-console-1.1.6.apk` + `dist/latest.json`（sha256 `4ecaf2f3…4173`）；`scp` 后 `sudo install` 到 `/var/www/cline-hub/app/`（HEAD 200 / `application/vnd.android.package-archive` / 55,256,496 B）与 `/srv/cline-hub/releases/latest.json`（`GET /api/v1/app/latest` 返回 1.1.6 / build 8 / 三条 notes，Hub 不用重启）；`site/index.html` 9 处版本号 + M3 进度 + 「实时下行」补锁屏保活说明、`site/README.md` 同步；`node site/check-site.mjs` 通过，逐文件 `scp` + `sudo install` 发布（本机 `tar.exe` 被系统拒绝 `Access denied`，改用单文件 scp；旧页面备份 `/tmp/site-backup-20261103-082841.tgz`），线上 `http://82.157.153.22/` 200 / 19351 B、`1.1.6`×9、`1.1.5`×0；`adb devices` 为空，手机走 App 内「检查更新」 |
 | 2026-11-03 | **P36 根 README 改成使用者视角**：开源首页原来按开发过程写（端口表 / 备案与 8443 入口 / 证书续期 / 安全基线复盘 / 里程碑 / bridge 脚本细节），第一次看到项目的人信息过载。重写为「它做什么 → 怎么做的（上行 / 下行 + 实时性三层）→ 手机上怎么用（三个 Tab + 设置 + 多设备）→ 功能清单（采集 / 远程命令 / App / Hub / 安全边界）→ 自己跑一套（指向 self-host / new-device / api）→ 已知边界」，**423 行 → 201 行**；运维事实留在原地（`docs/status.md` §1/§3/§5、`deploy/README.md` §11、ADR-11 / 20、`bridge/README.md`、`docs/self-host.md` §9），没有删除任何独占信息；同步 `docs/README.md` / `AGENTS.md` 的文档地图、`deploy/README.md` 的交叉引用、本文件 §7 的文档一致性规则 |
+| 2026-11-03 | **P38 右侧菜单**：设备列表与设置入口从顶栏 / 设置页挪进 `Scaffold.endDrawer` —— 新增 `ui/home_drawer.dart`（电脑列表带在线状态、会话 / 待执行 / 执行中计数，点一台设为默认，另有「刷新数据 / 设置」），`home_shell.dart` 顶栏改为「连接状态 + 菜单按钮」，打开抽屉时顺手 `refreshDevices()`；`HubStore.setDefaultDevice()` 补一次 `notifyListeners()` |
+| 2026-11-03 | **P38 发送文件 / 图片**：migration `009_attachments.sql`（`attachments` 表 + `commands.attachment_id`）；`POST /api/v1/attachments`（base64 JSON，`HUB_MAX_ATTACHMENT_BYTES` 默认 8 MB，同设备同名同哈希复用；`http.js` 支持按路由覆盖 body 上限）、`GET /api/v1/attachments/:id`（device 只能取自己的）；`POST /commands` 允许「只带附件」，`toCommand()` 返回 `attachment` 元数据；bridge 新增 `src/attachment.js`（下载 → `%TEMP%\cline-hub-cmd\incoming\<commandId>-<文件名>` → 绝对路径拼进 prompt，失败直接 `failed`）；App 新增 `data/file_picker.dart`（原生 `ACTION_OPEN_DOCUMENT`，不引 file_picker）、`ui/attachment_bar.dart`，下发面板与会话输入框都能「选文件 + 写一句要它做什么（可留空）」，命令卡片 / 详情显示附件行；ADR-52 / 53 |
+| 2026-11-03 | **P38 验证**：`cd server; npm test` **47 通过**（新增 9：文件名清洗 / base64 / 413 / 复用 / 设备归属 / 下载 scope / 只带附件下发）、`cd bridge; npm test` **59 通过**（新增 6：安全文件名 / 大小文案 / prompt 拼装 / 下载落盘 / 404·空·超限）、`cd app; flutter analyze` 无告警、`flutter test` **86 通过 / 5 跳过**（新增 8：格式 / 模型 / 上传→下发 / 选择器降级 / 面板按钮 / 右侧菜单）。**待部署**：迁移 009 + Hub 镜像重建 + bridge 重启 + App 发版 |
 | 2026-11-03 | **P37 推送 / 保活验证（不接厂商通道）**：`adb devices` 为空，把不依赖真机的部分全做了 —— ntfy 发布 `HTTP 200`（`id=dlyLaLiL8GFm`，0.76s，与 `hooks/_notify.ps1` 同一条路径）；app token 连 `GET /api/v1/events` 27 秒收到 `: connected` + 2 条 `event: messages` + 一次 `: ping`（鉴权 / 设备过滤 / 反代不缓冲）；`app/dist/cline-console-1.1.6.apk` 的 sha256 `4ecaf2f3…4173` / 55,256,496 B 与线上 `Content-Length` 一致，`aapt2` 确认 `KeepAliveService`（`foregroundServiceType=0x1`、`stopWithTask=true`）与 `POST_NOTIFICATIONS` / `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_DATA_SYNC` 都在；基线 bridge 53 / server 39 / app 78+5 / site ✓。P2 由用户在真机确认「两个按钮的对比没问题」，关闭；用户拍板**不接 FCM / 厂商推送**（ADR-51）；P34 真机 7 条仍待手机，排障入口写进 `app/README.md`；`site/index.html` 的 M3 进度把「剩真正的后台推送（FCM）」改成「明确不接 FCM / 厂商通道（ADR-51）」，但本机会话没有服务器 SSH 私钥（`Permission denied (publickey)`），**线上落地页未更新**，拿到权限后逐文件 `scp` + `sudo install` |
+| 2026-11-03 | **附件入库时间**：`toAttachment()` 增加 `createdAt`（= `attachments.created_at`），命令列表 / 详情的 `withAttachments()` 与上传 / 复用查询都带 `created_at`；App `AttachmentInfo.createdAt`（旧 Hub 缺字段时为 null）+ 命令详情「入库 MM-dd HH:mm:ss」；**保留策略按用户要求暂不做**（只记录、不清理），`docs/api.md` / ADR-52 写明以后按这一列算。验证：server **47** / bridge **59** / app `flutter analyze` 无告警 + `flutter test` **86 通过 / 5 跳过** / `node site/check-site.mjs` 通过 |
+| 2026-11-03 | **P38 部署 + App 1.1.7+9 发版**：`scp` 6 个文件 → 备份 `server.bak-20261103-122537` → `docker compose build` → 迁移 `009_attachments.sql`（`migration applied`）→ `up -d --force-recreate hub`（health 200 / `routes: 22`）；线上 app token `POST /api/v1/attachments`（`smoke-p38.txt` 9 B）返回 **`createdAt=2026-11-03T04:26:08.838Z`**（= 12:26 +08 入库），device token `GET /api/v1/attachments/:id` 200 / 9 B，`GET /commands` 多出 `attachment` 字段；APK `1.1.7+9`（55,568,256 B / sha256 `4261c8f2…ee25`）→ `/var/www/cline-hub/app/`（HEAD 200 / `application/vnd.android.package-archive`）与 `/srv/cline-hub/releases/latest.json`（`GET /api/v1/app/latest` → 1.1.7 / 9 / 3 notes）；落地页 `1.1.7`×9 / `1.1.6`×0（`http://82.157.153.22/` 200）；bridge 用 `npm run restart:idle` 排空闲重启，等当前会话结束再加载附件支持 |
 
 
 

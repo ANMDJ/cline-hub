@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../data/hub_api.dart';
@@ -6,6 +8,7 @@ import '../state/hub_store.dart';
 import '../util/format.dart';
 import 'activity_page.dart';
 import 'commands_page.dart';
+import 'home_drawer.dart';
 import 'new_command_sheet.dart';
 import 'sessions_page.dart';
 import 'settings_page.dart';
@@ -25,6 +28,7 @@ class HomeShell extends StatefulWidget {
 
 class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   late final HubStore _store;
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   int _index = 0;
 
   @override
@@ -71,12 +75,22 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     );
   }
 
+  /// 右侧菜单：设备列表 / 刷新 / 设置都在里面（P38）。
+  ///
+  /// 打开时顺手刷一次设备：在线状态靠 `lastSeenAt`，用户点开菜单就是想看
+  /// 「电脑还在不在」，拿启动时那份数据会骗人。
+  void _openMenu() {
+    _scaffoldKey.currentState?.openEndDrawer();
+    unawaited(_store.refreshDevices());
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: _store,
       builder: (context, _) {
         return Scaffold(
+          key: _scaffoldKey,
           appBar: AppBar(
             title: Row(
               children: [
@@ -111,18 +125,14 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
                         : '最后一条事件：${formatClock(_store.lastEventAt)}'),
               ),
               IconButton(
-                onPressed: _store.refreshAll,
-                tooltip: '刷新',
-                icon: const Icon(Icons.refresh_rounded),
-              ),
-              IconButton(
-                onPressed: _openSettings,
-                tooltip: '设置',
-                icon: const Icon(Icons.settings_outlined),
+                onPressed: _openMenu,
+                tooltip: '设备与设置',
+                icon: const Icon(Icons.menu_rounded),
               ),
               const SizedBox(width: 4),
             ],
           ),
+          endDrawer: HomeDrawer(store: _store, onOpenSettings: _openSettings),
           body: IndexedStack(
             index: _index,
             children: [

@@ -1251,3 +1251,60 @@ Windows hook 发的 ntfy、回前台补拉补发。
 
 **验证边界**：以上都是「不依赖真机」的部分；锁屏收通知 / 常驻通知消失 / 划掉任务
 仍按 `docs/status.md` §0 的 P34 清单在手机上核对。
+
+## 52. 手机发文件走「base64 JSON + Postgres bytea」，不引 multipart、不挂磁盘（2026-11-03）
+
+**决策**：附件上传用 `POST /api/v1/attachments`，body 是
+`{ deviceId, name, mimeType, data: base64 }`；内容存 `attachments.data bytea`，
+命令只存 `attachment_id`。单份上限 `HUB_MAX_ATTACHMENT_BYTES`（默认 8 MB），
+通过「按路由覆盖 body 上限」实现——其它接口仍是 4 MB。
+
+**为什么**：
+
+- Hub 是零框架的 `node:http`（ADR-1 / 2 的延续）。multipart 要引 busboy/multer，
+  或者自己写 boundary 解析——为一个上传功能引入新的解析器与新的失败模式不值得；
+  base64 走现成的 `readJsonBody()`，鉴权 / 限流 / 错误码全部复用同一条路径。
+- Docker 里没有可信的持久目录：写 `bytea` 跟着数据库备份、迁移、删除（`clients`
+  级联），不用再维护 volume + 清理任务。
+- 命令只存引用，列表接口只多 4 个小字段（`attachment.id/name/mimeType/byteSize`），
+  不违反 ADR-2「列表不返回大字段」。
+- 附件必须属于目标设备（`attachments.device_id`），`device` token 只能下载自己的；
+  否则手机可以借 B 电脑的附件让 A 电脑去跑本机文件。
+
+**代价**：
+
+- base64 让请求体膨胀 4/3：8 MB 的文件 ≈ 10.7 MB body（已按路由放宽，不污染全站）。
+- 大文件会进 Postgres 的 WAL 与备份；单人自用的图片 / 文档级别没问题，
+  真要传几百 MB 就得换成对象存储 + 预签名 URL，那是另一个量级的工程。
+- 同设备 + 同名 + 同内容复用同一条记录（`sha256`），所以「改一个字节再发」会新增一条。
+- **入库时间**：`attachments.created_at` 一律记录，并通过 `createdAt` 返回给 App（命令详情显示）。
+  保留策略（按年龄清理）暂不做 —— 用户 2026-11-03 明确「先保留，之后再说」，
+  以后做清理时直接按这一列算，不需要补数据。
+
+**验证**：`cd server; npm test` 47 通过（新增 9 条：文件名清洗 / base64 校验 /
+413 / 复用 / 设备归属 / 下载 scope / 只带附件下发）。
+
+## 53. bridge 侧「先落盘、再给路径」，而不是把文件内容塞进 prompt（2026-11-03）
+
+**决策**：bridge 领到带附件的命令后，先把内容下载到
+`%TEMP%\cline-hub-cmd\incoming\<commandId>-<文件名>`，再把**绝对路径**和用户那句话
+拼成 prompt 交给 `cline`；下载失败直接回写 `failed`。
+
+**为什么**：
+
+- prompt 有长度上限（Hub 4000 字、bridge 截到 8000），base64 一张图就撑爆；
+  就算塞进去，模型读 base64 也不会「看到」图片。
+- CLI 在目标 workspace 里执行，给绝对路径它才能自己 `read_file` / 打开；
+  路径写错时用户还能在命令结果里一眼看到真实位置。
+- 失败必须显式：带着「找不到文件」的 prompt 继续跑，模型会胡乱猜测，
+  而手机端看起来「文件已发送」，这是最难排查的一类故障。
+
+**边界**：
+
+- 文件落在系统临时目录，不跟命令生命周期绑定；`%TEMP%` 由系统回收。
+- `commandId` 做前缀，同一 workspace 并发跑多条带附件的命令不会互相覆盖。
+- `MAX_ATTACHMENT_BYTES`（16 MB）比 Hub 默认上限（8 MB）宽一档，
+  两侧默认值不一致时不会互相打架。
+
+**验证**：`cd bridge; npm test` 59 通过（新增 6 条：文件名清洗 / 大小文案 /
+prompt 拼装（有无说明）/ 下载落盘 / 404·空文件·超限）。

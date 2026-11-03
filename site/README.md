@@ -80,7 +80,7 @@ fork 后若改回 `https://github.com/` 占位，点击仍会提示而不是跳�
 
 ## 版本号与 APK 链接
 
-页面里写死了当前 App 版本 `1.1.6`（6 行 / 9 处）与 APK 路径 `/app/cline-console-1.1.6.apk`
+页面里写死了当前 App 版本 `1.1.7`（6 行 / 9 处）与 APK 路径 `/app/cline-console-1.1.7.apk`
 （3 处：Hero 的「下载 App」按钮、快速开始底部 note、FAQ「APK 在哪下载」）。发新版 APK 时一起改：
 
 ```bash

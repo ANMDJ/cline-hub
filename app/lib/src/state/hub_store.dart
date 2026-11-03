@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../data/file_picker.dart';
 import '../data/hub_api.dart';
 import '../data/notifier.dart';
 import '../data/settings_store.dart';
@@ -553,6 +554,7 @@ class HubStore extends ChangeNotifier {
     required String mode,
     String? workspace,
     String? deviceId,
+    String? attachmentId,
   }) async {
     final target = (deviceId == null || deviceId.trim().isEmpty)
         ? activeDeviceId
@@ -565,12 +567,46 @@ class HubStore extends ChangeNotifier {
       prompt: prompt,
       mode: mode,
       workspace: workspace,
+      attachmentId: attachmentId,
     );
     _upsertCommand(created);
     // 新命令是 pending：这是「0→1」，App 此时在前台，启动 FGS 合法。
     _syncKeepAlive();
     notifyListeners();
     return created;
+  }
+
+  /// 上传附件（文件 / 图片）到 Hub，拿到 [sendCommand] 要的 `attachmentId`。
+  ///
+  /// 设备在**上传时**就定下来：服务端会校验「命令的 deviceId 必须与附件一致」，
+  /// 避免 A 电脑的附件被发给 B 电脑（见 docs/api.md）。
+  Future<AttachmentInfo> uploadAttachment({
+    required PickedAttachment file,
+    String? deviceId,
+  }) async {
+    final target = (deviceId == null || deviceId.trim().isEmpty)
+        ? activeDeviceId
+        : deviceId.trim();
+    if (target.isEmpty) {
+      throw ApiException(0, 'no_device', '还没确定执行设备：先在设置里填一个 deviceId');
+    }
+    return api.uploadAttachment(
+      deviceId: target,
+      name: file.name,
+      mimeType: file.mimeType,
+      bytes: file.bytes,
+    );
+  }
+
+  /// 把某台电脑设为默认下发目标（右侧菜单 / 设置页共用）。
+  ///
+  /// `settings` 只通知自己的监听者，所以这里补一次 `notifyListeners()`：
+  /// 菜单里的「默认」标记与下发面板的预填设备要立刻跟着变。
+  Future<void> setDefaultDevice(String deviceId) async {
+    final next = deviceId.trim();
+    if (next.isEmpty || next == settings.deviceId) return;
+    await settings.setDeviceId(next);
+    if (!_disposed) notifyListeners();
   }
 
   /// 取消一条还没结束的命令（P14）。

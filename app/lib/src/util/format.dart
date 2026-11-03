@@ -50,6 +50,21 @@ String formatSpan(DateTime? start, DateTime? end) {
   return '${formatClock(start)} → ${formatClock(stop)}';
 }
 
+/// 文件大小：`960 B` / `12.3 KB` / `4.8 MB`（附件卡片上用）。
+String formatBytes(int? bytes) {
+  final value = bytes ?? 0;
+  if (value <= 0) return '0 B';
+  const units = <String>['B', 'KB', 'MB', 'GB'];
+  var scaled = value.toDouble();
+  var unit = 0;
+  while (scaled >= 1024 && unit < units.length - 1) {
+    scaled /= 1024;
+    unit += 1;
+  }
+  final digits = unit == 0 || scaled >= 100 ? 0 : 1;
+  return '${scaled.toStringAsFixed(digits)} ${units[unit]}';
+}
+
 /// 路径末段：`C:\Users\alice\projects\kids_points_app` → `kids_points_app`。
 ///
 /// 命令卡片的元信息行只放得下一个词：「项目目录」比完整路径有用得多，

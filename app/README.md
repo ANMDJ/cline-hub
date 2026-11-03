@@ -12,10 +12,13 @@ app/
 │     ├─ data/hub_api.dart          HubApi 接口 + HttpHubApi（REST + SSE）
 │     ├─ data/notifier.dart         系统通知：HubNotifier 接口 + Android / Noop 实现
 │     ├─ data/link_launcher.dart    用系统浏览器打开下载地址（原生 MethodChannel）
+│     ├─ data/file_picker.dart      系统文件 / 图片选择器（ACTION_OPEN_DOCUMENT，原生 MethodChannel）
 │     ├─ data/settings_store.dart   baseUrl / token / 默认设备 / 通知开关 落盘
 │     ├─ state/hub_store.dart       列表 + 分页游标 + 事件流 + 断线重连
 │     ├─ util/format.dart           相对时间、时长
 │     └─ ui/                        gate / setup / home_shell / 三个 Tab / 详情 / 工作区 / 设置
+│                                   （home_drawer：右侧划出菜单，设备列表 + 设置入口；
+│                                    attachment_bar：「发送文件 / 发送图片」+ 已选附件卡片）
 │                                   （详情页：右上角「概览」弹层 + 顶部「会话开头」+ 回到最新）
 │                                   （session_tile 是列表与工作区页共用的卡片）
 └─ test/                            fake_api + 模型、状态层、页面测试
@@ -28,7 +31,7 @@ cd app
 flutter pub get
 flutter run -d android            # 真机 / 模拟器
 flutter run -d chrome             # 桌面预览（Web 下没有 SSE，见下文）
-flutter test                      # 78 项通过（5 项真机用例跳过；含通知去重 / 同任务合并 / 回前台补发 / 保活）
+flutter test                      # 86 项通过（5 项真机用例跳过；含通知去重 / 同任务合并 / 回前台补发 / 保活 / 附件上传与右侧菜单）
 flutter build apk --release       # 产物 build/app/outputs/flutter-apk/
 
 # 可选：拿真实 Hub 跑一遍客户端（不设变量则这组自动跳过）
@@ -215,7 +218,23 @@ SSE 四种事件都用上了：`session`（去抖 900ms 后刷新列表）、`ho
   （即使只有一台，组头也写明），因为不同机器的同名项目是两组。
 
 
-## Hub 侧注意
+## 发送文件 / 图片 + 右侧菜单（1.2.0 起）
+
+| 能力 | 位置 | 说明 |
+|---|---|---|
+| 右侧菜单 | `ui/home_drawer.dart` + `ui/home_shell.dart` | 顶栏只留连接状态 + 菜单按钮；抽屉里是**电脑列表**（在线 / 会话数 / 待执行 / 执行中，点一台设为默认）与「刷新数据 / 设置」。设置页里的设备卡片保留（同一份 `GET /api/v1/devices`） |
+| 发送文件 / 发送图片 | `ui/attachment_bar.dart` | 下发面板与会话输入框各有一组按钮；选中后显示「文件名 · 大小」卡片，可一键移除 |
+| 追加指令 | 原来的输入框 | 输入框里的文字就是「要对这个文件做什么」；**可以留空**，此时 bridge 补一句「先读这个文件，简要说明内容，先不要改文件」 |
+| 上传 | `data/hub_api.dart` 的 `uploadAttachment()` | `POST /api/v1/attachments`，base64 JSON，上限 `kMaxAttachmentBytes` = 8 MB（与 Hub 默认值一致）；上传超时单独放宽到 90 秒 |
+| 选择器 | `data/file_picker.dart` + `MainActivity.pickFile()` | `ACTION_OPEN_DOCUMENT`（图片走 `image/*`），不需要存储权限；读成字节数组回给 Dart，超过上限直接 `too_large` |
+| 命令展示 | `ui/commands_page.dart` | 命令卡片 / 详情多一行「附件 文件名 · 大小」，内容不落 App |
+
+> 为什么不用 `file_picker` / `image_picker`：客户端只保留 http / shared_preferences /
+> flutter_markdown_plus 三个依赖（ADR-31 / 42 / 52），原生 `ACTION_OPEN_DOCUMENT`
+> 就够，和 `link_launcher.dart` 同一个思路。
+> 无头 CLI 接不到 `content://`，所以内容必须先上传到 Hub，由 bridge 下载到本机再给路径（ADR-53）。
+
+
 
 - 下发命令要求 `app` 角色（路由声明 `auth: 'app'`），用 device token 会拿到 `403 forbidden`。
 - `GET /api/v1/health` 是 `auth: 'none'`：**它验不出 token 对不对**。所以向导里「测试连接」

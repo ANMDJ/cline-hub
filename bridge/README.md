@@ -45,7 +45,30 @@ Start-Process -WindowStyle Hidden node -ArgumentList 'src/index.js' -WorkingDire
 | `commands.cline.provider` / `model` | 空 | 无头执行必须显式给 |
 | `commands.cline.resume` | `true`（示例为 `false`） | 无头进程接不上 `--id` 续会话，保持 false |
 
-## 脚本
+## 附件（手机发来的文件 / 图片，P38）
+
+命令可以带一个附件（`command.attachment`，内容在 Hub 上）。bridge 的处理顺序：
+
+1. 领取到命令后先 `GET /api/v1/attachments/<id>`（device token，只能取自己那台设备的）；
+2. 落盘到 `%TEMP%\cline-hub-cmd\incoming\<commandId>-<原文件名>`；
+3. 把「用户那句话 + 绝对路径」拼成 prompt 再交给 `cline` / shell：
+
+```
+把这份周报里的错别字改掉
+
+[附件] 手机端发来的文件已保存到这台电脑上：
+  路径：C:\Users\alice\AppData\Local\Temp\cline-hub-cmd\incoming\cmd_9f2c-周报.docx
+  原名：周报.docx
+  类型：application/…（20.0 KB）
+请先读取这个文件，再按上面的要求处理。
+```
+
+- 用户没写说明时，最后一句换成「请先读取这个文件，简要说明它是什么内容；先不要修改任何文件」。
+- 下载失败 / 空文件 / 超过 16 MB → 命令直接 `failed`，`errorText` 以「附件下载失败：」开头；
+  不带着「找不到文件」的 prompt 继续跑。
+- 临时目录不自动清理：文件很小，且 `%TEMP%` 由系统回收；要立刻清就删 `cline-hub-cmd\incoming`。
+- 上限是 `bridge/src/attachment.js` 的 `MAX_ATTACHMENT_BYTES`（16 MB，比 Hub 默认的 8 MB 宽一档）。
+
 
 | 命令 | 作用 |
 |---|---|

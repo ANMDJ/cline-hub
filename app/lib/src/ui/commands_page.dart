@@ -130,12 +130,24 @@ class _CommandTile extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                item.prompt,
+                item.prompt.trim().isEmpty
+                    ? '（只发了附件，没有附加说明）'
+                    : item.prompt,
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontSize: 13.5, height: 1.5),
               ),
               const SizedBox(height: 7),
+              if (item.attachment != null) ...[
+                MetaLine(
+                  parts: [
+                    '附件 ${item.attachment!.label}',
+                    formatBytes(item.attachment!.byteSize),
+                  ],
+                  icon: Icons.attach_file_rounded,
+                ),
+                const SizedBox(height: 4),
+              ],
               MetaLine(
                 parts: [
                   workspaceLabel(item.workspace),
@@ -270,9 +282,25 @@ void _showCommandDetail(
               const Text('指令', style: TextStyle(fontSize: 12, color: kMuted)),
               const SizedBox(height: 6),
               SelectableText(
-                item.prompt,
+                item.prompt.trim().isEmpty
+                    ? '（只发了附件，没有附加说明）'
+                    : item.prompt,
                 style: const TextStyle(fontSize: 13.5, height: 1.65),
               ),
+              if (item.attachment != null) ...[
+                const SizedBox(height: 10),
+                MetaLine(
+                  parts: [
+                    '附件 ${item.attachment!.label}',
+                    formatBytes(item.attachment!.byteSize),
+                    if ((item.attachment!.mimeType ?? '').isNotEmpty)
+                      item.attachment!.mimeType!,
+                    if (item.attachment!.createdAt != null)
+                      '入库 ${formatDateTime(item.attachment!.createdAt)}',
+                  ],
+                  icon: Icons.attach_file_rounded,
+                ),
+              ],
               if (item.workspace != null) ...[
                 const SizedBox(height: 10),
                 MetaLine(parts: [item.workspace], icon: Icons.folder_outlined),

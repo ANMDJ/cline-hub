@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 
 import { HttpError } from '../http.js'
+import { toAttachment } from './attachments.js'
 import {
   requireString,
   optionalString,
@@ -54,7 +55,12 @@ function toCommand(row) {
     startedAt: row.started_at,
     finishedAt: row.finished_at,
     /** 手机端点「取消」的时间；null 表示没人取消过。 */
-    cancelRequestedAt: row.cancel_requested_at ?? null
+    cancelRequestedAt: row.cancel_requested_at ?? null,
+    /**
+     * 随命令带过去的附件（文件 / 图片）：只有元数据，内容由 bridge 按 id 下载。
+     * 列表与详情都返回它 —— 体积很小，不违反 ADR-2「列表不带大字段」。
+     */
+    attachment: toAttachment(row.attachment ?? null)
   }
 }
 
@@ -63,6 +69,27 @@ export function createCommandRoutes({ db, logger, sse }) {
     const row = await db.one(`select id from clients where id = $1 and role = 'device'`, [deviceId])
     if (!row) throw new HttpError(400, `unknown device: ${deviceId}`, 'unknown_device')
     return row.id
+  }
+
+  /**
+   * 把 `attachment_id` 换成附件元数据。
+   *
+   * 为什么不直接 join：`/commands/pending` 用 `for update skip locked` 认领，
+   * 外连接（`left join`）在 Postgres 里不能配 `for update`（要写 `of c`，容易写错），
+   * 一条朴素的两段查询更不容易出事故，而且附件数量远小于命令行数。
+   */
+  async function withAttachments(rows) {
+    const list = Array.isArray(rows) ? rows : [rows]
+    const ids = [...new Set(list.map((row) => row?.attachment_id).filter(Boolean))]
+    if (ids.length === 0) return list.map((row) => (row ? { ...row, attachment: null } : row))
+    const found = await db.many(
+      'select id, name, mime_type, byte_size, created_at from attachments where id = any($1::text[])',
+      [ids]
+    )
+    const byId = new Map(found.map((item) => [item.id, item]))
+    return list.map((row) =>
+      row ? { ...row, attachment: byId.get(row.attachment_id) ?? null } : row
+    )
   }
 
   function deviceScope(client, source) {
@@ -77,25 +104,57 @@ export function createCommandRoutes({ db, logger, sse }) {
       auth: 'app',
       async handler({ body, client }) {
         const deviceId = await assertDevice(requireString(body.deviceId, 'deviceId', { max: 100 }))
-        const prompt = requireString(body.prompt, 'prompt', { max: 4000 })
         const mode = optionalString(body.mode, 'mode', 10) ?? 'plan'
         if (!MODES.has(mode)) {
           throw new HttpError(400, `mode must be one of ${[...MODES].join(', ')}`, 'invalid_field')
         }
         const workspace = normalizeFsPath(optionalString(body.workspace, 'workspace', 1000))
         const sessionId = optionalString(body.sessionId, 'sessionId', 200)
+
+        /**
+         * 附件（P38）：可以先传文件、再在输入框写一句「要对它做什么」，也可以只发文件。
+         * 所以「必须带 prompt」的规则放宽成「prompt 或 attachmentId 至少一个」；
+         * 只发文件时 prompt 落成空串，由 bridge 自己补一句「先读这个文件」。
+         */
+        const attachmentId = optionalString(body.attachmentId, 'attachmentId', 80)
+        const prompt = attachmentId
+          ? (optionalString(body.prompt, 'prompt', 4000) ?? '')
+          : requireString(body.prompt, 'prompt', { max: 4000 })
+
+        if (attachmentId) {
+          const attachment = await db.one(
+            'select id, device_id from attachments where id = $1',
+            [attachmentId]
+          )
+          if (!attachment) {
+            throw new HttpError(400, `unknown attachment: ${attachmentId}`, 'invalid_field')
+          }
+          // 附件必须发给「它被上传时指定的那台电脑」：否则 App 能借别的设备的附件跑本机文件。
+          if (attachment.device_id !== deviceId) {
+            throw new HttpError(403, 'attachment belongs to another device', 'forbidden')
+          }
+        }
+
         const id = `cmd_${crypto.randomBytes(6).toString('hex')}`
 
         const row = await db.one(
-          `insert into commands (id, device_id, prompt, mode, workspace, session_id, requested_by)
-           values ($1, $2, $3, $4, $5, $6, $7)
+          `insert into commands (id, device_id, prompt, mode, workspace, session_id, requested_by, attachment_id)
+           values ($1, $2, $3, $4, $5, $6, $7, $8)
            returning *`,
-          [id, deviceId, prompt, mode, workspace, sessionId, client.id]
+          [id, deviceId, prompt, mode, workspace, sessionId, client.id, attachmentId]
         )
+        const [item] = await withAttachments([row])
 
-        logger.info('command queued', { id, deviceId, mode, sessionId, requestedBy: client.id })
-        sse.broadcast('command', toCommand(row))
-        return { ok: true, command: toCommand(row) }
+        logger.info('command queued', {
+          id,
+          deviceId,
+          mode,
+          sessionId,
+          attachmentId: attachmentId ?? null,
+          requestedBy: client.id
+        })
+        sse.broadcast('command', toCommand(item))
+        return { ok: true, command: toCommand(item) }
       }
     },
 
@@ -128,7 +187,7 @@ export function createCommandRoutes({ db, logger, sse }) {
            limit $${values.length}`,
           values
         )
-        return { ok: true, items: rows.map(toCommand) }
+        return { ok: true, items: (await withAttachments(rows)).map(toCommand) }
       }
     },
 
@@ -161,12 +220,13 @@ export function createCommandRoutes({ db, logger, sse }) {
           return picked.rows.map((row) => ({ ...row, status: 'delivered' }))
         })
 
-        if (rows.length > 0) {
-          logger.info('commands delivered', { deviceId, count: rows.length })
-          for (const row of rows) sse.broadcast('command.update', toCommand(row))
+        const items = await withAttachments(rows)
+        if (items.length > 0) {
+          logger.info('commands delivered', { deviceId, count: items.length })
+          for (const row of items) sse.broadcast('command.update', toCommand(row))
         }
 
-        return { ok: true, deviceId, items: rows.map(toCommand) }
+        return { ok: true, deviceId, items: items.map(toCommand) }
       }
     },
 
@@ -180,7 +240,8 @@ export function createCommandRoutes({ db, logger, sse }) {
         if (client.role === 'device' && row.device_id !== client.id) {
           throw new HttpError(403, 'command belongs to another device', 'forbidden')
         }
-        return { ok: true, command: toCommand(row) }
+        const [item] = await withAttachments([row])
+        return { ok: true, command: toCommand(item) }
       }
     },
 
@@ -231,8 +292,9 @@ export function createCommandRoutes({ db, logger, sse }) {
           to: updated.status,
           requestedBy: client.id
         })
-        sse.broadcast('command.update', toCommand(updated))
-        return { ok: true, command: toCommand(updated) }
+        const [item] = await withAttachments([updated])
+        sse.broadcast('command.update', toCommand(item))
+        return { ok: true, command: toCommand(item) }
       }
     },
 
@@ -259,7 +321,8 @@ export function createCommandRoutes({ db, logger, sse }) {
             id: params.id,
             reported: body.status ?? null
           })
-          return { ok: true, command: toCommand(existing), ignored: true }
+          const [ignored] = await withAttachments([existing])
+          return { ok: true, command: toCommand(ignored), ignored: true }
         }
 
         const status = requireString(body.status, 'status', { max: 20 })
@@ -299,8 +362,9 @@ export function createCommandRoutes({ db, logger, sse }) {
         )
 
         logger.info('command updated', { id: params.id, status: effectiveStatus })
-        sse.broadcast('command.update', toCommand(updated))
-        return { ok: true, command: toCommand(updated) }
+        const [item] = await withAttachments([updated])
+        sse.broadcast('command.update', toCommand(item))
+        return { ok: true, command: toCommand(item) }
       }
     }
   ]

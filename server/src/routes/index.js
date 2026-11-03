@@ -1,4 +1,5 @@
 import { createAppRoutes } from './app.js'
+import { createAttachmentRoutes } from './attachments.js'
 import { createClientRoutes } from './clients.js'
 import { createCommandRoutes } from './commands.js'
 import { createHookRoutes } from './hooks.js'
@@ -47,6 +48,7 @@ export function createRoutes({ db, logger, sse, config, startedAt }) {
     ...createClientRoutes({ db, logger }),
     ...createSessionRoutes({ db, logger, sse }),
     ...createHookRoutes({ db, logger, sse }),
+    ...createAttachmentRoutes({ db, logger, config }),
     ...createCommandRoutes({ db, logger, sse })
   ]
 }

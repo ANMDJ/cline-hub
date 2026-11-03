@@ -42,6 +42,12 @@ export const config = {
   logFile: read('HUB_LOG_FILE', ''),
   corsOrigin: read('HUB_CORS_ORIGIN', '*'),
   maxBodyBytes: readInt('HUB_MAX_BODY_BYTES', 4 * 1024 * 1024),
+  /**
+   * 单份附件（手机发文件 / 图片）的大小上限。
+   * 只影响 `POST /api/v1/attachments` 这一条路由（base64 后体积 ≈ 4/3），
+   * 其余接口仍然是 `maxBodyBytes`，不会因为发大图就放宽全站。
+   */
+  maxAttachmentBytes: readInt('HUB_MAX_ATTACHMENT_BYTES', 8 * 1024 * 1024),
   sseHeartbeatMs: readInt('HUB_SSE_HEARTBEAT_MS', 25000),
   // 兜底防护：每 IP 令牌桶 + 可选 CIDR 白名单（白名单为空 = 不限 IP）
   rateLimitPerSec: readInt('HUB_RATE_LIMIT_PER_SEC', 5),
