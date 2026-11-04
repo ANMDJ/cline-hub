@@ -43,6 +43,21 @@ const SHELLS = {
 const RESULT_LIMIT = 20000
 
 /**
+ * 执行前拒绝的原因码（P49）。
+ *
+ * `status` 仍然是 `failed`（不动状态机、不新增状态），但 `rejectedBeforeStart`
+ * 让手机能区分「压根没跑」和「跑了才失败」：前者没有任何 cline 输出，
+ * 只有配置 / 路径问题，排查方向完全不同（ADR-62）。
+ */
+const REJECT_REASONS = {
+  MODE_NOT_ALLOWED: 'mode_not_allowed',
+  TEMPLATE_MISSING: 'template_missing',
+  WORKSPACE_MISSING: 'workspace_missing',
+  WORKSPACE_NOT_ALLOWED: 'workspace_not_allowed',
+  ATTACHMENT_FAILED: 'attachment_failed'
+}
+
+/**
  * Hub 上 running 的命令多久对一次账。
  *
  * bridge 崩溃 / 被重启时，子进程要么跟着没了、要么留在本机成为孤儿；
@@ -314,6 +329,21 @@ export function createCommandWorker({ cfg, logger }) {
 
   function report(id, status, extra = {}) {
     return request('PATCH', `/api/v1/commands/${encodeURIComponent(id)}`, { status, ...extra })
+  }
+
+  /**
+   * 执行前拒绝：命令**没有 spawn 任何进程**就失败了。
+   *
+   * 和「跑完才 failed」共用同一个 `status`，额外带 `rejectedBeforeStart` +
+   * 机器可读的 `rejectedReason`；App 据此显示「未执行」并给出原因，
+   * 而不是让用户以为 cline 跑过一遍（ADR-62）。
+   */
+  function rejectBeforeStart(id, reason, errorText) {
+    return report(id, 'failed', {
+      errorText,
+      rejectedBeforeStart: true,
+      rejectedReason: reason
+    })
   }
 
   /**
@@ -907,14 +937,30 @@ export function createCommandWorker({ cfg, logger }) {
    *
    * 以前拿不到有效目录时会静默回落到 bridgeRoot（bridge 自己的源码目录），
    * 命令就在那儿乱跑；现在候选都无效就抛错，由 handle() 回写 failed。
+   *
+   * 错误文案必须说清「到底哪一步不成立」（ADR-61）：命令带了 workspace 但目录
+   * 不存在时，旧文案照样说「这条命令没带 workspace」，排查会被带偏
+   * （2026-11-03 `cmd_e48d2ee78e0e` 的实际教训）。
    */
   function resolveWorkspace(command) {
     const wanted = String(command.workspace ?? '').trim()
     if (wanted && fs.existsSync(wanted) && fs.statSync(wanted).isDirectory()) return wanted
-    if (defaultWorkspace && fs.existsSync(defaultWorkspace)) return defaultWorkspace
-    throw new Error(
-      'no usable workspace: 这条命令没带 workspace，且 commands.defaultWorkspace 未配置或不存在'
-    )
+    if (defaultWorkspace && fs.existsSync(defaultWorkspace) && fs.statSync(defaultWorkspace).isDirectory()) {
+      return defaultWorkspace
+    }
+
+    const fallbackNote = defaultWorkspace
+      ? `commands.defaultWorkspace "${defaultWorkspace}" 不存在或不是目录`
+      : 'commands.defaultWorkspace 未配置'
+    if (!wanted) {
+      const error = new Error(`no usable workspace: 这条命令没带 workspace，且 ${fallbackNote}`)
+      error.rejectReason = REJECT_REASONS.WORKSPACE_MISSING
+      throw error
+    }
+    const reason = fs.existsSync(wanted) ? '不是目录' : '在本机不存在'
+    const error = new Error(`no usable workspace: workspace "${wanted}" ${reason}，且 ${fallbackNote}`)
+    error.rejectReason = REJECT_REASONS.WORKSPACE_MISSING
+    throw error
   }
 
   async function handle(command) {
@@ -927,14 +973,20 @@ export function createCommandWorker({ cfg, logger }) {
     const mode = String(command.mode ?? 'plan').toLowerCase()
 
     if (!allowModes.includes(mode)) {
-      await report(command.id, 'failed', {
-        errorText: `mode "${mode}" is not allowed on this device (commands.allowModes: ${allowModes.join(', ')})`
-      })
+      await rejectBeforeStart(
+        command.id,
+        REJECT_REASONS.MODE_NOT_ALLOWED,
+        `mode "${mode}" is not allowed on this device (commands.allowModes: ${allowModes.join(', ')})`
+      )
       logger.warn('command rejected: mode not allowed', { id: command.id, mode })
       return
     }
     if (runner === 'shell' && !template) {
-      await report(command.id, 'failed', { errorText: 'commands.template is empty in bridge/config.json' })
+      await rejectBeforeStart(
+        command.id,
+        REJECT_REASONS.TEMPLATE_MISSING,
+        'commands.template is empty in bridge/config.json'
+      )
       logger.warn('command rejected: empty template', { id: command.id })
       return
     }
@@ -943,17 +995,25 @@ export function createCommandWorker({ cfg, logger }) {
     try {
       cwd = resolveWorkspace(command)
     } catch (error) {
-      await report(command.id, 'failed', { errorText: error.message })
+      await rejectBeforeStart(
+        command.id,
+        error.rejectReason ?? REJECT_REASONS.WORKSPACE_MISSING,
+        error.message
+      )
       logger.warn('command rejected: no usable workspace', {
         id: command.id,
-        wanted: command.workspace ?? null
+        wanted: command.workspace ?? null,
+        // 把完整原因也打出来：日志里只有 wanted 时，看不出是「不存在」还是「不是目录」。
+        reason: error.message
       })
       return
     }
     if (!isWorkspaceAllowed(cwd, workspaceWhitelist)) {
-      await report(command.id, 'failed', {
-        errorText: `workspace "${cwd}" is not in workspaceWhitelist (${workspaceWhitelist.join(', ')})`
-      })
+      await rejectBeforeStart(
+        command.id,
+        REJECT_REASONS.WORKSPACE_NOT_ALLOWED,
+        `workspace "${cwd}" is not in workspaceWhitelist (${workspaceWhitelist.join(', ')})`
+      )
       logger.warn('command rejected: workspace not whitelisted', { id: command.id, cwd })
       return
     }
@@ -989,9 +1049,11 @@ export function createCommandWorker({ cfg, logger }) {
           bytes: saved.byteSize
         })
       } catch (error) {
-        await report(command.id, 'failed', {
-          errorText: `附件下载失败：${error.message}`
-        })
+        await rejectBeforeStart(
+          command.id,
+          REJECT_REASONS.ATTACHMENT_FAILED,
+          `附件下载失败：${error.message}`
+        )
         logger.warn('command attachment failed', { id: command.id, message: error.message })
         return
       }

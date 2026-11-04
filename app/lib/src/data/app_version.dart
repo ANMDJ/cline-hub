@@ -3,8 +3,8 @@
 /// 为什么不引 `package_info_plus`：这个客户端刻意只保留 http / shared_preferences
 /// 两个依赖，版本号一年也就改几次，手工同步比多一个插件更划算。
 /// 发版脚本 `scripts/release-apk.mjs` 会读 `pubspec.yaml` 并校验这里是否一致。
-const String kAppVersion = '1.3.0';
-const int kAppBuild = 13;
+const String kAppVersion = '1.3.1';
+const int kAppBuild = 14;
 
 class ChangelogEntry {
   const ChangelogEntry(this.version, this.date, this.items);
@@ -15,6 +15,11 @@ class ChangelogEntry {
 }
 
 const List<ChangelogEntry> kChangelog = <ChangelogEntry>[
+  ChangelogEntry('1.3.1', '2026-11-04', <String>[
+    '新增：命令分成「未执行」和「失败」两种——目录不存在 / 模式不允许 / 白名单 / 附件下载失败时，bridge 在执行前就拒绝，卡片和详情用警示色显示「未执行」并写明原因',
+    '优化：这类命令的通知标题是「命令未执行」，不会再让你去翻根本不存在的输出；改好目录重新下发即可',
+    '优化：下发面板写明「工作目录在 bridge 没配默认目录时必填，留空会被直接拒绝」',
+  ]),
   ChangelogEntry('1.3.0', '2026-11-04', <String>[
     '改版：发消息 / 发文件改成微信式输入条——左侧「+」展开「图片 / 文件」，右侧发送，已选附件显示缩略图与名字 / 大小',
     '优化：发送键在没内容时是灰的，不会误发空命令；点输入框会自动收起附件面板',

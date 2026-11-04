@@ -91,7 +91,14 @@ class _CommandTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = statusColor(item.status);
+    final color = commandStatusColor(
+      item.status,
+      rejectedBeforeStart: item.rejectedBeforeStart,
+    );
+    final statusText = commandStatusLabel(
+      item.status,
+      rejectedBeforeStart: item.rejectedBeforeStart,
+    );
     return Material(
       color: kPanel,
       borderRadius: BorderRadius.circular(kRadius),
@@ -112,7 +119,7 @@ class _CommandTile extends StatelessWidget {
                   StatusDot(color: color),
                   const SizedBox(width: 8),
                   Text(
-                    statusLabel(item.status),
+                    statusText,
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
@@ -162,6 +169,19 @@ class _CommandTile extends StatelessWidget {
                   prefix: '耗时 ',
                 ),
               ),
+              if (item.notStarted) ...[
+                const SizedBox(height: 6),
+                Text(
+                  item.rejectLabel == null
+                      ? '没有执行：bridge 在执行前拒绝了这条命令'
+                      : '没有执行：${item.rejectLabel}',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    height: 1.5,
+                    color: kWarn,
+                  ),
+                ),
+              ],
               if (item.resultText != null) ...[
                 const SizedBox(height: 6),
                 Text(
@@ -221,7 +241,10 @@ void _showCommandDetail(
           (entry) => entry.id == snapshot.id,
           orElse: () => snapshot,
         );
-        final color = statusColor(item.status);
+        final color = commandStatusColor(
+          item.status,
+          rejectedBeforeStart: item.rejectedBeforeStart,
+        );
         // 命令输出是终端回放：带 ANSI 颜色码，手机上显示/复制前先过滤（库里保留原字节）。
         final output = item.resultText == null
             ? null
@@ -251,7 +274,10 @@ void _showCommandDetail(
                   StatusDot(color: color),
                   const SizedBox(width: 8),
                   Text(
-                    statusLabel(item.status),
+                    commandStatusLabel(
+                      item.status,
+                      rejectedBeforeStart: item.rejectedBeforeStart,
+                    ),
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
@@ -395,9 +421,34 @@ void _showCommandDetail(
                   child: SelectableText(output, style: kMono),
                 ),
               ],
+              if (item.notStarted) ...[
+                const SizedBox(height: 16),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: kWarn.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: kWarn.withValues(alpha: 0.3)),
+                  ),
+                  child: Text(
+                    item.rejectLabel == null
+                        ? '这条命令没有执行：bridge 在执行前拒绝了它。'
+                        : '这条命令没有执行：${item.rejectLabel}。改好之后重新下发即可。',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      height: 1.6,
+                      color: kWarn,
+                    ),
+                  ),
+                ),
+              ],
               if (item.errorText != null) ...[
                 const SizedBox(height: 16),
-                const Text('错误', style: TextStyle(fontSize: 12, color: kMuted)),
+                Text(
+                  item.notStarted ? '拒绝原因（原文）' : '错误',
+                  style: const TextStyle(fontSize: 12, color: kMuted),
+                ),
                 const SizedBox(height: 6),
                 Container(
                   width: double.infinity,

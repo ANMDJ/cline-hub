@@ -1,4 +1,5 @@
 import 'package:cline_console/src/models/models.dart';
+import 'package:cline_console/src/ui/theme.dart';
 import 'package:cline_console/src/util/format.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -109,6 +110,32 @@ void main() {
         status: 'pending',
       );
       expect(item.diagnosticsCommand, isEmpty);
+    });
+
+    test('执行前被拒：status 仍是 failed，但界面要说「未执行」', () {
+      final item = CommandItem.fromJson(<String, dynamic>{
+        'id': 'cmd_5',
+        'deviceId': 'localone',
+        'prompt': '跑测试',
+        'mode': 'plan',
+        'status': 'failed',
+        'rejectedBeforeStart': true,
+        'rejectedReason': 'workspace_missing',
+        'errorText': 'no usable workspace: workspace "C:\\nope" 在本机不存在',
+      });
+      expect(item.notStarted, isTrue);
+      expect(item.rejectLabel, '工作目录不存在或没有指定');
+      expect(item.isActive, isFalse);
+      expect(commandStatusLabel('failed', rejectedBeforeStart: true), '未执行');
+      expect(commandStatusColor('failed', rejectedBeforeStart: true), kWarn);
+
+      final normal = CommandItem.fromJson(<String, dynamic>{
+        'id': 'cmd_6',
+        'status': 'failed',
+      });
+      expect(normal.notStarted, isFalse);
+      expect(normal.rejectLabel, isNull);
+      expect(commandStatusLabel('failed'), '失败');
     });
   });
 

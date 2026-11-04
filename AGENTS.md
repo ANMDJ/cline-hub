@@ -168,7 +168,7 @@ Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
 | [`docs/self-host.md`](docs/self-host.md) | 从零自托管：服务器 → 电脑 → 手机的完整闭环 | 第一次部署、教别人部署 |
 | [`docs/new-device.md`](docs/new-device.md) | 接入第二台 Windows（device token / bridge / 多机边界） | 加电脑、排查设备不上线 |
 | [`docs/bridge-notes.md`](docs/bridge-notes.md) | 本机实测事实：Cline 数据位置、messages.json 结构、安全排查 | 改采集 / 怀疑环境 |
-| [`docs/decisions.md`](docs/decisions.md) | 58 条 ADR：「为什么这么做」 | 想推翻某个设计之前 |
+| [`docs/decisions.md`](docs/decisions.md) | 62 条 ADR：「为什么这么做」 | 想推翻某个设计之前 |
 | [`docs/security-review.md`](docs/security-review.md) | 外部安全审计文档的逐条复核（哪些对 / 哪些错 / 漏了什么）+ 采纳计划 P40–P43 | 收到外部审计、漏洞报告，或要动鉴权 / SSE / 反代之前 |
 | [`docs/interruptions.md`](docs/interruptions.md) | 主动中断记录：为什么杀 bridge / 杀了谁 / 怎么恢复 | 开工前、要重启 bridge 时 |
 | [`docs/server-prep.md`](docs/server-prep.md) | 服务器从零准备（Docker / Postgres / Caddy / ntfy） | 换机、重建 |

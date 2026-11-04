@@ -15,6 +15,20 @@ const MODES = new Set(['plan', 'act', 'yolo'])
 const REPORTABLE = new Set(['running', 'done', 'failed', 'cancelled'])
 
 /**
+ * 执行前拒绝的原因码（P49）：与 bridge 的 `REJECT_REASONS` 一一对应。
+ *
+ * 只接受白名单里的值 —— 这个字段会被 App 映射成固定文案，
+ * 让 bridge 随便写字符串会让手机端出现「未知原因」，不如 400 让执行侧改对。
+ */
+const REJECT_REASONS = new Set([
+  'workspace_missing',
+  'workspace_not_allowed',
+  'mode_not_allowed',
+  'template_missing',
+  'attachment_failed'
+])
+
+/**
  * 已经结束的状态。`cancelling` 不算：那是「执行中、但用户要求停」，
  * 此时 bridge 还没杀完进程，允许它继续回写取消结果。
  */
@@ -50,6 +64,12 @@ export function toCommand(row) {
     pidStartedAt: row.pid_started_at ?? null,
     resultText: row.result_text,
     errorText: row.error_text,
+    /**
+     * 执行前拒绝（P49）：`status` 仍是 `failed`，但这条命令**没有跑过**。
+     * App 用它把「未执行」和「执行失败」分开显示（ADR-62）。
+     */
+    rejectedBeforeStart: Boolean(row.rejected_before_start),
+    rejectedReason: row.rejected_reason ?? null,
     createdAt: row.created_at,
     deliveredAt: row.delivered_at,
     startedAt: row.started_at,
@@ -390,6 +410,20 @@ export function createCommandRoutes({ db, logger, sse, config = {} }) {
         const pid = optionalPid(body.pid)
         const pidStartedAt = isoOrNull(body.pidStartedAt)
         const runner = optionalString(body.runner, 'runner', 20)
+        /**
+         * 执行前拒绝（P49）：只认 `true`（false = 这次不说，保留原值）；
+         * 给了原因码也视为标记。两个字段都只增不减 —— bridge 后续补报
+         * `running` / 终态时不能把「没跑过」这件事抹掉。
+         */
+        const rejectedReason = optionalString(body.rejectedReason, 'rejectedReason', 40)
+        if (rejectedReason && !REJECT_REASONS.has(rejectedReason)) {
+          throw new HttpError(
+            400,
+            `rejectedReason must be one of ${[...REJECT_REASONS].join(', ')}`,
+            'invalid_field'
+          )
+        }
+        const rejectedBeforeStart = body.rejectedBeforeStart === true || Boolean(rejectedReason)
 
         const updated = await db.one(
           `update commands set
@@ -400,6 +434,9 @@ export function createCommandRoutes({ db, logger, sse, config = {} }) {
              pid            = coalesce($6, pid),
              pid_started_at = coalesce($7::timestamptz, pid_started_at),
              runner         = coalesce($8, runner),
+             -- 执行前拒绝（P49）：只增不减，避免补报 running 时把标记清掉
+             rejected_before_start = rejected_before_start or $10::boolean,
+             rejected_reason       = coalesce(rejected_reason, $11),
              -- 租约（P42）：running 时续期，终态清空；否则心跳一断就会被误回收
              lease_expires_at = case
                                   when $2 in ('done', 'failed', 'cancelled') then null
@@ -409,7 +446,19 @@ export function createCommandRoutes({ db, logger, sse, config = {} }) {
              finished_at = case when $2 in ('done', 'failed', 'cancelled') then now() else finished_at end
            where id = $1
            returning *`,
-          [params.id, effectiveStatus, resultText, errorText, sessionId, pid, pidStartedAt, runner, leaseSec]
+          [
+            params.id,
+            effectiveStatus,
+            resultText,
+            errorText,
+            sessionId,
+            pid,
+            pidStartedAt,
+            runner,
+            leaseSec,
+            rejectedBeforeStart,
+            rejectedReason
+          ]
         )
 
         logger.info('command updated', { id: params.id, status: effectiveStatus })

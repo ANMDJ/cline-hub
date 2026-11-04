@@ -40,11 +40,31 @@ Start-Process -WindowStyle Hidden node -ArgumentList 'src/index.js' -WorkingDire
 | `commands.enabled` | `false` | 远程命令总开关 |
 | `commands.runner` | `shell`（示例为 `cline`） | `cline` = 交给 CLI 开新会话 |
 | `commands.allowModes` | `["plan","act"]`（示例只留 plan） | 不在列表里的模式直接 `failed` |
-| `commands.defaultWorkspace` | 空 | 命令没带 workspace 时的兜底目录，必须存在 |
+| `commands.defaultWorkspace` | 空（**当前不设**） | 命令没带 workspace 时的兜底目录。本机保持空 = 不带目录的命令直接执行前拒绝（`workspace_missing`），不会静默落到某个目录 |
 | `commands.cline.bin` | 空（用 PATH） | Windows 上填 `cline.cmd` 绝对路径 |
 | `commands.cline.provider` / `model` | 空 | 无头执行必须显式给 |
 | `commands.cline.resume` | `true`（示例为 `false`） | 无头进程接不上 `--id` 续会话，保持 false |
 | `commands.leaseHeartbeatMs` | `30000` | 租约心跳间隔（P42）：本机还拿着命令时周期 `POST /commands/:id/heartbeat`，空闲不发 |
+
+## 执行前拒绝（P49）
+
+命令**还没 spawn 任何进程**就失败时（目录不可用 / 模式不允许 / 白名单 / 模板缺失 / 附件下载失败），
+bridge 回的 `failed` 会多带两个字段：
+
+```json
+{ "status": "failed", "rejectedBeforeStart": true, "rejectedReason": "workspace_missing", "errorText": "no usable workspace: workspace \"…\" 在本机不存在" }
+```
+
+| 原因码 | 触发 |
+|---|---|
+| `workspace_missing` | 没带 workspace 且没配默认目录；带了但目录不存在 / 不是目录 |
+| `workspace_not_allowed` | 目录不在 `workspaceWhitelist` |
+| `mode_not_allowed` | 模式不在 `commands.allowModes` |
+| `template_missing` | `runner=shell` 但 `commands.template` 为空 |
+| `attachment_failed` | 带附件却下载失败（不拿「找不到文件」的 prompt 去跑） |
+
+`status` 仍是 `failed`（不动状态机）；App 用 `rejectedBeforeStart` 显示「未执行」而不是「失败」，
+详情里的 `errorText` 就是唯一线索，所以文案必须指名哪个目录 / 哪个模式（ADR-61/62）。
 
 ## 租约心跳（P42）
 

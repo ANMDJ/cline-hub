@@ -5,6 +5,26 @@
 > [`docs/interruptions.md`](docs/interruptions.md)，单条设计决策在
 > [`docs/decisions.md`](docs/decisions.md)。日期均为 +08。
 
+## 2026-11-04 · App 1.3.1+14 / Hub 0.1.0（P49）
+
+### 「未执行」和「失败」分开
+
+- **bridge 在执行前就拒绝时，手机上不再只显示「失败」**：目录不存在 / 没指定、模式不在
+  `allowModes`、目录不在白名单、`template` 为空、附件下载失败 → 命令卡片与详情用**警示色**
+  显示「未执行」并写出具体原因；通知标题是「命令未执行」，不会让人去翻根本不存在的输出。
+- **新增两个字段**（migration 011）：`commands.rejected_before_start` / `rejected_reason`；
+  命令对象多 `rejectedBeforeStart` / `rejectedReason`，状态仍是 `failed`，
+  老客户端忽略未知字段即可，Hub 与 App 可以分开升级。
+- **明确不设默认目录**：`commands.defaultWorkspace` 保持空；命令必须自带真实存在的目录，
+  留空会被直接拒绝（不再静默落到某个目录）。
+
+### 配套
+
+- `docs/api.md` 补 PATCH 契约与五个原因码；`bridge/README.md` 新增「执行前拒绝（P49）」；
+  ADR-62。
+- 验证：bridge `node --test` **65**、server `npm test` **68**、`flutter analyze` 0 issue、
+  `flutter test` **103 通过 / 5 跳过**。
+
 ## 2026-11-04 · App 1.3.0+13 / Hub 0.1.0（P42 / P46 / P47）
 
 ### 输入区改版（P46，ADR-59）

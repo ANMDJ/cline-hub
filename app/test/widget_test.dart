@@ -249,9 +249,11 @@ void main() {
               r'C:\Users\alice\projects\kids_points_app',
     );
     expect(workspaceField, findsOneWidget);
-    expect(find.text('工作目录（可选）'), findsOneWidget);
-    expect(find.text('默认'), findsOneWidget);
+    expect(find.text('工作目录（bridge 没配默认目录时必填）'), findsOneWidget);
+    expect(find.text('留空'), findsOneWidget);
     expect(find.text(r'…\projects\kids_points_app'), findsOneWidget);
+    // 没配默认目录时留空会被 bridge 直接拒绝：文案要先说清楚（P49）。
+    expect(find.textContaining('会被直接拒绝'), findsOneWidget);
 
     await tester.tap(find.text(r'…\projects\kids_points_app'));
     await tester.pump();
@@ -260,7 +262,7 @@ void main() {
       projectPath,
     );
 
-    await tester.tap(find.widgetWithText(ChoiceChip, '默认'));
+    await tester.tap(find.widgetWithText(ChoiceChip, '留空'));
     await tester.pump();
     expect(tester.widget<TextField>(workspaceField).controller?.text, '');
 

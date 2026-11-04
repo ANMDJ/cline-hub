@@ -257,7 +257,10 @@ class _NewCommandSheetState extends State<_NewCommandSheet> {
             ),
           ],
           const SizedBox(height: 16),
-          const Text('工作目录（可选）', style: TextStyle(fontSize: 12, color: kMuted)),
+          const Text(
+            '工作目录（bridge 没配默认目录时必填）',
+            style: TextStyle(fontSize: 12, color: kMuted),
+          ),
           const SizedBox(height: 6),
           TextField(
             controller: _workspaceCtrl,
@@ -274,7 +277,7 @@ class _NewCommandSheetState extends State<_NewCommandSheet> {
             runSpacing: 6,
             children: [
               ChoiceChip(
-                label: const Text('默认', style: TextStyle(fontSize: 11.5)),
+                label: const Text('留空', style: TextStyle(fontSize: 11.5)),
                 selected: _workspaceCtrl.text.trim().isEmpty,
                 onSelected: (_) {
                   _workspaceCtrl.text = '';
@@ -298,8 +301,8 @@ class _NewCommandSheetState extends State<_NewCommandSheet> {
           const SizedBox(height: 6),
           Text(
             workspaces.isEmpty
-                ? '留空走 bridge 的 commands.defaultWorkspace；也可以直接粘一个绝对路径。'
-                : '点一下就填好；留空（默认）表示用 bridge 的 commands.defaultWorkspace。',
+                ? '留空 = 用 bridge 的 commands.defaultWorkspace；没配的话命令会被直接拒绝（不会执行）。也可以粘一个绝对路径。'
+                : '点一下就填好；留空表示用 bridge 的默认目录（没配的话会被直接拒绝，不会执行）。',
             style: const TextStyle(fontSize: 11, height: 1.5, color: kMuted),
           ),
           const SizedBox(height: 12),

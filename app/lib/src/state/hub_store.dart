@@ -937,7 +937,8 @@ class HubStore extends ChangeNotifier {
     final headline = switch (item.status) {
       'done' => '命令完成',
       'cancelled' => '命令已取消',
-      _ => '命令失败',
+      // 执行前被拒（P49）：没有跑过，不能只说「失败」让用户去找输出。
+      _ => item.notStarted ? '命令未执行' : '命令失败',
     };
     final detail = ok
         ? (item.resultText ?? item.prompt)

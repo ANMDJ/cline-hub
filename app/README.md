@@ -152,6 +152,7 @@ SSE 四种事件都用上了：`session`（去抖 900ms 后刷新列表）、`ho
 | 触发 | 来源 | 说明 |
 |---|---|---|
 | 命令完成 / 失败 / 取消 | SSE `command.update` 的 active → 终态 | 正文优先 `errorText`，其次 `resultText`；去 ANSI 后截 160 字 |
+| 命令「未执行」 | 同上，但 `rejectedBeforeStart=true` | 标题是「命令未执行」而不是「命令失败」：bridge 在执行前就拒了（目录 / 模式 / 白名单 / 附件），页面顶部同样用警示色而不是红色（P49，ADR-62） |
 | 会话完成 / 失败 / 中断 | SSE `hook` 的 `session_done` / `session_failed` / `session_cancelled` | 只认 bridge 合成的三个；`agent_*` 不弹（ntfy 已覆盖） |
 | 后台期间结束的命令 | 回前台 `resume()` 后补拉 | 只补「退后台时还在跑」的那些，避免打开 App 刷屏 |
 

@@ -89,7 +89,9 @@ test('PATCH 接收 pid / pidStartedAt / runner 并写进 update 参数', async (
     4242,
     '2026-11-02T03:00:05.000Z',
     'cline',
-    120 // 租约秒数（P42）：认领 / running 都用同一个默认值
+    120, // 租约秒数（P42）：认领 / running 都用同一个默认值
+    false, // rejectedBeforeStart（P49）：普通进度上报不带标记
+    null // rejectedReason
   ])
   assert.equal(result.command.pid, 4242)
   assert.equal(result.command.runner, 'cline')
@@ -126,7 +128,70 @@ test('没有进程字段时全部写 null，旧 bridge 仍然兼容', async () =
     body: { status: 'done', resultText: 'ok' },
     client: device
   })
-  assert.deepEqual(calls[1].params, [baseRow.id, 'done', 'ok', null, null, null, null, null, 120])
+  assert.deepEqual(calls[1].params, [
+    baseRow.id,
+    'done',
+    'ok',
+    null,
+    null,
+    null,
+    null,
+    null,
+    120,
+    false,
+    null
+  ])
+})
+
+test('执行前拒绝（P49）：写 marked 字段并原样返回给客户端', async () => {
+  const existing = { ...baseRow, status: 'delivered' }
+  const updated = {
+    ...existing,
+    status: 'failed',
+    error_text: 'no usable workspace: workspace "C:\\\\nope" 在本机不存在',
+    rejected_before_start: true,
+    rejected_reason: 'workspace_missing'
+  }
+  const { route, calls } = patchHarness(updated, existing)
+
+  const result = await route.handler({
+    params: { id: baseRow.id },
+    body: {
+      status: 'failed',
+      errorText: updated.error_text,
+      rejectedBeforeStart: true,
+      rejectedReason: 'workspace_missing'
+    },
+    client: device
+  })
+
+  assert.equal(calls[1].params[9], true)
+  assert.equal(calls[1].params[10], 'workspace_missing')
+  assert.equal(result.command.rejectedBeforeStart, true)
+  assert.equal(result.command.rejectedReason, 'workspace_missing')
+})
+
+test('只给原因码也算执行前拒绝（bridge 少传布尔值也不丢标记）', async () => {
+  const { route, calls } = patchHarness({ ...baseRow, status: 'failed' })
+  await route.handler({
+    params: { id: baseRow.id },
+    body: { status: 'failed', rejectedReason: 'mode_not_allowed' },
+    client: device
+  })
+  assert.equal(calls[1].params[9], true)
+})
+
+test('未知的 rejectedReason 直接 400，不落库', async () => {
+  const { route, calls } = patchHarness(baseRow)
+  await assert.rejects(
+    route.handler({
+      params: { id: baseRow.id },
+      body: { status: 'failed', rejectedReason: '随便写的' },
+      client: device
+    }),
+    (error) => error instanceof HttpError && error.status === 400 && error.code === 'invalid_field'
+  )
+  assert.equal(calls.length, 1) // 只做了 select，没有 update
 })
 
 test('取消排队中的命令：直接 cancelled，不再等 bridge', async () => {

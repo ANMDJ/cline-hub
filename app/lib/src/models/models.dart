@@ -309,6 +309,8 @@ class CommandItem {
     this.pidStartedAt,
     this.resultText,
     this.errorText,
+    this.rejectedBeforeStart = false,
+    this.rejectedReason,
     this.createdAt,
     this.deliveredAt,
     this.startedAt,
@@ -331,6 +333,8 @@ class CommandItem {
     pidStartedAt: _dt(json['pidStartedAt']),
     resultText: _str(json['resultText']),
     errorText: _str(json['errorText']),
+    rejectedBeforeStart: _bool(json['rejectedBeforeStart']),
+    rejectedReason: _str(json['rejectedReason']),
     createdAt: _dt(json['createdAt']),
     deliveredAt: _dt(json['deliveredAt']),
     startedAt: _dt(json['startedAt']),
@@ -365,6 +369,13 @@ class CommandItem {
 
   final String? resultText;
   final String? errorText;
+
+  /// 执行前被拒（P49）：bridge 没有 spawn 任何进程，`status` 仍然是 `failed`。
+  final bool rejectedBeforeStart;
+
+  /// 机器可读的拒绝原因（`workspace_missing` / `mode_not_allowed` …）。
+  final String? rejectedReason;
+
   final DateTime? createdAt;
   final DateTime? deliveredAt;
   final DateTime? startedAt;
@@ -386,6 +397,22 @@ class CommandItem {
 
   /// bridge 已经收到取消请求，正在停进程。
   bool get isCancelling => status == 'cancelling';
+
+  /// 压根没跑：执行前被 bridge 拒绝（目录不存在 / 模式不允许 / 白名单 / 附件失败）。
+  ///
+  /// 和「跑完才失败」共用 `failed` 状态，但排查方向完全不同：这里没有产出、
+  /// 没有会话、也不该让用户去读输出（ADR-62）。
+  bool get notStarted => status == 'failed' && rejectedBeforeStart;
+
+  /// 拒绝原因的人话版本；Hub 以后加了新码就返回 null，由调用方退回 errorText。
+  String? get rejectLabel => switch (rejectedReason) {
+    'workspace_missing' => '工作目录不存在或没有指定',
+    'workspace_not_allowed' => '工作目录不在白名单里',
+    'mode_not_allowed' => '这个模式在本机被禁用',
+    'template_missing' => 'bridge 没有配置执行模板',
+    'attachment_failed' => '附件下载失败',
+    _ => null,
+  };
 
   /// 本机排障用的 PowerShell：先核对启动时间，再决定要不要杀。
   ///

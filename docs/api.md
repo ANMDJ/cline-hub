@@ -500,6 +500,20 @@ PATCH /api/v1/commands/cmd_9f2c1a4b3d5e
 - `pid` / `pidStartedAt` / `runner`：bridge spawn 成功立刻上报，同样 `coalesce` 只写一次。
   `pid` 必须是正整数（非法值 400），`pidStartedAt` 接受 ISO 字符串或 epoch 毫秒。
   三者会原样出现在命令对象里（`pid` / `pidStartedAt` / `runner`），供 App 展示与排障。
+- **执行前拒绝（P49，ADR-62）**：bridge 没 spawn 任何进程就失败时，额外上报
+  `rejectedBeforeStart: true` 与 `rejectedReason`；命令对象原样返回这两个字段
+  （老数据是 `false` / `null`）。`rejectedReason` 只接受这五个值，其它 400 `invalid_field`：
+
+  | 原因码 | 含义 |
+  |---|---|
+  | `workspace_missing` | 没带 workspace 且没配默认目录；或目录不存在 / 不是目录 |
+  | `workspace_not_allowed` | 目录不在 `workspaceWhitelist` |
+  | `mode_not_allowed` | 模式不在 `commands.allowModes` |
+  | `template_missing` | `runner=shell` 但 `commands.template` 为空 |
+  | `attachment_failed` | 附件下载失败 |
+
+  两个字段**只增不减**：后续补报 `running` / 终态不会清掉标记（`rejected_before_start = rejected_before_start or $10`）。
+  `status` 仍是 `failed`，客户端用 `rejectedBeforeStart` 区分「未执行」与「执行失败」。
 - **不要只凭 `pid` 杀进程**：Windows 会复用 PID。本机用 `cd bridge; npm run ps` 双校验
   （pid + 启动时间），要停就 `npm run ps -- --kill <commandId>`（ADR-33）。
 

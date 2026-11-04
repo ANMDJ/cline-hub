@@ -37,6 +37,20 @@ String statusLabel(String? status) => switch (status) {
   _ => status,
 };
 
+/// 命令状态文案：执行前被拒（P49）不是「跑完失败」，要说「未执行」。
+///
+/// 单独的 [statusLabel] 还要给会话用，所以不改它的语义；这里只给命令加一层。
+String commandStatusLabel(String? status, {bool rejectedBeforeStart = false}) =>
+    rejectedBeforeStart && status == 'failed' ? '未执行' : statusLabel(status);
+
+/// 执行前被拒的颜色：警示色（配置 / 路径问题），不是执行失败的红色。
+Color commandStatusColor(
+  String? status, {
+  bool rejectedBeforeStart = false,
+}) => rejectedBeforeStart && status == 'failed'
+    ? kWarn
+    : statusColor(status);
+
 /// 模式色：PLAN 用信息色，ACT 用警示色。
 ///
 /// 别把 PLAN 画成灰色 —— 会和「未知状态」撞色，用户分不清是只读还是没数据。

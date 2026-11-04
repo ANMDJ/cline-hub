@@ -203,3 +203,37 @@
   Hub 日志出现 `POST /api/v1/commands/<id>/heartbeat 200`。
 - **遗留**：确认新 bridge 起来后，`npm run ps` 不应有残留登记；旧 APK（≤1.2.0）不需要动。
 
+
+
+### 2026-11-04 07:20 排队重启 bridge（P48 工作目录错误文案，ADR-61）
+
+- **为什么杀**：`resolveWorkspace()` 的 errorText 改成「指名哪个候选目录不可用」之后，正在跑的 bridge
+  还是旧代码；不重启的话，下次再下发错目录仍会看到「这条命令没带 workspace」。
+- **怎么杀的**：`cd bridge; npm run restart:idle -- --reason "加载 P48 工作目录错误文案修复（ADR-61）" --grace 30000`
+  —— supervisor **pid 13444**，`--grace 30000`（默认 3 秒偏短：5 秒轮询的空档里可能刚好领到新命令）。
+- **受影响**：当时有两条在跑的命令 —— 本会话 `cmd_aad634ae239e`（cline-hub，act）和刚重发的
+  `cmd_51992a286b82`（pcother，plan，pid 11240）；两条都会正常跑完，supervisor 只在登记目录清空后动手。
+  grace 结束后还会再确认一次，期间有新命令就继续等（`restart-when-idle.mjs` 里的 recheck）。
+- **恢复**：supervisor 自动 `Start-Process` 拉起新 bridge；核对 `npm run health` → `cline-bridge`、
+  `bridge/logs/restart-when-idle.log` 末尾 `idle, handing over to stop.mjs`。
+  验证文案生效的零风险方式：等新 bridge 起来后，用 app token 发一条 workspace 指向不存在目录的
+  `plan` 命令，`errorText` 应包含 `workspace "<path>" 在本机不存在`。
+- **遗留**：`commands.defaultWorkspace` 仍为空（本次没改配置，避免「目录写错也照样跑」的静默回落）。
+
+
+### 2026-11-04 09:25 排队重启 bridge（P49 执行前拒绝标记，ADR-62）
+
+- **为什么杀**：当时的 bridge 是 07:21 启动的版本（只有 P48 的文案修复），
+  不会上报 `rejectedBeforeStart` / `rejectedReason`；不重启的话，手机上永远看不到「未执行」标记。
+- **怎么杀的**：`cd bridge; npm run restart:idle -- --reason "加载 P49 执行前拒绝标记（ADR-62）" --grace 30000`
+  —— 在命令里发起重启必须用 `restart:idle`：supervisor 等本机登记目录清空再动手。
+- **受影响**：本会话 `cmd_d8b41fd43aa7`（cline-hub，act，pid 13772）正在跑；
+  supervisor 等它结束才重启，不会把它掐成 failed。Hub 已经先升级（多两个字段），
+  旧 bridge 不传这两个字段也不影响读写。
+- **恢复**：supervisor 自动拉起新 bridge；核对 `npm run health` → `cline-bridge`、
+  `npm run ps` 无残留登记、`bridge/logs/restart-when-idle.log` 末尾
+  `idle, handing over to stop.mjs`。
+- **验证（新 bridge 起来后）**：用 app token 发一条 workspace 指向不存在目录的 `plan` 命令，
+  `GET /api/v1/commands/:id` 应返回 `"rejectedBeforeStart": true`、
+  `"rejectedReason": "workspace_missing"`，App 显示「未执行」并给出原因。
+- **遗留**：`commands.defaultWorkspace` 保持 `""`（本次明确不设默认目录）。

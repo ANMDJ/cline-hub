@@ -67,6 +67,8 @@ CommandItem command(
   String? resultText,
   String? errorText,
   String? sessionId,
+  bool rejectedBeforeStart = false,
+  String? rejectedReason,
 }) => CommandItem(
   id: id,
   deviceId: 'localone',
@@ -76,6 +78,8 @@ CommandItem command(
   resultText: resultText,
   errorText: errorText,
   sessionId: sessionId,
+  rejectedBeforeStart: rejectedBeforeStart,
+  rejectedReason: rejectedReason,
 );
 
 Map<String, dynamic> event(CommandItem item) => <String, dynamic>{
@@ -87,6 +91,8 @@ Map<String, dynamic> event(CommandItem item) => <String, dynamic>{
   'resultText': item.resultText,
   'errorText': item.errorText,
   'sessionId': item.sessionId,
+  'rejectedBeforeStart': item.rejectedBeforeStart,
+  'rejectedReason': item.rejectedReason,
 };
 
 void main() {
@@ -172,6 +178,40 @@ void main() {
     );
     await Future<void>.delayed(Duration.zero);
     expect(notifier.shown, hasLength(1));
+
+    store.dispose();
+  });
+
+  test('执行前被拒的命令：通知标题是「未执行」，不是「失败」', () async {
+    final settings = await makeSettings();
+    final fake = FakeHubApi(
+      commandItems: <CommandItem>[command('cmd_1', 'running')],
+    );
+    final notifier = RecordingNotifier();
+    final store = HubStore(
+      settings: settings,
+      apiFactory: (_) => fake,
+      notifier: notifier,
+    );
+    await store.start();
+
+    fake.emit(
+      'command.update',
+      event(
+        command(
+          'cmd_1',
+          'failed',
+          rejectedBeforeStart: true,
+          rejectedReason: 'workspace_missing',
+          errorText: 'no usable workspace: workspace "C:\\nope" 在本机不存在',
+        ),
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(notifier.shown, hasLength(1));
+    expect(notifier.shown.single.title, '命令未执行 · ACT');
+    expect(notifier.shown.single.body, contains('在本机不存在'));
 
     store.dispose();
   });

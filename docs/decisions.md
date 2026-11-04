@@ -1574,3 +1574,73 @@ APK 文件名 `cline-console-x.y.z.apk`、`ClineConsoleApp` 类名全部保持�
 （新增 2 条：命令在跑时定期续租、空闲零心跳）。真实 Postgres 上的迁移与回收在部署时验证
 （`docs/status.md` §0 P47）。
 
+---
+
+## 61. 执行前失败要指名「哪个候选目录不可用」（2026-11-04）
+
+**决策**：`bridge/src/command-worker.js` 的 `resolveWorkspace()` 抛错时按情况分开写：
+
+| 情况 | `errorText` |
+|---|---|
+| 没带 `workspace`，`defaultWorkspace` 也没配 | `no usable workspace: 这条命令没带 workspace，且 commands.defaultWorkspace 未配置` |
+| 没带 `workspace`，`defaultWorkspace` 配了但目录不在 | `…且 commands.defaultWorkspace "<path>" 不存在或不是目录` |
+| 带了 `workspace`，本机没有这个目录 | `no usable workspace: workspace "<path>" 在本机不存在，且 …` |
+| 带了 `workspace`，指向的是文件 | `no usable workspace: workspace "<path>" 不是目录，且 …` |
+
+`defaultWorkspace` 有效时仍然静默回落（行为不变），只是回落前也做 `isDirectory()` 校验。
+
+**为什么**：`cmd_e48d2ee78e0e`（2026-11-03 22:38）带了 `…\chat\pcother`，本机没有这个目录，
+bridge 回写的却是「这条命令没带 workspace」——手机上看起来像 App 漏传字段，实际是路径不存在。
+这类「执行前拒绝」不会产生任何 cline 输出，`errorText` 是唯一线索，必须能直接定位。
+
+**边界**：
+
+- 状态仍是 `failed`，不加 `rejected_before_start` 之类的新状态 / 新字段：那要改 Hub 契约与 App 展示，
+  属于另一个提案，本次不动。
+- 不在 Hub 侧校验路径：服务端看不到 Windows 磁盘，只有执行侧能判断。
+- 回落 `defaultWorkspace` 时**不**提示「你给的目录没用上」，保持 P7 以来的行为；
+  要改得先确认用户是否接受「目录写错也照样跑」。
+
+**验证**：新增 `bridge/test/command-workspace.test.js` 4 项（不存在 / 是文件 / 没带且无默认 / 有默认时回落成功）；
+`cd bridge; node --test` **65 通过**（原 61 + 4）。
+
+---
+
+## 62. 执行前拒绝单独标记，但不新增状态（2026-11-04）
+
+**决策**：`commands` 加两列 `rejected_before_start` / `rejected_reason`（migration 011）。
+bridge 在 5 条「还没 spawn 就失败」的路径上回写 `rejectedBeforeStart: true` + 原因码：
+
+| 原因码 | 触发 |
+|---|---|
+| `workspace_missing` | 没带 workspace 且没配默认目录；带了但目录不存在 / 不是目录 |
+| `workspace_not_allowed` | 目录不在 `workspaceWhitelist` |
+| `mode_not_allowed` | 模式不在 `commands.allowModes` |
+| `template_missing` | `runner=shell` 但 `commands.template` 为空 |
+| `attachment_failed` | 附件下载失败（不拿「找不到文件」的 prompt 去跑） |
+
+`status` 仍是 `failed`。Hub `toCommand()` 原样下发；PATCH 接受这两个字段并**只增不减**
+（后续补报 `running` / 终态不会抹掉），未知原因码直接 400 `invalid_field`。
+App 用 `notStarted` 把这类命令显示成「未执行」（警示色）而不是「失败」（红色），
+详情给出原因 + `errorText` 原文，通知标题是「命令未执行」。
+
+**为什么**：ADR-61 只修了文案，手机上仍然是「失败」——用户会去翻根本不存在的输出。
+`failed` 在「跑了但 exit 1」和「压根没跑」之间是二义的，而这两种情况的排查方向完全不同
+（前者读输出，后者改目录 / 配置）。
+
+**为什么不新增 `rejected` 状态**（ADR-61 的顾虑仍然成立）：`failed` 已经贯穿状态机、
+租约回收、App 的 `_terminalStatuses` / 通知 / 筛选和历史数据；新增状态要同时改 Hub 契约、
+App 与旧数据迁移，收益只是文案。两个附加字段达到同样效果，且老客户端会忽略未知字段，
+不需要 Hub 与 App 严格同步升级。
+
+**边界**：
+
+- 只有 bridge 能判定「没跑过」——Hub 看不到 Windows 磁盘，不在服务端猜。
+- 租约回收（`lease_expired`）**不算**执行前拒绝：命令确实被认领过，只是执行侧失联。
+- **不设默认目录**：`commands.defaultWorkspace` 保持空，命令必须自带可用的绝对路径；
+  留空就是执行前拒绝（`workspace_missing`），不再静默落到某个目录。
+  想恢复兜底行为，把它配成一个真实存在的目录即可（行为与 P7 一致）。
+
+**验证**：`bridge/test/command-workspace.test.js` 4 项补了标记断言；
+`server/test/commands.test.mjs` 新增 3 项（写入并回显 / 只给原因码也算 / 未知码 400）；
+App `models_test` / `notifications_test` 各新增 1 项；`widget_test` 的下发面板文案同步。
