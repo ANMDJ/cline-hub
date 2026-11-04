@@ -38,25 +38,28 @@
 | 26 | P38 | **右侧划出菜单 + 发送文件 / 图片**：设备列表与设置入口挪进 `endDrawer`；`POST/GET /api/v1/attachments`（base64 + bytea，migration 009）+ 命令携带 `attachmentId`；bridge 落盘到 `%TEMP%\cline-hub-cmd\incoming` 再把绝对路径拼进 prompt；下发面板与会话输入框都能「选文件 + 写一句要它做什么」 | ✅ **已上线（2026-11-03 12:25）**：迁移 009 + 镜像重建（备份 `server.bak-20261103-122537`），线上 app token 上传 / 下载实测通过；附件带**入库时间 `createdAt`**（保留策略暂不做）；App `1.1.7+9` 已发布（55,568,256 B / sha256 `4261c8f2…ee25`）；bridge 已排空闲重启（等 `cmd_10e3f1f2394f` / `cmd_b4c3e28a6d9b` 两条在跑的命令都结束，supervisor pid 3260） |
 | 27 | P39 | **浏览入口收进右侧抽屉 + 设置页去重**：会话页「按工作区浏览」按钮与三页顶部的设备 chip 挪进 `HomeDrawer`「浏览」区（`onOpenWorkspaces` 回调由 `HomeShell` 提供）；页面只在筛选生效时显示 `ActiveDeviceFilterBar`（「只看 X」+「看全部设备」）；抽屉设备行离线时补「多久没上报」；设置页删掉重复的「已接入设备」卡片，手填默认设备改名「手填兜底」 | ✅ 已发版 `1.1.8+10`（ADR-54） |
 | 28 | — | **安全审计复核**：把手机发来的 `cline-hub 安全审计与加固建议.docx` 逐条对代码核了一遍（说对的 7 条 / 说错或夸大 4 条 / 漏掉 4 条 / 实测 4 项），结论与采纳计划写进 [`security-review.md`](security-review.md) | ✅ 文档完成（ADR-55；**未改任何行为代码**） |
-| 29 | P40 | `net.js` 取 `X-Forwarded-For` **最后一段** + `deploy/Caddyfile` 显式 `header_up`，补 `server/test/net.test.mjs` | ⏳ 未开工（等用户拍板；复核文档 §5） |
-| 30 | P41 | SSE 短期 ticket（`POST /api/v1/sse-ticket`）替代 URL 里的 token，App 跟着改 | ⏳ 未开工（含 App 发版） |
+| 29 | P40 | `net.js` 取 `X-Forwarded-For` **最后一段** + `deploy/Caddyfile` 显式 `header_up`，补 `server/test/net.test.mjs` | ✅ 2026-11-04 实施（ADR-63；server 测试 81 项，其中 XFF 7 项） |
+| 30 | P41 | SSE 短期 ticket（`POST /api/v1/sse-ticket`）替代 URL 里的 token，App 跟着改 | ✅ 2026-11-04 实施（ADR-64；服务端 + App 代码都改完，App 发版后生效；老 APK 仍可 `?token=`） |
 | 31 | P42 | 命令租约自动回收（`migrations/010` + 每 60s 扫描 → `failed: orphaned`） | ✅ 已实施（见 P47；`reconcile` 保留为手动兜底） |
-| 32 | P43 | SSE 纵深防御：Origin 白名单 + 单 token 连接上限 + 空闲超时 | ⏳ 未开工 |
+| 32 | P43 | SSE 纵深防御：Origin 白名单 + 单 token 连接上限 + 空闲超时 | ✅ 2026-11-04 实施（ADR-65；默认 8 条 / 600s / 只拒绝带 Origin 的跨源请求） |
 | 33 | P44 | **App 实时看 DeepSeek 余额**：Hub 新增 `GET /api/v1/deepseek/balance`（Key 只读 `server/.env` 的 `DEEPSEEK_API_KEY`；60 秒缓存、并发复用、失败退旧值并标 `stale`）；App 右侧抽屉顶部「DeepSeek 余额」卡片（总额 / 充值 / 赠金 / 更新时间 + 可用标记），启动、回前台、打开菜单、命令走到终态时自动刷新，右上角可强制刷新 | ✅ **已上线（2026-11-03 19:47）**：服务器 `.env` 写入 `DEEPSEEK_API_KEY` + 镜像重建（备份 `20261103-194741`，23 条路由）；App `1.1.9+11` 已发版（ADR-56） |
 | 34 | P45 | **品牌统一为 ClineHub（A 层）+ App 1.2.0+12 发版**：展示文案全部改成 ClineHub（ADR-57 / ADR-58），包名 / applicationId / 库名 / 目录 / 环境变量 / APK 文件名一律不动；版本号 1.1.9+11 → **1.2.0+12**，落地页六处版本引用同步 | ✅ **已上线（2026-11-04 04:30）**：提交 `63488a9`；APK 55,601,132 B / sha256 `fb543395…8901` / `versionCode=12` / `aapt2` label `ClineHub`，已发 `/app/cline-console-1.2.0.apk` + `latest.json`；站点已更新（IP 站 200 / 19,392 B） |
 | 35 | P46 | **微信式输入条**：新建 `ui/chat_composer.dart`（左侧「+」就地展开「图片 / 文件」、圆角输入框、右侧发送；附件缩略图 / 名字 · 大小可移除；空内容发送键禁用）；会话详情与下发面板共用，`attachment_bar.dart` 只留选文件与文案 | ✅ 代码 + 测试完成（`flutter test` 101 通过 / 5 跳过；ADR-59；随 1.3.0+13 发版） |
 | 36 | P47 | **命令租约（P42 落地）**：migration 010 `lease_expires_at` + `POST /api/v1/commands/:id/heartbeat` + Hub 每 60s 扫过期（delivered/running → failed，cancelling → cancelled，广播 `command.update`）+ 终态不接受 `running`；bridge 每 30s 续租（含排队中的命令） | ✅ **Hub 已上线（2026-11-04 06:31）**：备份 `server.bak-20261104-063124`、`routes: 24`、线上心跳实测 200、过期自检行 22:33:02 被扫成 `failed`；bridge 已排空闲重启（supervisor pid 6376）。验证 server **65** / bridge **61** |
 | 37 | P48 | **执行前失败文案纠偏**：`resolveWorkspace()` 区分「没带 workspace / 带了但目录不存在 / 带了但是文件 / defaultWorkspace 不可用」，errorText 带上真实路径；补目录后原样重发 `cmd_e48d2ee78e0e`（新 id `cmd_51992a286b82`） | ✅ 代码 + 测试完成（bridge **65** 项；ADR-61）；随提交 `7f03035`，等 bridge 空闲重启生效 |
 | 38 | P49 | **执行前拒绝加标记**：`commands.rejected_before_start` / `rejected_reason`（migration 011）；bridge 在 5 条 pre-spawn 路径（目录 / 白名单 / 模式 / 模板 / 附件）回写 `rejectedBeforeStart` + 原因码；status 仍是 `failed`，App 显示「未执行」+ 原因、通知标题「命令未执行」；**`commands.defaultWorkspace` 保持空** —— 不设默认目录，命令没带可用目录就直接拒绝 | ✅ **Hub 已上线（2026-11-04 09:21，migration 011 + 备份 `commands.js.bak-20261104-092013`）**；App `1.3.1+14` 已发布（55,601,172 B / sha256 `c6fef71b…6bed`）；bridge 已排空闲重启，待验证标记 |
+| 39 | P50 | **PLAN / ACT 挪进输入条同一行**：`ChatComposer` 新增 `leading` 槽位（在「+」左侧、与输入框底边对齐），会话详情删掉输入框上方整行 `_ModeBar`；分段按钮改 `compactModeSegmentStyle()`，风险提示收进 Tooltip（下发面板 3 段 + 说明，保持原样） | ✅ 代码 + 测试完成（ADR-66；`flutter test` 107 通过 / 5 跳过） |
 
 
 
 
 
-已完成并上线的：P0 / P1 / P3–P26 / P35–P45 / P46 / P47 / P48 / P49
+已完成并上线的：P0 / P1 / P3–P26 / P35–P45 / P46 / P47 / P48 / P49 / P50
 （P3、P9 已部署；P5、P10、P15、P17、P8、P22–P26、P35、P38、P46、P49 已发布到 App；
 P7/P14 已重启生效；P47 的 Hub 侧已上线，bridge 侧等空闲重启；
-P48 / P49 的 bridge 侧已排空闲重启，重启后标记才会真正上报）。
+P48 / P49 的 bridge 侧已排空闲重启，重启后标记才会真正上报；
+**P40 / P41 / P43 已于 2026-11-04 完成代码与测试（ADR-63/64/65），
+Hub 部署 + Caddy reload + App 发版后生效**；P50 只改 App，随下一次发版）。
 **P39 已随 `1.1.8+10` 发版**（浏览入口收进右侧抽屉 + 设置页去重，ADR-54；
 `flutter analyze` 无告警、`flutter test` **88 通过 / 5 跳过**；APK 55,568,256 B /
 sha256 `a17a2ca0…a314`，线上 HEAD 200、`GET /api/v1/app/latest` 返回 1.1.8 / build 10）。
@@ -573,4 +576,6 @@ powershell -NoProfile -File deploy/windows/verify-hub.ps1
 
 
 
+
+| 2026-11-04 | **P40 / P41 / P43 安全加固 + P50 模式开关挪行（代码 + 测试，待部署 / 发版）**：`server/src/net.js` 的 `clientIp()` 改取 `X-Forwarded-For` **最后一段**（首段由调用方自带、可伪造），`deploy/Caddyfile` 两个 hub 站点都加 `header_up X-Forwarded-For {remote_host}`；新增 `server/src/ticket.js`（`POST /api/v1/sse-ticket` → `clt_…` 60 秒、一次性、只存 `sha256`），`GET /api/v1/events` 接受 `?ticket=`（`?token=` 过渡期保留），`createApp` 只在 events 路径上认票据；`createSseChannel` 加单 token 上限（默认 8，超了踢最旧）、空闲超时（600s）、`sseOriginAllowed()` 加 Origin 白名单（`HUB_SSE_ALLOWED_ORIGINS`，空 = 只放行无 Origin / 同源）；App `HubApi.sseTicket()` + `_sseQuery()`（换票 404 退回 `?token=`，401 直接抛给上层）；`ChatComposer` 新增 `leading` 槽位，会话详情把 PLAN / ACT 挪到输入条同一行（删掉 `_ModeBar`，风险提示进 Tooltip，`compactModeSegmentStyle()`）。验证：`cd server; node --test` **81 通过**（新增 7 项 XFF + 6 项票据 / Origin / 上限 / 空闲）；`cd app; flutter analyze` 无告警、`flutter test` **107 通过 / 5 跳过**（新增 3 项 SSE 票据 + 1 项 leading 布局，会话详情补「同行」断言）。**已上线（2026-11-04 13:05）**：Hub 源码推送 + `docker compose build`（容器内 `src/*.js` 与宿主机哈希一致）+ `up -d --force-recreate`（`routes: 25`、启动日志 `sse: ticket 60s / max 8 per token / idle 600s`、源码备份 `/tmp/cline-hub-src-20261104-130508.tgz`）；Caddy `validate` 通过 + `systemctl reload`（`health=200`）。线上实测：`POST /sse-ticket` → `clt_…` / ttl 60 → `GET /events?ticket=` 收到 `: connected`，**同一张票重放 401**；伪造 `X-Forwarded-For: 1.2.3.4` 时 Hub 记录仍是真实 IP `111.202.248.208`；access log 里的 `clh_` 只剩旧 APK 那一条（`Dart` UA + `?token=`），装 1.3.2 后消失。App `1.3.2+15` 已发布（55,617,552 B / sha256 `5ebc11eb…20ef` / `versionCode=15` / `versionName=1.3.2` / label `ClineHub`），`GET /api/v1/app/latest` → 1.3.2 / 15 / sha 一致、`HEAD /app/cline-console-1.3.2.apk` 200；站点 1.3.2 ×9 / 1.3.1 ×0（`node site/check-site.mjs` 通过、无 BOM）。ADR-63 / ADR-64 / ADR-65 / ADR-66 |
 

@@ -102,6 +102,16 @@ void main() {
     await tester.pumpWidget(_wrap(store));
     await tester.pumpAndSettle();
 
+    // P50：模式开关和输入框在同一行（原先单独占输入框上方一行）
+    final modeRect = tester.getRect(find.text('PLAN'));
+    final fieldRect = tester.getRect(find.byType(TextField).first);
+    expect(
+      modeRect.center.dy,
+      closeTo(fieldRect.center.dy, 12),
+      reason: 'PLAN / ACT 要和输入框平齐，不是另起一行',
+    );
+    expect(modeRect.right, lessThan(fieldRect.left));
+
     // 默认 plan：只读，不会悄悄改文件
     await tester.enterText(find.byType(TextField), '继续把测试补全');
     await tester.pump(); // 让发送键从「灰」变成可点（P46 空内容禁用）

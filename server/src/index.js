@@ -6,6 +6,7 @@ import { createAuth } from './auth.js'
 import { createApp, createHttpServer, createSseChannel } from './http.js'
 import { createRoutes } from './routes/index.js'
 import { createCommandLease } from './lease.js'
+import { createSseTickets } from './ticket.js'
 
 const startedAt = Date.now()
 const logger = createLogger({ file: config.logFile, level: config.logLevel })
@@ -14,6 +15,7 @@ let db = null
 let sse = null
 let server = null
 let lease = null
+let tickets = null
 let shuttingDown = false
 
 function describeDatabase(url) {
@@ -31,6 +33,9 @@ async function shutdown(reason) {
   logger.info('shutting down', { reason })
   try {
     lease?.stop()
+  } catch {}
+  try {
+    tickets?.close()
   } catch {}
   try {
     sse?.closeAll()
@@ -64,8 +69,14 @@ async function main() {
   }
 
   const auth = createAuth({ db, adminToken: config.adminToken, logger })
-  sse = createSseChannel({ heartbeatMs: config.sseHeartbeatMs, logger })
-  const routes = createRoutes({ db, logger, sse, config, startedAt })
+  sse = createSseChannel({
+    heartbeatMs: config.sseHeartbeatMs,
+    idleTimeoutMs: config.sseIdleTimeoutMs,
+    maxPerClient: config.sseMaxPerClient,
+    logger
+  })
+  tickets = createSseTickets({ ttlMs: config.sseTicketTtlSec * 1000, logger })
+  const routes = createRoutes({ db, logger, sse, config, startedAt, tickets })
   const app = createApp({
     routes,
     auth,
@@ -73,7 +84,8 @@ async function main() {
     corsOrigin: config.corsOrigin,
     maxBodyBytes: config.maxBodyBytes,
     rateLimit: { perSec: config.rateLimitPerSec, burst: config.rateLimitBurst },
-    allowIps: config.allowIps
+    allowIps: config.allowIps,
+    sseTickets: tickets
   })
 
   server = createHttpServer(app)
@@ -94,6 +106,8 @@ async function main() {
     rateLimit: `${config.rateLimitPerSec}/s burst ${config.rateLimitBurst}`,
     allowIps: config.allowIps.length,
     commandLease: `${config.commandLeaseSec}s / sweep ${Math.round(config.commandLeaseSweepMs / 1000)}s`,
+    sse: `ticket ${config.sseTicketTtlSec}s / max ${config.sseMaxPerClient} per token / idle ${Math.round(config.sseIdleTimeoutMs / 1000)}s`,
+    sseOrigins: config.sseAllowedOrigins.length,
     version: config.version
   })
 }

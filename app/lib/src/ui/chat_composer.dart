@@ -12,7 +12,7 @@ import 'theme.dart';
 ///
 /// ```
 /// [ 已选附件：缩略图 / 名字 · 大小 ·   × ]   ← 只在有附件时出现
-/// [ + ] [ 圆角输入框                ] [发送]  ← 发送在右侧，没内容时是灰的
+/// [PLAN|ACT] [ + ] [ 圆角输入框        ] [发送]  ← 模式开关也在这行（`leading`，P50）
 /// [  图片 ]   [  文件 ]                      ← 点「+」展开，再点一次收起
 /// ```
 ///
@@ -34,6 +34,7 @@ class ChatComposer extends StatefulWidget {
     this.hintText = '发消息…',
     this.helper,
     this.sendTooltip = '发送',
+    this.leading,
   });
 
   final TextEditingController controller;
@@ -62,6 +63,12 @@ class ChatComposer extends StatefulWidget {
   final String? helper;
 
   final String sendTooltip;
+
+  /// 输入框左侧的紧凑控件（会话详情放 PLAN / ACT，P50）。
+  ///
+  /// 和输入框在同一行、底边对齐：输入框变高（最多 4 行）时它仍贴着最后一行，
+  /// 不会浮到半空。宽度由调用方自己控住（建议 ≤ 110），别把输入区挤没了。
+  final Widget? leading;
 
   @override
   State<ChatComposer> createState() => _ChatComposerState();
@@ -128,6 +135,10 @@ class _ChatComposerState extends State<ChatComposer> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
+              if (widget.leading != null) ...[
+                widget.leading!,
+                const SizedBox(width: 6),
+              ],
               _PlusButton(open: _panelOpen, busy: _busy, onTap: _togglePanel),
               const SizedBox(width: 6),
               Expanded(child: _inputField()),

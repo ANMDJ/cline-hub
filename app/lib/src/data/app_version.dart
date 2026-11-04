@@ -3,8 +3,8 @@
 /// 为什么不引 `package_info_plus`：这个客户端刻意只保留 http / shared_preferences
 /// 两个依赖，版本号一年也就改几次，手工同步比多一个插件更划算。
 /// 发版脚本 `scripts/release-apk.mjs` 会读 `pubspec.yaml` 并校验这里是否一致。
-const String kAppVersion = '1.3.1';
-const int kAppBuild = 14;
+const String kAppVersion = '1.3.2';
+const int kAppBuild = 15;
 
 class ChangelogEntry {
   const ChangelogEntry(this.version, this.date, this.items);
@@ -15,6 +15,11 @@ class ChangelogEntry {
 }
 
 const List<ChangelogEntry> kChangelog = <ChangelogEntry>[
+  ChangelogEntry('1.3.2', '2026-11-04', <String>[
+    '优化：PLAN / ACT 挪到输入框同一行，和「+」「发送」齐平，聊天区多出一行；模式风险提示改成长按可见',
+    '安全：实时连接改用一次性票据（60 秒有效、用掉即作废），长期 token 不再出现在服务器访问日志里',
+    '兼容：Hub 还没升级时自动退回旧方式，连接不受影响',
+  ]),
   ChangelogEntry('1.3.1', '2026-11-04', <String>[
     '新增：命令分成「未执行」和「失败」两种——目录不存在 / 模式不允许 / 白名单 / 附件下载失败时，bridge 在执行前就拒绝，卡片和详情用警示色显示「未执行」并写明原因',
     '优化：这类命令的通知标题是「命令未执行」，不会再让你去翻根本不存在的输出；改好目录重新下发即可',

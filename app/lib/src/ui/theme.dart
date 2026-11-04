@@ -89,6 +89,18 @@ ButtonStyle modeSegmentStyle(Color color) {
   );
 }
 
+/// 输入条里的紧凑模式开关（P50）。
+///
+/// 和「+」「发送」挤在同一行，横向 padding 要收到 8、最小高度 34，
+/// 否则两个分段按钮会把输入框压到只剩几十像素（窄屏上会挤爆）。
+ButtonStyle compactModeSegmentStyle(Color color) =>
+    modeSegmentStyle(color).copyWith(
+      padding: const WidgetStatePropertyAll<EdgeInsetsGeometry>(
+        EdgeInsets.symmetric(horizontal: 8),
+      ),
+      minimumSize: const WidgetStatePropertyAll<Size>(Size(0, 34)),
+    );
+
 ThemeData buildTheme() {
   const scheme = ColorScheme.dark(
     primary: kAccent,

@@ -45,6 +45,10 @@ curl http://127.0.0.1:3100/api/v1/health
 | `HUB_ALLOW_IPS` | | 空 | 逗号分隔的 IP / CIDR 白名单；空 = 不限 IP，本机回环永远放行 |
 | `HUB_COMMAND_LEASE_SEC` | | `120` | 命令租约秒数：bridge 认领后必须在这个时间内续租（P42），过期自动收成 `failed: orphaned` |
 | `HUB_COMMAND_LEASE_SWEEP_SEC` | | `60` | 过期租约扫描间隔（秒）；bridge 硬崩后最迟约 3 分钟自动收尾 |
+`HUB_SSE_TICKET_TTL_SEC` | | `60` | SSE 一次性票据有效期（秒）：App 先 `POST /api/v1/sse-ticket` 换票再连（P41） |
+`HUB_SSE_MAX_CONNECTIONS` | | `8` | 同一个 token 最多同时挂几条 SSE，超了踢最旧的一条（P43） |
+`HUB_SSE_IDLE_TIMEOUT_SEC` | | `600` | SSE 空闲超时（秒）：这么久没有写入就断开；心跳会刷新计时（P43） |
+`HUB_SSE_ALLOWED_ORIGINS` | | 空 | SSE 的 Origin 白名单（逗号分隔）；空 = 只放行无 Origin 与同源请求（P43） |
 | `DEEPSEEK_API_KEY` | | 空 | App「DeepSeek 余额」卡片用。Key 只在 Hub 上，留空时接口返回 `configured:false` |
 | `DEEPSEEK_BASE_URL` | | `https://api.deepseek.com` | 上游地址（一般不用改） |
 | `DEEPSEEK_BALANCE_TTL_SEC` | | `60` | 余额短缓存秒数：窗口内重复请求不重复打上游 |

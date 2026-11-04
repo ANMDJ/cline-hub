@@ -130,12 +130,15 @@ hub.example.com {
     encode zstd gzip
 
     # SSE 必须实时下发，否则事件被攒着，手机顶栏一直「连接中」
+    # header_up：X-Forwarded-For 钉成真实对端，Hub 的白名单 / 限流才不可伪造
     @events path /api/v1/events*
     reverse_proxy @events 127.0.0.1:3100 {
         flush_interval -1
+        header_up X-Forwarded-For {remote_host}
     }
 
     reverse_proxy 127.0.0.1:3100 {
+        header_up X-Forwarded-For {remote_host}
         transport http {
             read_timeout 0
         }
@@ -427,7 +430,7 @@ npm run health
 
 | 现象 | 先查 |
 |---|---|
-| App 一直「连接中」 | Caddy 是否 `flush_interval -1`；`curl -N https://hub/api/v1/events?token=...` 有没有 `: connected` |
+| App 一直「连接中」 | Caddy 是否 `flush_interval -1`；先 `POST /api/v1/sse-ticket` 换票，再 `curl -N "https://hub/api/v1/events?ticket=..."` 看有没有 `: connected` |
 | `401 invalid_token` | token 轮换过 / 粘贴错；重新 `create-device` |
 | `403 forbidden` | 用 device token 发命令；下发必须是 app token |
 | `403 device_mismatch` | device token 读了别的设备；检查 `deviceId` |

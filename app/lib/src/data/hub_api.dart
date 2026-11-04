@@ -121,6 +121,13 @@ abstract class HubApi {
 
   Future<List<HookItem>> hooks({int limit, int? beforeId, String? deviceId});
 
+  /// 换一张一次性 SSE 票据（P41）。
+  ///
+  /// 为什么不让 SSE 直接用 token：`EventSource` 不能带请求头，只能把凭据放进
+  /// URL，而 URL 会进 Caddy access log / 抓包 / 崩溃栈。票据 60 秒有效、只能
+  /// 用一次，日志里出现的 `clt_…` 不是可长期使用的凭据（ADR-64）。
+  Future<String> sseTicket();
+
   /// 服务端事件流。Android 走 SSE；web 预览不支持流式响应，退化成心跳轮询。
   Stream<HubEvent> events();
 
@@ -400,6 +407,34 @@ class HttpHubApi implements HubApi {
   @override
   Stream<HubEvent> events() => kIsWeb ? _poll() : _sse();
 
+  @override
+  Future<String> sseTicket() async {
+    final json = await _request(
+      'POST',
+      '/api/v1/sse-ticket',
+      body: const <String, Object?>{},
+    );
+    final ticket = (json['ticket'] as String?)?.trim() ?? '';
+    if (ticket.isEmpty) {
+      throw ApiException(502, 'sse_ticket_missing', 'Hub 没有返回 SSE 票据');
+    }
+    return ticket;
+  }
+
+  /// 连 SSE 用的 query：优先一次性票据，老 Hub 退回 `?token=`（过渡期两边都能连）。
+  Future<Map<String, String>> _sseQuery() async {
+    try {
+      final ticket = await sseTicket();
+      if (ticket.isNotEmpty) return <String, String>{'ticket': ticket};
+    } on ApiException catch (error) {
+      // token 本身就失效时别再绕回 ?token=：那只会把 401 藏到下一次连接里。
+      if (error.isAuth) rethrow;
+    } catch (_) {
+      // 网络抖动 / 老 Hub 的 404：退回 token，连不上时上层照常重连。
+    }
+    return <String, String>{'token': _token};
+  }
+
   /// 浏览器拿不到流式响应（BrowserClient 会缓冲整个 body），
   /// 与其装作有 SSE，不如老实地按固定节拍让上层去拉数据。
   Stream<HubEvent> _poll() async* {
@@ -410,10 +445,10 @@ class HttpHubApi implements HubApi {
   }
 
   Stream<HubEvent> _sse() async* {
-    final request =
-        http.Request('GET', _uri('/api/v1/events', {'token': _token}))
-          ..headers['accept'] = 'text/event-stream'
-          ..headers['cache-control'] = 'no-cache';
+    final query = await _sseQuery();
+    final request = http.Request('GET', _uri('/api/v1/events', query))
+      ..headers['accept'] = 'text/event-stream'
+      ..headers['cache-control'] = 'no-cache';
 
     final response = await _client.send(request);
     if (response.statusCode != 200) {

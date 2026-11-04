@@ -136,7 +136,7 @@ flutter build apk --release     # → build/app/outputs/flutter-apk/app-release.
 | 命令列表 | `GET /api/v1/commands?limit=50` |
 | 下发命令 | `POST /api/v1/commands`（角色必须是 `app`） |
 | 动态 | `GET /api/v1/hooks?limit=50&beforeId=` |
-| 实时更新 | `GET /api/v1/events?token=...`（SSE） |
+| 实时更新 | `POST /api/v1/sse-ticket` 换票 → `GET /api/v1/events?ticket=...`（SSE；`?token=` 只在老 Hub 上兜底） |
 
 SSE 四种事件都用上了：`session`（去抖 900ms 后刷新列表）、`hook`（插到动态顶部，按 id 去重）、
 `command` / `command.update`（按 id 就地替换命令状态）。

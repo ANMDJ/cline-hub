@@ -10,7 +10,10 @@ Base URL：本机 `http://127.0.0.1:3100`，线上 `https://hub.littlewish.top:8
 Authorization: Bearer <token>
 ```
 
-SSE 例外：`GET /api/v1/events?token=<token>`（EventSource 不能设置请求头）。
+SSE 例外：`GET /api/v1/events?ticket=<票据>`。App 先 `POST /api/v1/sse-ticket`
+换一张 **60 秒有效、只能用一次** 的票据（`clt_…`），再用它连接 —— 长期 token
+不会出现在 URL / Caddy access log / 崩溃栈里（P41，ADR-64）。
+过渡期仍接受 `?token=<token>`（老 APK），下个版本停用。
 
 | 角色 | 来源 | 能做什么 |
 |---|---|---|
@@ -65,7 +68,8 @@ SSE 例外：`GET /api/v1/events?token=<token>`（EventSource 不能设置请求
 | POST | `/api/v1/commands/:id/cancel` | app | 取消命令（排队中直接 `cancelled`，执行中先 `cancelling`） |
 | POST | `/api/v1/commands/:id/heartbeat` | device | 续租（P42）：bridge 每 30 秒一次，不改状态、不推 SSE |
 | PATCH | `/api/v1/commands/:id` | device | 回报 `running` / `done` / `failed` / `cancelled` |
-| GET | `/api/v1/events` | any | SSE 实时事件 |
+| GET | `/api/v1/events` | any | SSE 实时事件（`?ticket=`，过渡期也认 `?token=`） |
+| POST | `/api/v1/sse-ticket` | any | 换一张一次性 SSE 票据（60 秒、用完即弃） |
 
 `GET /api/v1/sessions` 的过滤参数：`limit`、`cursor`、`status`、`workspace`、`project`、
 `deviceId`、`q`。
@@ -519,7 +523,33 @@ PATCH /api/v1/commands/cmd_9f2c1a4b3d5e
 
 ## SSE 事件
 
-`GET /api/v1/events?token=<token>`，`content-type: text/event-stream`，25 秒一次 `: ping` 心跳。
+### 换票
+
+```
+POST /api/v1/sse-ticket          (Authorization: Bearer <token>)
+→ { "ok": true, "ticket": "clt_<48 hex>", "expiresInSec": 60, "expiresAt": "2026-11-04T…Z" }
+```
+
+票据 **一次性**（用掉即作废）、60 秒过期（`HUB_SSE_TICKET_TTL_SEC`）、进程内只存
+`sha256`；Hub 重启后未使用的票据全部失效，重连时再换一张即可。
+老 Hub 没有这个接口（404）时，App 自动退回 `?token=`（过渡期）。
+
+### 连接
+
+`GET /api/v1/events?ticket=<票据>`，`content-type: text/event-stream`，25 秒一次 `: ping` 心跳。
+
+纵深防御（P43 / ADR-65）：
+
+| 项 | 默认 | 行为 |
+|---|---|---|
+| 单 token 连接上限 | 8（`HUB_SSE_MAX_CONNECTIONS`） | 超了踢**最旧**的一条，客户端自己重连 |
+| 空闲超时 | 600s（`HUB_SSE_IDLE_TIMEOUT_SEC`） | 这么久没有任何写入就断开；心跳会刷新计时 |
+| Origin 白名单 | 空（`HUB_SSE_ALLOWED_ORIGINS`） | 带 Origin 必须同源或在白名单，否则 403；不带 Origin（App / bridge / curl）照常放行 |
+
+| 错误 | 含义 |
+|---|---|
+| `401 unauthorized` | 票据无效 / 已用过 / 已过期，或 token 无效 → 重新换票再连 |
+| `403 origin_not_allowed` | 浏览器跨源请求，且 origin 不在 `HUB_SSE_ALLOWED_ORIGINS` |
 
 | event | 触发时机 | data 关键字段 |
 |---|---|---|

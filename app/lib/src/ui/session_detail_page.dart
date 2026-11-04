@@ -1245,35 +1245,30 @@ class _ComposerBar extends StatelessWidget {
       ),
       child: SafeArea(
         top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-              child: _ModeBar(mode: mode, onChanged: onModeChanged),
-            ),
-            ChatComposer(
-              controller: controller,
-              sending: sending,
-              picking: picking,
-              attachment: attachment,
-              onPickFile: onPickFile,
-              onPickImage: onPickImage,
-              onClearAttachment: onClearAttachment,
-              onSend: onSend,
-              hintText: '继续对话（会新建 Cline 会话）…',
-              helper: '输入框里写要对这个文件做什么；留空就只让它读一遍并总结。',
-            ),
-          ],
+        child: ChatComposer(
+          leading: _ModeSwitch(mode: mode, onChanged: onModeChanged),
+          controller: controller,
+          sending: sending,
+          picking: picking,
+          attachment: attachment,
+          onPickFile: onPickFile,
+          onPickImage: onPickImage,
+          onClearAttachment: onClearAttachment,
+          onSend: onSend,
+          hintText: '继续对话（会新建 Cline 会话）…',
+          helper: '输入框里写要对这个文件做什么；留空就只让它读一遍并总结。',
         ),
       ),
     );
   }
 }
 
-/// 模式切换：PLAN（只读）/ ACT（会改文件），右侧一句风险提示。
-class _ModeBar extends StatelessWidget {
-  const _ModeBar({required this.mode, required this.onChanged});
+/// 模式切换：PLAN（只读）/ ACT（会改文件）。
+///
+/// P50：从输入框上方单独一行挪到输入条同一行（和「+」「发送」齐平），
+/// 少占一行高度；风险提示收进 Tooltip，不再单独占位。
+class _ModeSwitch extends StatelessWidget {
+  const _ModeSwitch({required this.mode, required this.onChanged});
 
   final String mode;
   final ValueChanged<String> onChanged;
@@ -1281,28 +1276,18 @@ class _ModeBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final act = mode == 'act';
-    return Row(
-      children: [
-        SegmentedButton<String>(
-          segments: const [
-            ButtonSegment<String>(value: 'plan', label: Text('PLAN')),
-            ButtonSegment<String>(value: 'act', label: Text('ACT')),
-          ],
-          selected: <String>{mode},
-          showSelectedIcon: false,
-          style: modeSegmentStyle(modeColor(mode)),
-          onSelectionChanged: (values) => onChanged(values.first),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            act ? 'ACT：会直接改文件' : 'PLAN：只读，不改文件',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 11, color: act ? kAct : kPlan),
-          ),
-        ),
-      ],
+    return Tooltip(
+      message: act ? 'ACT：会直接改文件' : 'PLAN：只读，不改文件',
+      child: SegmentedButton<String>(
+        segments: const [
+          ButtonSegment<String>(value: 'plan', label: Text('PLAN')),
+          ButtonSegment<String>(value: 'act', label: Text('ACT')),
+        ],
+        selected: <String>{mode},
+        showSelectedIcon: false,
+        style: compactModeSegmentStyle(modeColor(mode)),
+        onSelectionChanged: (values) => onChanged(values.first),
+      ),
     );
   }
 }

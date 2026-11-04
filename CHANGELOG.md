@@ -5,6 +5,38 @@
 > [`docs/interruptions.md`](docs/interruptions.md)，单条设计决策在
 > [`docs/decisions.md`](docs/decisions.md)。日期均为 +08。
 
+## 2026-11-04 · App 1.3.2+15 / Hub 0.1.0（P40 / P41 / P43 / P50）
+
+### PLAN / ACT 挪进输入条（P50，ADR-66）
+
+- **模式开关和输入框同一行**：原来 PLAN / ACT 单独占输入框上方一行，现在挪到「+」左侧、
+  与输入框和发送键齐平，聊天区多出一行；风险提示改成长按可见。
+- 下发面板保持原样（PLAN / ACT / YOLO 三段 + 每种模式的说明，塞进一行会挤没输入区）。
+
+### 实时连接的凭据不再进日志（P41，ADR-64）
+
+- **SSE 改用一次性票据**：App 先 `POST /api/v1/sse-ticket` 换一张 `clt_…`（60 秒有效、
+  用掉即作废），再用 `?ticket=` 连接；长期 token 不再出现在 URL、Caddy 访问日志、
+  抓包或崩溃栈里。
+- **兼容**：Hub 还没升级（没有该接口）时自动退回 `?token=`，连接不受影响；
+  旧版 APK 也仍可用 token 连。
+
+### 安全加固（P40 / P43，ADR-63 / ADR-65）
+
+- **`X-Forwarded-For` 只认最后一段**：不再采信调用方自带的首段；Caddyfile 里两个 hub 站点
+  显式 `header_up X-Forwarded-For {remote_host}`，`HUB_ALLOW_IPS` 与限流按真实 IP 生效
+  （线上实测：伪造 `X-Forwarded-For: 1.2.3.4` 时 Hub 记录仍是真实 IP）。
+- **SSE 纵深防御**：单 token 最多 8 条连接（超了踢最旧）、600 秒无写入断开、
+  带 Origin 的跨源请求按 `HUB_SSE_ALLOWED_ORIGINS` 白名单拦截（不带 Origin 的 App / bridge 不受影响）。
+
+### 配套
+
+- 新增 `server/src/ticket.js`、`server/test/net.test.mjs`、`server/test/sse.test.mjs`；
+  `docs/api.md` 补换票契约与错误码，`deploy/Caddyfile` / `docs/self-host.md` 同步。
+- 验证：server `node --test` **81**（新增 13）、`flutter analyze` 0 issue、
+  `flutter test` **107 通过 / 5 跳过**；线上 `GET /events?ticket=` 收到 `: connected`、
+  同一张票重放 **401**。
+
 ## 2026-11-04 · App 1.3.1+14 / Hub 0.1.0（P49）
 
 ### 「未执行」和「失败」分开

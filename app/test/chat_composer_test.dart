@@ -167,4 +167,30 @@ void main() {
     expect(find.byIcon(Icons.send_rounded), findsNothing);
     expect(find.byTooltip('发送文件 / 图片'), findsOneWidget);
   });
+
+  testWidgets('leading 控件和输入框在同一行、位于输入框左侧（P50）', (tester) async {
+    final controller = TextEditingController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _wrap(
+        ChatComposer(
+          controller: controller,
+          leading: const Text('PLAN', key: Key('composer-leading')),
+          onSend: () {},
+          onPickFile: () {},
+          onPickImage: () {},
+          onClearAttachment: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final leading = tester.getRect(find.byKey(const Key('composer-leading')));
+    final field = tester.getRect(find.byType(TextField));
+
+    // 同一行：单行输入框高 42、控件高 34，底边对齐后中线只差几像素
+    expect(leading.center.dy, closeTo(field.center.dy, 12));
+    expect(leading.right, lessThan(field.left), reason: '在输入框左侧，不是上方');
+  });
 }

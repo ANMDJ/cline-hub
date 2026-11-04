@@ -21,9 +21,11 @@ hub.littlewish.top {
 	@events path /api/v1/events*
 	reverse_proxy @events 127.0.0.1:3100 {
 		flush_interval -1
+		header_up X-Forwarded-For {remote_host}
 	}
 
 	reverse_proxy 127.0.0.1:3100 {
+		header_up X-Forwarded-For {remote_host}
 		transport http {
 			read_timeout 0
 		}
@@ -142,9 +144,11 @@ hub.littlewish.top:8443 {
 	@events path /api/v1/events*
 	reverse_proxy @events 127.0.0.1:3100 {
 		flush_interval -1
+		header_up X-Forwarded-For {remote_host}
 	}
 
 	reverse_proxy 127.0.0.1:3100 {
+		header_up X-Forwarded-For {remote_host}
 		transport http {
 			read_timeout 0
 		}

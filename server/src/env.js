@@ -50,6 +50,25 @@ export const config = {
   maxAttachmentBytes: readInt('HUB_MAX_ATTACHMENT_BYTES', 8 * 1024 * 1024),
   sseHeartbeatMs: readInt('HUB_SSE_HEARTBEAT_MS', 25000),
   /**
+   * SSE 短期票据（P41）：App 先 `POST /api/v1/sse-ticket` 换票，再用 `?ticket=` 连。
+   * 60 秒足够「拿到票 → 建连」，过期就再换一张（重连本来就会走一次）。
+   */
+  sseTicketTtlSec: readInt('HUB_SSE_TICKET_TTL_SEC', 60),
+  /**
+   * SSE 纵深防御（P43）：单 token 连接上限 + 空闲超时。
+   * 上限只管「同一个 client 反复重连堆连接」；不同设备互不影响。
+   */
+  sseMaxPerClient: readInt('HUB_SSE_MAX_CONNECTIONS', 8),
+  sseIdleTimeoutMs: readInt('HUB_SSE_IDLE_TIMEOUT_SEC', 600) * 1000,
+  /**
+   * SSE 的 Origin 白名单（P43）：留空 = 只放行「不带 Origin」或「同源」的请求。
+   * 以后真要接浏览器端，把它的 origin（如 `https://hub.example.com`）加进来。
+   */
+  sseAllowedOrigins: read('HUB_SSE_ALLOWED_ORIGINS', '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean),
+  /**
    * 命令租约（P42）：bridge 认领后必须在这个时间内续租，否则 Hub 判定执行侧失联。
    * 120 秒 = 默认 30 秒心跳的 4 倍，允许丢一两次请求；扫描间隔 60 秒。
    * 这两个值只影响「多久把失联命令收成 failed」，不影响真正在跑的命令

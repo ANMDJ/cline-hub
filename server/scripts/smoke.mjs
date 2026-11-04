@@ -177,10 +177,20 @@ async function main() {
     )
   }
 
-  // SSE: listen, trigger a command, expect an event within 6s
+  // SSE: 先换一张一次性票据（P41），再连——URL 里不该再出现长期 token
+  const ticketRes = await req('POST', '/api/v1/sse-ticket', { token: appToken, body: {} })
+  const ticket = ticketRes.json?.ticket ?? ''
+  check(
+    'sse ticket issued',
+    ticketRes.status === 200 && ticket.startsWith('clt_') && ticket !== appToken
+  )
+  const ticketRes2 = await req('POST', '/api/v1/sse-ticket', { token: appToken, body: {} })
+  check('every ticket is new', (ticketRes2.json?.ticket ?? '') !== ticket)
+
+  // listen, trigger a command, expect an event within 6s
   const controller = new AbortController()
   const ssePromise = (async () => {
-    const res = await fetch(`${base}/api/v1/events?token=${encodeURIComponent(appToken)}`, {
+    const res = await fetch(`${base}/api/v1/events?ticket=${encodeURIComponent(ticket)}`, {
       headers: { accept: 'text/event-stream' },
       signal: controller.signal
     })

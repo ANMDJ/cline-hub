@@ -2,8 +2,13 @@
  * 网络小工具：真实调用方 IP、CIDR 白名单、令牌桶限流。
  *
  * Hub 只监听 127.0.0.1，前面永远是本机 Caddy，所以 socket 地址恒为回环；
- * 真实 IP 取 `X-Forwarded-For` 的第一段（仅当直连方是回环时才信任它）。
+ * 真实 IP 取 `X-Forwarded-For` 的**最后一段**（仅当直连方是回环时才信任它）。
  * 无第三方依赖，方便容器里跑。
+ *
+ * 为什么是最后一段（ADR-63）：XFF 是「客户端 → 每一跳代理依次追加」的列表，
+ * 最左边那段是请求方自己写进来的，可以随便伪造；最右边那段才是紧邻我们的
+ * 代理（Caddy）看到并追加的真实对端地址。取第一段等于把攻击者可控的字符串
+ * 当成 IP，`HUB_ALLOW_IPS` 与限流会被一起绕过（2026-11-04 前的实现就是取第一段）。
  */
 
 const IPV4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/
@@ -22,8 +27,13 @@ export function clientIp(req) {
   const direct = normalizeIp(req.socket?.remoteAddress)
   if (!isLoopback(direct)) return direct // 直连（本机 smoke / 容器内）就是它自己
   const forwarded = String(req.headers['x-forwarded-for'] ?? '')
-  const first = forwarded.split(',')[0].trim()
-  return first ? normalizeIp(first) : direct
+  const segments = forwarded
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+  if (segments.length === 0) return direct
+  // 取最后一段：紧邻我们的代理追加的那一跳。首段是调用方自带的，不可信。
+  return normalizeIp(segments[segments.length - 1]) || direct
 }
 
 function ipv4ToInt(ip) {

@@ -241,6 +241,17 @@ class FakeHubApi implements HubApi {
     int? beforeId,
     String? deviceId,
   }) async => hookItems;
+
+  /// SSE 票据（P41）：`events()` 会先调这里换票；测试里数一下调用次数即可。
+  String? nextTicket;
+  int sseTicketCalls = 0;
+
+  @override
+  Future<String> sseTicket() async {
+    sseTicketCalls += 1;
+    return nextTicket ?? 'clt_fake_ticket';
+  }
+
   @override
   Stream<HubEvent> events() => _events.stream;
 

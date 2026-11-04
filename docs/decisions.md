@@ -1644,3 +1644,112 @@ App 与旧数据迁移，收益只是文案。两个附加字段达到同样效�
 **验证**：`bridge/test/command-workspace.test.js` 4 项补了标记断言；
 `server/test/commands.test.mjs` 新增 3 项（写入并回显 / 只给原因码也算 / 未知码 400）；
 App `models_test` / `notifications_test` 各新增 1 项；`widget_test` 的下发面板文案同步。
+
+---
+
+## 63. X-Forwarded-For 取最后一段，Caddy 侧再钉死来源（2026-11-04）
+
+**决策**：`clientIp()` 只认 XFF 的**最后一段**（多段时从右往左第一个），
+并要求 `deploy/Caddyfile` 里 hub 的两个站点（443 / `:8443`）都显式
+`header_up X-Forwarded-For {remote_host}`；补 `server/test/net.test.mjs` 7 项。
+
+**为什么**：XFF 是「客户端 → 每一跳代理依次追加」的列表，最左边那段由请求方自带，
+可以随便写；最右边那段才是紧邻我们的 Caddy 看到并追加的真实对端地址。
+原实现取 `split(',')[0]`，等于把**攻击者可控的字符串**当成 IP：
+`HUB_ALLOW_IPS` 白名单与每 IP 令牌桶都能被一句伪造的请求头绕过
+（2026-11-04 复核，`docs/security-review.md` §2.4）。
+
+**为什么 Caddy 侧也要写**：`header_up` 把「反代覆盖而不是追加 XFF」这件事钉进配置，
+换反代 / 加一层 CDN 时行为不会跟着默认值漂；两侧同时成立才是「不可伪造」。
+
+**边界**：
+
+- 直连方不是回环（`HUB_HOST=0.0.0.0` 或容器里被别的东西直连）时，
+  **完全不采信 XFF**，直接用 socket 地址 —— 那才是真实对端。
+- 只有 IPv4 做 CIDR 匹配；IPv6 仍是精确比较（与 ADR 之前一致，未扩大范围）。
+
+**验证**：`cd server; node --test` **81 通过**（新增 7 项：伪造首段 / 多段 / 空段 /
+无 XFF / 非回环直连 / IPv6 / 白名单按真实 IP 生效）。
+
+---
+
+## 64. SSE 用一次性短期票据换掉 URL 里的长期 token（2026-11-04）
+
+**决策**：新增 `POST /api/v1/sse-ticket`（`auth: any`），返回
+`{ ticket: "clt_<48 hex>", expiresInSec: 60, expiresAt }`；`GET /api/v1/events`
+接受 `?ticket=`，用掉即作废（`claim` 即删），进程内只存 `sha256(ticket)`。
+App 每次连 SSE（含每次重连）先换票；老 Hub 没有该接口（404）时自动退回 `?token=`，
+**401 不退回**（token 本身失效要立刻让上层看到）。
+
+**为什么**：`EventSource` 不能带请求头，历史上只能把长期 token 放进 URL；
+URL 会原样进 Caddy access log（`/var/lib/caddy/hub-https.log`）、任何抓包、
+手机崩溃栈。这是本项目**唯一**「长期凭据落进日志」的真实面
+（`docs/security-review.md` §3.1），比审计文档排第一的 Origin 严重得多。
+
+**为什么放内存而不是数据库**：票据活 60 秒，单进程部署；落库只多一次写。
+副作用（进程重启后未用票据失效）正是期望行为 —— 重连会重新换一张。
+票据前缀 `clt_` 与 token 的 `clh_` 分开，日志里一眼能看出「这不是长期凭据」。
+
+**边界**：
+
+- 票据只对 `/api/v1/events` 生效：别的路径带上它照样 401（`test/sse.test.mjs` 有断言）。
+- 票据里带着签发时的 `{id, name, role}` 快照：60 秒内即使 token 被吊销，票据仍可用 ——
+  窗口小到可以接受；要立刻断，改 token 后再重启 Hub 即可。
+- 过渡期 `?token=` 继续可用（老 APK），下个版本再停用；届时 `bearerToken()` 去掉分支即可。
+
+**验证**：`cd server; node --test` 新增 3 项（一次性 / 过期 / 只对 events 生效）；
+`cd app; flutter test` 新增 3 项（URL 里是 ticket 不是 token / 老 Hub 退回 token /
+401 不回退）；`server/scripts/smoke.mjs` 增加换票与「每张票都不同」两项检查。
+
+---
+
+## 65. SSE 纵深防御：Origin 白名单 + 单 token 上限 + 空闲超时（2026-11-04）
+
+**决策**：`/api/v1/events` 加三层，都是「配置留空 = 不放宽」的默认安全：
+
+| 层 | 默认 | 行为 |
+|---|---|---|
+| Origin | `HUB_SSE_ALLOWED_ORIGINS` 空 | 不带 Origin（App / bridge / curl）放行；带 Origin 必须同源或在白名单，否则 `403 origin_not_allowed` |
+| 单 token 上限 | 8（`HUB_SSE_MAX_CONNECTIONS`） | 超了踢**最旧**的一条（不报错，客户端自己重连） |
+| 空闲超时 | 600s（`HUB_SSE_IDLE_TIMEOUT_SEC`） | 这么久没有任何写入就断开 |
+
+**为什么**：审计文档把 Origin 排第一是错的（凭据是 Bearer / ticket，没有浏览器会自动
+携带的 cookie），但**以后接浏览器端**时这几条就会变成真的必需；成本只有一处
+`attach()` + 一个心跳循环，先把坑填上。单 token 上限解决的是更现实的问题：
+手机弱网下反复重连，旧连接没被及时回收时 `sseClients` 会越堆越多。
+
+**为什么空闲超时按「写入」算**：心跳 25 秒一次也会写，所以正常长连接永远不会触发；
+它兜底的只有「心跳定时器卡住 / 半开连接」——这条不是主力，是保险。
+真要做「客户端活着但不要数据就断开」得另算 `lastEventAt`，那会误杀闲置的 App。
+
+**边界**：
+
+- 被踢的连接只是 `res.end()`，不返回错误码：客户端看到的等价于网络断开，走既有重连退避。
+- 上限按 `client.id`（= token 对应的 client）算，不看 IP：同一台手机换网不会重置额度。
+- health 里的 `sseClients` 保留（`deploy/windows/verify-hub.ps1` 与开工自检依赖它）。
+
+**验证**：`cd server; node --test` 新增 3 项（Origin 组合 / 上限踢最旧 / 空闲断开）。
+
+---
+
+## 66. PLAN / ACT 挪进输入条同一行，风险提示收进 Tooltip（2026-11-04）
+
+**决策**：`ChatComposer` 新增可选 `leading` 槽位（渲染在「+」左侧、与输入框底边对齐）；
+会话详情把 PLAN / ACT 分段按钮放进去，并删掉原来输入框上方的整行 `_ModeBar`。
+分段按钮改用 `compactModeSegmentStyle()`（横向 padding 8、最小高度 34），
+风险提示（「会直接改文件」/「只读」）收进 `Tooltip`。
+
+**为什么**：手机上垂直空间最贵，模式开关单独占一行，等于每条消息少显示一行。
+微信式输入条（ADR-59）已经把发送 / 附件收进一行，模式是同一层级的「发送前决定」，
+放在同一行最自然；`leading` 是通用槽位，别的页面要放开关也不用再改组件。
+
+**边界**：
+
+- **只挪会话详情**：下发面板是 PLAN / ACT / YOLO 三段 + 每种模式的说明，
+  塞进一行会把输入框挤到没法用，保持原样。
+- 底部对齐而不是居中：输入框最多 4 行，变高时开关贴着最后一行，不会浮到半空。
+- 可点区域由 `SegmentedButton` 自己保证（分段高度 34 > 24 的下限）；
+  风险提示从「一直可见」变成「长按可见」，但选中色（信息蓝 / 警示红）仍在。
+
+**验证**：`cd app; flutter test` 新增 2 项（`leading` 与输入框中线差 < 12px 且在左侧；
+会话详情的 PLAN 与输入框同行），原「默认 plan、切 ACT 后按 act 发送」用例不变。
